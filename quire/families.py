@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
+
+from quire.artifacts import ArtifactFamily, ArtifactHandle, PreparedArtifact
+from quire.contracts import CompatibilityMarker, ContractEntry, ContractManifest
+from quire.family_store import DocumentFamilyStore
+from quire.references import ForeignKeySpec
+from quire.versions import VersionId
+
+TOwner = TypeVar("TOwner")
+TKey = TypeVar("TKey", bound=Hashable)
+TRef = TypeVar("TRef")
+TDoc = TypeVar("TDoc")
+
+
+def _require_version(value: object, *, label: str) -> VersionId:
+    if not isinstance(value, VersionId):
+        raise ValueError(f"{label} requires an explicit VersionId")
+    return value
+
+
+def _key_contract_value(key: object) -> str:
+    value = getattr(key, "value", key)
+    if isinstance(value, str):
+        return value
+    name = getattr(key, "name", None)
+    if isinstance(name, str):
+        return name
+    return str(key)
+
+
+@dataclass(frozen=True)
+class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
+    key: TKey
+    name: str
+    contract_version: VersionId
+    artifact_family: ArtifactFamily[TOwner, TRef, TDoc]
+    accessor: str | None = None
+    foreign_keys: tuple[ForeignKeySpec, ...] = ()
+    metadata: Mapping[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("family name cannot be empty")
+        _require_version(self.contract_version, label=f"family {self.name!r}")
+        _require_version(
+            self.artifact_family.contract_version,
+            label=f"artifact family {self.artifact_family.name!r}",
+        )
+        if self.accessor is not None and not self.accessor.isidentifier():
+            raise ValueError(f"family accessor must be a Python identifier: {self.accessor!r}")
+
+    @property
+    def accessor_name(self) -> str:
+        return self.accessor or self.name
+
+    def contract_body(self) -> dict[str, object]:
+        body: dict[str, object] = {
+            "accessor": self.accessor_name,
+            "artifact_family": self.artifact_family.name,
+            "artifact_family_contract_version": str(self.artifact_family.contract_version),
+            "artifact_family_contract": self.artifact_family.contract_body(),
+            "foreign_keys": tuple(spec.contract_body() for spec in self.foreign_keys),
+            "key": _key_contract_value(self.key),
+        }
+        if self.metadata:
+            body["metadata"] = dict(self.metadata)
+        return body
+
+
+@dataclass(frozen=True)
+class FamilyRegistry(Generic[TOwner, TKey]):
+    name: str
+    contract_version: VersionId
+    families: tuple[FamilyDefinition[TOwner, TKey, Any, Any], ...]
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("family registry name cannot be empty")
+        _require_version(self.contract_version, label=f"family registry {self.name!r}")
+        keys = [family.key for family in self.families]
+        names = [family.name for family in self.families]
+        accessors = [family.accessor_name for family in self.families]
+        duplicate_keys = _duplicates(keys)
+        duplicate_names = _duplicates(names)
+        duplicate_accessors = _duplicates(accessors)
+        if duplicate_keys:
+            raise ValueError(f"duplicate family keys: {', '.join(map(str, duplicate_keys))}")
+        if duplicate_names:
+            raise ValueError(f"duplicate family names: {', '.join(map(str, duplicate_names))}")
+        if duplicate_accessors:
+            raise ValueError(f"duplicate family accessors: {', '.join(map(str, duplicate_accessors))}")
+
+    def by_key(self, key: TKey) -> FamilyDefinition[TOwner, TKey, Any, Any]:
+        for family in self.families:
+            if family.key == key:
+                return family
+        raise KeyError(f"unknown family key: {key!r}")
+
+    def by_name(self, name: str) -> FamilyDefinition[TOwner, TKey, Any, Any]:
+        for family in self.families:
+            if family.name == name:
+                return family
+        raise KeyError(f"unknown family name: {name}")
+
+    def by_accessor(self, accessor: str) -> FamilyDefinition[TOwner, TKey, Any, Any]:
+        for family in self.families:
+            if family.accessor_name == accessor:
+                return family
+        raise AttributeError(accessor)
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(family.name for family in self.families)
+
+    def keys(self) -> tuple[TKey, ...]:
+        return tuple(family.key for family in self.families)
+
+    def bind(self, owner: TOwner, store: DocumentFamilyStore[TOwner]) -> BoundFamilyRegistry[TOwner, TKey]:
+        return BoundFamilyRegistry(owner=owner, store=store, registry=self)
+
+    def contract_body(self) -> dict[str, object]:
+        return {
+            "families": tuple(
+                {
+                    "contract_version": str(family.contract_version),
+                    "key": _key_contract_value(family.key),
+                    "name": family.name,
+                }
+                for family in self.families
+            )
+        }
+
+    def contract_entries(self) -> tuple[ContractEntry, ...]:
+        entries = [
+            ContractEntry(
+                kind="family-registry",
+                name=self.name,
+                contract_version=self.contract_version,
+                body=self.contract_body(),
+            )
+        ]
+        entries.extend(
+            ContractEntry(
+                kind="family",
+                name=family.name,
+                contract_version=family.contract_version,
+                body=family.contract_body(),
+            )
+            for family in self.families
+        )
+        return tuple(entries)
+
+    def contract_manifest(
+        self,
+        *,
+        package_name: str,
+        package_version: str,
+        format_version: int = 1,
+        compatible_changes: Sequence[CompatibilityMarker] = (),
+    ) -> ContractManifest:
+        return ContractManifest(
+            format_version=format_version,
+            package_name=package_name,
+            package_version=package_version,
+            registry_name=self.name,
+            registry_contract_version=self.contract_version,
+            contracts=self.contract_entries(),
+            compatible_changes=tuple(compatible_changes),
+        )
+
+
+@dataclass(frozen=True)
+class BoundFamilyRegistry(Generic[TOwner, TKey]):
+    owner: TOwner
+    store: DocumentFamilyStore[TOwner]
+    registry: FamilyRegistry[TOwner, TKey]
+
+    def by_key(self, key: TKey) -> BoundFamily[TOwner, Any, Any]:
+        return BoundFamily(self.store, self.registry.by_key(key).artifact_family)
+
+    def by_name(self, name: str) -> BoundFamily[TOwner, Any, Any]:
+        return BoundFamily(self.store, self.registry.by_name(name).artifact_family)
+
+    def __getattr__(self, name: str) -> BoundFamily[TOwner, Any, Any]:
+        return BoundFamily(self.store, self.registry.by_accessor(name).artifact_family)
+
+
+@dataclass(frozen=True)
+class BoundFamily(Generic[TOwner, TRef, TDoc]):
+    store: DocumentFamilyStore[TOwner]
+    family: ArtifactFamily[TOwner, TRef, TDoc]
+
+    def list(self, *, branch: str | None = None, commit: str | None = None) -> list[TRef]:
+        return self.store.list(self.family, branch=branch, commit=commit)
+
+    def load(self, ref: TRef, *, commit: str | None = None) -> TDoc | None:
+        return self.store.load(self.family, ref, commit=commit)
+
+    def require(self, ref: TRef, *, commit: str | None = None) -> TDoc:
+        return self.store.require(self.family, ref, commit=commit)
+
+    def handle(self, ref: TRef, *, commit: str | None = None) -> ArtifactHandle[TOwner, TRef, TDoc] | None:
+        return self.store.handle(self.family, ref, commit=commit)
+
+    def require_handle(self, ref: TRef, *, commit: str | None = None) -> ArtifactHandle[TOwner, TRef, TDoc]:
+        return self.store.require_handle(self.family, ref, commit=commit)
+
+    def prepare(
+        self,
+        ref: TRef,
+        doc: TDoc,
+        *,
+        branch: str | None = None,
+    ) -> PreparedArtifact[TOwner, TRef, TDoc]:
+        return self.store.prepare(self.family, ref, doc, branch=branch)
+
+    def save(
+        self,
+        ref: TRef,
+        doc: TDoc,
+        *,
+        message: str,
+        branch: str | None = None,
+    ) -> str:
+        return self.store.save(self.family, ref, doc, message=message, branch=branch)
+
+    def delete(self, ref: TRef, *, message: str, branch: str | None = None) -> str:
+        return self.store.delete(self.family, ref, message=message, branch=branch)
+
+    def move(
+        self,
+        old_ref: TRef,
+        new_ref: TRef,
+        doc: TDoc,
+        *,
+        message: str,
+        branch: str | None = None,
+    ) -> str:
+        return self.store.move(self.family, old_ref, new_ref, doc, message=message, branch=branch)
+
+
+def _duplicates(values: Sequence[object]) -> list[object]:
+    seen: set[object] = set()
+    duplicates: list[object] = []
+    for value in values:
+        if value in seen and value not in duplicates:
+            duplicates.append(value)
+        seen.add(value)
+    return duplicates

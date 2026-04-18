@@ -5,8 +5,13 @@ from quire.refs import RefName
 from quire.notes import NotesRef
 from quire.references import ForeignKeySpec, ReferenceIndex, ReferenceResolution
 from quire.versions import VersionId
+from quire.families import BoundFamily, BoundFamilyRegistry, FamilyDefinition, FamilyRegistry
 
 __all__ = [
+    "BoundFamily",
+    "BoundFamilyRegistry",
+    "FamilyDefinition",
+    "FamilyRegistry",
     "ForeignKeySpec",
     "GitStore",
     "GitStorePolicy",
