@@ -174,6 +174,18 @@ def test_bound_registry_transaction_writes_multiple_families() -> None:
     assert bound.concepts.require("concept-one") == DemoDocument("beta")
 
 
+def test_bound_registry_resolves_by_artifact_family_and_recovers_ref_from_path() -> None:
+    registry = _registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+    claims_family = registry.by_key(DemoFamily.CLAIMS).artifact_family
+
+    bound.by_artifact_family(claims_family).save("paper", DemoDocument("alpha"), message="save")
+
+    assert bound.by_artifact_family(claims_family).require("paper") == DemoDocument("alpha")
+    assert bound.by_artifact_family(claims_family).ref_from_path("claims/paper.yaml") == "paper"
+
+
 def test_bound_transaction_supports_key_and_name_lookup() -> None:
     registry = _registry()
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
@@ -185,6 +197,19 @@ def test_bound_transaction_supports_key_and_name_lookup() -> None:
 
     assert bound.claims.require("claim-one") == DemoDocument("alpha")
     assert bound.concepts.require("concept-one") == DemoDocument("beta")
+
+
+def test_bound_transaction_resolves_by_artifact_family() -> None:
+    registry = _registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+    claims_family = registry.by_key(DemoFamily.CLAIMS).artifact_family
+
+    with bound.transact(message="save row") as transaction:
+        ref = transaction.by_artifact_family(claims_family).ref_from_path("claims/paper.yaml")
+        transaction.by_artifact_family(claims_family).save(ref, DemoDocument("alpha"))
+
+    assert bound.claims.require("paper") == DemoDocument("alpha")
 
 
 def test_contract_manifest_contains_registry_and_family_versions() -> None:

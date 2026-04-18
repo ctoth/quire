@@ -106,6 +106,15 @@ class FamilyRegistry(Generic[TOwner, TKey]):
                 return family
         raise KeyError(f"unknown family name: {name}")
 
+    def by_artifact_family(
+        self,
+        artifact_family: ArtifactFamily[TOwner, Any, Any],
+    ) -> FamilyDefinition[TOwner, TKey, Any, Any]:
+        for family in self.families:
+            if family.artifact_family == artifact_family:
+                return family
+        raise KeyError(f"unknown artifact family: {artifact_family.name}")
+
     def by_accessor(self, accessor: str) -> FamilyDefinition[TOwner, TKey, Any, Any]:
         for family in self.families:
             if family.accessor_name == accessor:
@@ -184,6 +193,12 @@ class BoundFamilyRegistry(Generic[TOwner, TKey]):
     def by_name(self, name: str) -> BoundFamily[TOwner, Any, Any]:
         return BoundFamily(self.store, self.registry.by_name(name).artifact_family)
 
+    def by_artifact_family(
+        self,
+        artifact_family: ArtifactFamily[TOwner, Any, Any],
+    ) -> BoundFamily[TOwner, Any, Any]:
+        return BoundFamily(self.store, self.registry.by_artifact_family(artifact_family).artifact_family)
+
     def transact(
         self,
         *,
@@ -206,6 +221,12 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
 
     def address(self, ref: TRef, *, commit: str | None = None) -> ArtifactAddress:
         return self.store.address(self.family, ref, commit=commit)
+
+    def ref_from_path(self, path: str) -> TRef:
+        return self.store.ref_from_path(self.family, path)
+
+    def ref_from_loaded(self, loaded: object) -> TRef:
+        return self.store.ref_from_loaded(self.family, loaded)
 
     def coerce(self, payload: object, *, source: str) -> TDoc:
         return self.store.coerce(self.family, payload, source=source)
@@ -284,6 +305,15 @@ class BoundFamilyTransaction(Generic[TOwner, TKey]):
     def by_name(self, name: str) -> TransactionalBoundFamily[TOwner, Any, Any]:
         return TransactionalBoundFamily(self.transaction, self.registry.by_name(name).artifact_family)
 
+    def by_artifact_family(
+        self,
+        artifact_family: ArtifactFamily[TOwner, Any, Any],
+    ) -> TransactionalBoundFamily[TOwner, Any, Any]:
+        return TransactionalBoundFamily(
+            self.transaction,
+            self.registry.by_artifact_family(artifact_family).artifact_family,
+        )
+
     def commit(self) -> str:
         return self.transaction.commit()
 
@@ -305,6 +335,9 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
 
     def coerce(self, payload: object, *, source: str) -> TDoc:
         return self.transaction.coerce(self.family, payload, source=source)
+
+    def ref_from_path(self, path: str) -> TRef:
+        return self.transaction.store.ref_from_path(self.family, path)
 
     def payload(self, document: TDoc) -> object:
         return self.transaction.store.payload(document, family=self.family)
