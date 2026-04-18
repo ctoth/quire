@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -22,6 +23,14 @@ class GitStorePolicy:
     initial_commit_message: str = "Initialize repository"
     ignored_path_prefixes: tuple[str, ...] = ()
     ignored_path_suffixes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GitBranch:
+    name: str
+    tip_sha: str
+    parent_branch: str = ""
+    created_at: int = 0
 
 
 def _normalize_path(path: str | Path) -> str:
@@ -257,6 +266,118 @@ class GitStore:
 
     def branch_sha(self, name: str) -> str | None:
         return self.read_ref(RefName(f"refs/heads/{name}"))
+
+    def create_branch(self, name: str, source_commit: str | None = None) -> str:
+        ref = RefName(f"refs/heads/{name}")
+        if self.read_ref(ref) is not None:
+            raise ValueError(f"Branch {name!r} already exists")
+
+        parent_branch = ""
+        if source_commit is None:
+            current_branch = self.current_branch_name()
+            if current_branch is not None:
+                current_ref = self.branch_sha(current_branch)
+                if current_ref is None:
+                    raise ValueError(f"Current branch {current_branch!r} has no tip")
+                tip_sha = current_ref
+                parent_branch = current_branch
+            else:
+                tip_sha = self.head_sha()
+                if tip_sha is None:
+                    raise ValueError("Repository has no commits")
+        else:
+            tip_sha = source_commit
+
+        self.write_ref(ref, tip_sha)
+        self._branch_meta[name] = {
+            "parent_branch": parent_branch,
+            "created_at": int(time.time()),
+        }
+        return tip_sha
+
+    def delete_branch(self, name: str) -> None:
+        if self.current_branch_name() == name:
+            raise ValueError("Cannot delete current HEAD branch")
+        ref = RefName(f"refs/heads/{name}")
+        if self.read_ref(ref) is None:
+            raise ValueError(f"Branch {name!r} does not exist")
+        self.delete_ref(ref)
+
+    def list_branches(self) -> list[GitBranch]:
+        result: list[GitBranch] = []
+        prefix = b"refs/heads/"
+        for ref_bytes, sha_bytes in sorted(self._repo.refs.as_dict().items()):
+            if not ref_bytes.startswith(prefix):
+                continue
+            name = ref_bytes[len(prefix):].decode("utf-8")
+            meta = self._branch_meta.get(name, {})
+            parent_branch = meta.get("parent_branch", "")
+            created_at = meta.get("created_at", 0)
+            result.append(
+                GitBranch(
+                    name=name,
+                    tip_sha=sha_bytes.decode("ascii"),
+                    parent_branch=parent_branch if isinstance(parent_branch, str) else "",
+                    created_at=created_at if isinstance(created_at, int) else 0,
+                )
+            )
+        return result
+
+    def commit_parent_shas(self, commit: str) -> list[str]:
+        commit_obj = _commit_object(self._repo, commit.encode("ascii"))
+        return [parent.decode("ascii") for parent in commit_obj.parents]
+
+    def ancestor_distances(self, start_sha: str) -> dict[str, int]:
+        distances: dict[str, int] = {start_sha: 0}
+        queue: deque[str] = deque([start_sha])
+        while queue:
+            current = queue.popleft()
+            current_distance = distances[current]
+            for parent_sha in self.commit_parent_shas(current):
+                next_distance = current_distance + 1
+                previous = distances.get(parent_sha)
+                if previous is None or next_distance < previous:
+                    distances[parent_sha] = next_distance
+                    queue.append(parent_sha)
+        return distances
+
+    def merge_base(self, branch_a: str, branch_b: str) -> str:
+        sha_a = self.branch_sha(branch_a)
+        sha_b = self.branch_sha(branch_b)
+        if sha_a is None:
+            raise ValueError(f"Branch {branch_a!r} does not exist")
+        if sha_b is None:
+            raise ValueError(f"Branch {branch_b!r} does not exist")
+        if sha_a == sha_b:
+            return sha_a
+
+        distances_a = self.ancestor_distances(sha_a)
+        distances_b = self.ancestor_distances(sha_b)
+        common_ancestors = set(distances_a) & set(distances_b)
+        if not common_ancestors:
+            raise ValueError(f"No common ancestor between {branch_a!r} and {branch_b!r}")
+
+        ancestor_cache = {
+            ancestor_sha: self.ancestor_distances(ancestor_sha)
+            for ancestor_sha in common_ancestors
+        }
+        best_common_ancestors = {
+            candidate
+            for candidate in common_ancestors
+            if not any(
+                other != candidate and candidate in ancestor_cache[other]
+                for other in common_ancestors
+            )
+        }
+
+        return min(
+            best_common_ancestors,
+            key=lambda sha: (
+                max(distances_a[sha], distances_b[sha]),
+                distances_a[sha] + distances_b[sha],
+                sha,
+            ),
+        )
 
     def read_ref(self, ref: RefName) -> str | None:
         sha = _ref_get(self._repo.refs, ref.as_bytes())

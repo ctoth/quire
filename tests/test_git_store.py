@@ -126,6 +126,27 @@ def test_flat_tree_entries_and_commit_flat_tree_create_merge_commit():
     assert store.read_file("merged.txt", commit=merge) == b"merged"
 
 
+def test_branch_operations_track_refs_and_merge_base():
+    store = GitStore.init_memory()
+    base = store.commit_files({"base.txt": b"base"}, "base")
+
+    assert store.create_branch("left") == base
+    assert store.create_branch("right", source_commit=base) == base
+
+    left = store.commit_files({"left.txt": b"left"}, "left", branch="left")
+    right = store.commit_files({"right.txt": b"right"}, "right", branch="right")
+
+    branches = {branch.name: branch for branch in store.list_branches()}
+    assert branches["left"].tip_sha == left
+    assert branches["left"].parent_branch == "master"
+    assert branches["right"].tip_sha == right
+    assert store.commit_parent_shas(left) == [base]
+    assert store.merge_base("left", "right") == base
+
+    store.delete_branch("right")
+    assert store.branch_sha("right") is None
+
+
 def test_notes_round_trip_against_arbitrary_notes_ref():
     store = GitStore.init_memory()
     blob = Blob.from_string(b"payload")
