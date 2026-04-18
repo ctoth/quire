@@ -182,15 +182,16 @@ Current execution checkpoint:
   `FamilyDefinition` entries in `PROPSTORE_FAMILY_REGISTRY`, and the checked-in
   contract manifest uses `family-registry:propstore` / `family:*` entries
   instead of `semantic_family:*` entries.
+- Propstore's public raw `repo.artifacts` construction path has been deleted.
+  `Repository` now keeps the Quire `DocumentFamilyStore` private and exposes
+  the bound registry as the public repository family surface.
+- `propstore.artifacts.policy` has been deleted; tests now use bound families
+  directly and enforce the absence of raw artifact-store factories.
 
 Remaining production buckets:
 
-- Delete or shrink `propstore.artifacts.policy` once tests no longer require a
-  raw `repo.artifacts` construction path.
 - Delete broad `propstore.artifacts` barrel exports for family constants; callers
   should use `repo.families` or the single registry declaration.
-- Delete concept CLI `_artifact_*` helper wrappers and replace them with direct
-  bound-family address/load/render calls.
 - Move source artifact-code verification, identity normalization, and reference
   indexes out of the artifact package when they are domain behavior rather than
   family declaration behavior.
