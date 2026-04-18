@@ -126,6 +126,41 @@ def test_flat_tree_entries_and_commit_flat_tree_create_merge_commit():
     assert store.read_file("merged.txt", commit=merge) == b"merged"
 
 
+def test_merge_base_is_deterministic_for_criss_cross_history():
+    store = GitStore.init_memory()
+    base = store.commit_files({"base.txt": b"base"}, "base")
+    store.create_branch("left", source_commit=base)
+    store.create_branch("right", source_commit=base)
+    left = store.commit_files({"left.txt": b"left"}, "left", branch="left")
+    right = store.commit_files({"right.txt": b"right"}, "right", branch="right")
+
+    left_entries = store.flat_tree_entries(left)
+    left_entries.update(store.flat_tree_entries(right))
+    left_entries["left-merge.txt"] = store.store_blob(b"left merge")
+    left_merge = store.commit_flat_tree(
+        left_entries,
+        "merge right into left",
+        parents=[left, right],
+        branch="left",
+    )
+
+    right_entries = store.flat_tree_entries(right)
+    right_entries.update(store.flat_tree_entries(left))
+    right_entries["right-merge.txt"] = store.store_blob(b"right merge")
+    right_merge = store.commit_flat_tree(
+        right_entries,
+        "merge left into right",
+        parents=[right, left],
+        branch="right",
+    )
+
+    assert store.commit_parent_shas(left_merge) == [left, right]
+    assert store.commit_parent_shas(right_merge) == [right, left]
+    assert store.ancestor_distances(left_merge)[right] == 1
+    assert store.ancestor_distances(right_merge)[left] == 1
+    assert store.merge_base("left", "right") == min(left, right)
+
+
 def test_branch_operations_track_refs_and_merge_base():
     store = GitStore.init_memory()
     base = store.commit_files({"base.txt": b"base"}, "base")

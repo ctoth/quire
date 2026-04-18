@@ -38,6 +38,9 @@ That is what quire adds.
 ## Non-goals
 
 - Not a git porcelain. No push/pull, no remotes, no merge resolution UI.
+  Quire does expose low-level graph plumbing such as parent inspection and
+  merge-base calculation so downstream semantic merge code can build on the
+  object store without shelling out to git.
 - Not a working-tree manager. `materialize_worktree()` exists for the cases
   that need it, but it is a side door, not the front door.
 - Not a general-purpose ORM. Documents are `msgspec.Struct` values; identity,
