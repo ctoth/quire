@@ -142,6 +142,12 @@ class GitStore:
             return None
         return head_target[len(b"refs/heads/"):].decode("utf-8")
 
+    def set_current_branch(self, name: str) -> None:
+        branch_ref = RefName(f"refs/heads/{name}")
+        if self.read_ref(branch_ref) is None:
+            raise ValueError(f"Branch {name!r} does not exist")
+        _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref.as_bytes())
+
     def tree(self, commit: str | None = None) -> GitTreePath:
         return GitTreePath(self, commit=commit)
 

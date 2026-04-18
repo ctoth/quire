@@ -143,6 +143,9 @@ def test_branch_operations_track_refs_and_merge_base():
     assert store.commit_parent_shas(left) == [base]
     assert store.merge_base("left", "right") == base
 
+    store.set_current_branch("left")
+    assert store.current_branch_name() == "left"
+
     store.delete_branch("right")
     assert store.branch_sha("right") is None
 
