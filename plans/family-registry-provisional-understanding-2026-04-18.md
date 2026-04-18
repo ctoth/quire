@@ -18,6 +18,9 @@ revise it when Quire and downstream repositories expose a better shape.
 - A family contract version describes the declared family surface: document
   type, ref type, placement, codecs, validation hooks, foreign keys, and other
   table-level behavior.
+- The schema belongs to the family declaration. A large document class may live
+  in a helper module for readability, but there must not be a second public
+  schema registry that restates the family schema beside the family definition.
 
 ## Registry Shape
 
@@ -28,6 +31,10 @@ revise it when Quire and downstream repositories expose a better shape.
 - A registry should be the single declared source for family keys, family
   definitions, placement policies, contract versions, and registry-level
   contract metadata.
+- The registry should expose schema through the family definition. Downstream
+  code should ask the family for its document type, ref type, placement, codec,
+  foreign keys, and semantic metadata instead of importing a parallel
+  `SemanticFamilyDefinition` or hand-maintained schema table.
 - A bound registry should attach that declaration to an owner plus a
   `DocumentFamilyStore`.
 
@@ -144,38 +151,52 @@ path. No compatibility bridge is part of this plan.
   ordinary family operations where the bound family attribute is available.
 - Serialized strings such as `claims`, path fragments such as `.yaml`, and
   fixed source filenames live in family/placement declarations only.
+- Propstore schema classes travel with the family declarations at the public
+  API level: there is one registry entry for `claims`, and that entry owns the
+  claim document type, ref type, placement, import metadata, foreign keys, and
+  contract version. Helper modules may contain large msgspec structs, but they
+  are implementation detail, not a second schema surface.
 
 Current execution checkpoint:
 
 - Quire has `FamilyRegistry`, `BoundFamilyRegistry`, and `BoundFamily`, exported
   from the package and covered by tests.
+- Quire has hash-scattered placement as a first path toward non-materialized
+  large family storage.
 - Propstore depends on the pushed Quire commit that contains that API.
 - Propstore exposes `repo.families` from its `Repository`.
 - Sidecar build, compilation context loading, concept ID allocation, grounding
   loading/inspection, artifact-code verification, and context workflows have
   been cut over to bound families.
-- The remaining deletion-first loop is mechanical but important: for each
-  production module still calling `repo.artifacts.<operation>(FAMILY, ...)`,
-  replace it with the owning bound family, delete the now-unused family imports,
-  run the narrow logged tests, and commit the kept reduction.
+- Production `repo.artifacts.<operation>(FAMILY, ...)` calls have been removed.
+  Remaining cleanup is now about deleting duplicate registry/schema surfaces,
+  broad artifact barrels, and helper wrappers that keep family constants in
+  ordinary callers.
 - Additional kept reductions have cut over form workflows, compiler historical
   loading, micropub workflows, worldlines, merge inputs, source authoring,
-  source promotion path resolution, claim CLI reads, and merge CLI reads.
-- Project initialization is being cut over from raw artifact-family operations
-  to bound families for seed forms and seed concepts.
+  source promotion path resolution, claim CLI reads, merge CLI reads, project
+  initialization, proposal writes, repository import writes, concept CLI reads,
+  and merge manifest writes.
 
 Remaining production buckets:
 
-- Finish project initialization and commit the kept reduction.
-- Concept CLI owner logic still inside `propstore.cli.concept`.
-- Source finalize/promote transaction bodies that still save raw family
-  constants through artifact-store transactions.
-- Proposal workflows and structured merge commit helpers.
-- Reasoning demo seed/import code.
-- Decide whether the remaining generic `repo.artifacts.render(...)` calls should
-  stay as codec/render boundaries or move behind a Quire family/registry API.
-- Add the Quire transaction abstraction if needed, then delete downstream raw
-  transaction family saves instead of wrapping them locally.
+- Delete propstore's separate `SemanticFamilyDefinition` /
+  `SemanticFamilyRegistry` surface and represent semantic metadata on the
+  Quire family definitions that already own schema, placement, keys, versions,
+  and foreign keys.
+- Delete or shrink `propstore.artifacts.policy` once tests no longer require a
+  raw `repo.artifacts` construction path.
+- Delete broad `propstore.artifacts` barrel exports for family constants; callers
+  should use `repo.families` or the single registry declaration.
+- Delete concept CLI `_artifact_*` helper wrappers and replace them with direct
+  bound-family address/load/render calls.
+- Move source artifact-code verification, identity normalization, and reference
+  indexes out of the artifact package when they are domain behavior rather than
+  family declaration behavior.
+- Decide the final module shape for large msgspec structs: colocated with
+  family declaration when small, or imported as private helper schema modules
+  when large. In both cases the family registry is the only public schema
+  surface.
 
 ### Phase 6: Remove Propstore-Local Registry Machinery
 
