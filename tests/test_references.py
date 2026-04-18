@@ -52,6 +52,7 @@ def test_reference_index_reports_ambiguous_keys_without_guessing() -> None:
     assert resolution is not None
     assert not resolution.found
     assert resolution.ambiguous
+    assert resolution.target_kind == "concept"
     assert resolution.ambiguous_candidates == ("concept:1", "concept:2")
 
 

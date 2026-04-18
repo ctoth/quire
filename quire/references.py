@@ -27,6 +27,10 @@ class ReferenceResolution:
     def ambiguous(self) -> bool:
         return self.resolved_id is None and bool(self.ambiguous_candidates)
 
+    @property
+    def target_kind(self) -> str:
+        return self.target_family
+
 
 @dataclass(frozen=True)
 class ForeignKeySpec:
