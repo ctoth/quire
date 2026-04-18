@@ -184,3 +184,70 @@ def test_contract_body_normalizes_dataclasses_and_msgspec_structs():
         "metadata": {"enabled": True, "name": "alpha"},
         "struct": {"count": 3, "name": "beta"},
     }
+
+
+def _registry_manifest(
+    *,
+    registry_version: str = "2026.04.18",
+    entry_version: str = "2026.04.18",
+    registry_name: str = "demo",
+    entry_name: str = "demo",
+    field_type: str = "str",
+) -> ContractManifest:
+    return ContractManifest(
+        format_version=1,
+        package_name="demo",
+        package_version="0.1.0",
+        registry_name=registry_name,
+        registry_contract_version=VersionId(registry_version),
+        contracts=(
+            ContractEntry(
+                kind="family-registry",
+                name=entry_name,
+                contract_version=VersionId(entry_version),
+                body={
+                    "families": (
+                        {
+                            "name": "claims",
+                            "key": "claims",
+                            "contract_version": "2026.04.18",
+                            "field_type": field_type,
+                        },
+                    ),
+                },
+            ),
+        ),
+    )
+
+
+def test_registry_manifest_requires_matching_registry_contract_entry():
+    with pytest.raises(ValueError, match="registry contract_version must match"):
+        _registry_manifest(registry_version="2026.04.19", entry_version="2026.04.18")
+
+    with pytest.raises(ValueError, match="registry entry family-registry:demo"):
+        _registry_manifest(registry_name="demo", entry_name="other")
+
+
+def test_registry_body_drift_requires_registry_version_bump():
+    previous = _registry_manifest(registry_version="2026.04.18", entry_version="2026.04.18")
+    current = _registry_manifest(
+        registry_version="2026.04.18",
+        entry_version="2026.04.18",
+        field_type="int",
+    )
+
+    with pytest.raises(ContractManifestError, match="family-registry:demo"):
+        check_contract_manifest(previous, current)
+
+
+def test_registry_body_drift_with_registry_version_bump_reports_bumped():
+    previous = _registry_manifest(registry_version="2026.04.18", entry_version="2026.04.18")
+    current = _registry_manifest(
+        registry_version="2026.04.19",
+        entry_version="2026.04.19",
+        field_type="int",
+    )
+
+    report = check_contract_manifest(previous, current)
+
+    assert report.bumped == ("family-registry:demo",)

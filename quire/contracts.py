@@ -97,6 +97,21 @@ class ContractManifest:
         duplicates = sorted({key for key in keys if keys.count(key) > 1})
         if duplicates:
             raise ValueError(f"Duplicate contracts: {', '.join(duplicates)}")
+        if self.registry_name is not None or self.registry_contract_version is not None:
+            if self.registry_name is None or self.registry_contract_version is None:
+                raise ValueError("registry name and contract_version must be declared together")
+            registry_key = f"family-registry:{self.registry_name}"
+            registry_entry = next(
+                (entry for entry in self.contracts if entry.key == registry_key),
+                None,
+            )
+            if registry_entry is None:
+                raise ValueError(f"registry entry {registry_key} is required")
+            if registry_entry.contract_version != self.registry_contract_version:
+                raise ValueError(
+                    "registry contract_version must match "
+                    f"{registry_key} contract_version"
+                )
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
