@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dulwich.objects import Blob
+from dulwich.repo import MemoryRepo
 
 from quire.git_store import GitStore, GitStorePolicy
-from quire.notes import NotesRef
+from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
 from quire.refs import RefName
 
 
@@ -51,3 +52,24 @@ def test_notes_round_trip_against_arbitrary_notes_ref():
     assert store.read_note(notes_ref, blob.id.decode("ascii")) == b"note payload"
     store.delete_note(notes_ref, blob.id.decode("ascii"))
     assert store.read_note(notes_ref, blob.id.decode("ascii")) is None
+
+
+def test_free_note_helpers_work_with_plain_dulwich_repo():
+    repo = MemoryRepo()
+    blob = Blob.from_string(b"payload")
+    repo.object_store.add_object(blob)
+    notes_ref = NotesRef("refs/notes/helper-test")
+
+    note_commit = write_git_note(
+        repo,
+        notes_ref,
+        blob.id,
+        b"helper payload",
+        author=b"tester <tester@example.com>",
+        message=b"Record helper note",
+    )
+
+    assert repo.refs[notes_ref.as_bytes()] == note_commit
+    assert read_git_note(repo, notes_ref, blob.id) == b"helper payload"
+    assert remove_git_note(repo, notes_ref, blob.id) is not None
+    assert read_git_note(repo, notes_ref, blob.id) is None

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
+from dulwich.notes import Notes
 
 from quire.refs import RefName
 
@@ -23,3 +26,51 @@ class NotesRef:
 
     def __str__(self) -> str:
         return self.value
+
+
+def write_git_note(
+    repo: Any,
+    ref: NotesRef,
+    object_sha: bytes | str,
+    payload: bytes,
+    *,
+    author: bytes | None = None,
+    committer: bytes | None = None,
+    message: bytes | None = None,
+) -> bytes:
+    sha = object_sha if isinstance(object_sha, bytes) else object_sha.encode("ascii")
+    notes = Notes(repo.object_store, repo.refs)
+    return notes.set_note(
+        sha,
+        payload,
+        notes_ref=ref.as_bytes(),
+        author=author,
+        committer=committer,
+        message=message,
+    )
+
+
+def read_git_note(repo: Any, ref: NotesRef, object_sha: bytes | str) -> bytes | None:
+    sha = object_sha if isinstance(object_sha, bytes) else object_sha.encode("ascii")
+    notes = Notes(repo.object_store, repo.refs)
+    return notes.get_note(sha, notes_ref=ref.as_bytes())
+
+
+def remove_git_note(
+    repo: Any,
+    ref: NotesRef,
+    object_sha: bytes | str,
+    *,
+    author: bytes | None = None,
+    committer: bytes | None = None,
+    message: bytes | None = None,
+) -> bytes | None:
+    sha = object_sha if isinstance(object_sha, bytes) else object_sha.encode("ascii")
+    notes = Notes(repo.object_store, repo.refs)
+    return notes.remove_note(
+        sha,
+        notes_ref=ref.as_bytes(),
+        author=author,
+        committer=committer,
+        message=message,
+    )

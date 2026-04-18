@@ -6,11 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from dulwich.notes import Notes
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
 
-from quire.notes import NotesRef
+from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
 from quire.refs import RefName
 from quire.tree_path import GitTreePath
 
@@ -214,12 +213,11 @@ class GitStore:
             _ref_delete(self._repo.refs, ref.as_bytes())
 
     def write_note(self, ref: NotesRef, object_sha: str | bytes, payload: bytes) -> str:
-        sha = object_sha if isinstance(object_sha, bytes) else object_sha.encode("ascii")
-        notes = Notes(self._repo.object_store, self._repo.refs)
-        note_commit = notes.set_note(
-            sha,
+        note_commit = write_git_note(
+            self._repo,
+            ref,
+            object_sha,
             payload,
-            notes_ref=ref.as_bytes(),
             author=self._policy.author,
             committer=self._policy.author,
             message=b"Write note",
@@ -227,16 +225,13 @@ class GitStore:
         return note_commit.decode("ascii")
 
     def read_note(self, ref: NotesRef, object_sha: str | bytes) -> bytes | None:
-        sha = object_sha if isinstance(object_sha, bytes) else object_sha.encode("ascii")
-        notes = Notes(self._repo.object_store, self._repo.refs)
-        return notes.get_note(sha, notes_ref=ref.as_bytes())
+        return read_git_note(self._repo, ref, object_sha)
 
     def delete_note(self, ref: NotesRef, object_sha: str | bytes) -> str | None:
-        sha = object_sha if isinstance(object_sha, bytes) else object_sha.encode("ascii")
-        notes = Notes(self._repo.object_store, self._repo.refs)
-        note_commit = notes.remove_note(
-            sha,
-            notes_ref=ref.as_bytes(),
+        note_commit = remove_git_note(
+            self._repo,
+            ref,
+            object_sha,
             author=self._policy.author,
             committer=self._policy.author,
             message=b"Delete note",
