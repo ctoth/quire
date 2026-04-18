@@ -21,6 +21,17 @@ revise it when Quire and downstream repositories expose a better shape.
 - The schema belongs to the family declaration. A large document class may live
   in a helper module for readability, but there must not be a second public
   schema registry that restates the family schema beside the family definition.
+- A family ref/key is generic table-addressing machinery. Downstream projects
+  declare the key shape once in the family definition; Quire should provide the
+  boring mechanics for singleton keys, single-field keys, generated/bound key
+  construction, and placement parse/render. Downstream projects should not carry
+  one handwritten wrapper dataclass per family unless the key has real domain
+  behavior.
+- A claim reference is not the same thing as a family ref. In Propstore, claim
+  references are domain references that may name a canonical claim id,
+  source-local claim handle, logical id, or imported/source-qualified handle.
+  Resolving those references is claim graph/identity behavior owned by
+  Propstore, not Quire artifact machinery.
 
 ## Registry Shape
 
@@ -62,6 +73,9 @@ keys or bound attributes.
 - Downstream projects should not build local wrapper layers for listing,
   loading, saving, path resolution, or ref recovery. Those operations belong to
   Quire's store and bound family objects.
+- Downstream projects should keep domain reference services separate from family
+  addressing. For example, Propstore's claim-reference index/resolver belongs in
+  a claim-domain module even though it reads claim family documents.
 
 ## Sidecar And Indexes
 
@@ -196,8 +210,15 @@ Current execution checkpoint:
 
 Remaining production buckets:
 
-- Move identity normalization and reference indexes out of the artifact package
-  when they are domain behavior rather than family declaration behavior.
+- Move identity normalization and claim-reference indexes/resolvers out of the
+  artifact package. They are domain identity/graph behavior, not family
+  declaration behavior.
+- Delete the remaining `propstore.artifacts` barrel imports. Callers should
+  import from concrete owner modules while the final family/schema module shape
+  is being reduced.
+- Move or generate handwritten family key/ref wrappers from the family
+  declarations. The target is that family declarations state key shape once and
+  Quire supplies the key/ref mechanics.
 - Decide the final module shape for large msgspec structs: colocated with
   family declaration when small, or imported as private helper schema modules
   when large. In both cases the family registry is the only public schema
