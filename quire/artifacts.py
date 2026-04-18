@@ -190,7 +190,7 @@ class ArtifactAddress:
 
 
 @runtime_checkable
-class DocumentStoreBackend(Protocol):
+class ReadOnlyDocumentStoreBackend(Protocol):
     def read_file(self, path: str | Path, commit: str | None = None) -> bytes:
         ...
 
@@ -260,7 +260,7 @@ class ArtifactPlacementPolicy(Protocol[TOwner, TRef]):
     def list_refs(
         self,
         owner: TOwner,
-        backend: DocumentStoreBackend | None,
+        backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
@@ -299,7 +299,7 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
     def list_refs(
         self,
         owner: TOwner,
-        backend: DocumentStoreBackend | None,
+        backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
@@ -386,7 +386,7 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
     def list_refs(
         self,
         owner: TOwner,
-        backend: DocumentStoreBackend | None,
+        backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
@@ -457,7 +457,7 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
 
     def _list_encoded_refs(
         self,
-        backend: DocumentStoreBackend,
+        backend: ReadOnlyDocumentStoreBackend,
         prefix: str,
         commit: str,
     ) -> list[TRef]:
@@ -486,7 +486,7 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
     def list_refs(
         self,
         owner: TOwner,
-        backend: DocumentStoreBackend | None,
+        backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
@@ -527,7 +527,7 @@ class TemplateFilePlacement(Generic[TOwner, TRef]):
     def list_refs(
         self,
         owner: TOwner,
-        backend: DocumentStoreBackend | None,
+        backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
@@ -565,7 +565,7 @@ class SingletonFilePlacement(Generic[TOwner, TRef]):
     def list_refs(
         self,
         owner: TOwner,
-        backend: DocumentStoreBackend | None,
+        backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,

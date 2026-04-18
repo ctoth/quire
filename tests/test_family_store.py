@@ -10,8 +10,9 @@ from quire.artifacts import (
     ArtifactFamily,
     BranchPlacement,
     FlatYamlPlacement,
+    ReadOnlyDocumentStoreBackend,
 )
-from quire.family_store import DocumentFamilyStore
+from quire.family_store import DocumentFamilyStore, DocumentStoreBackend
 from quire.git_store import GitStore
 from quire.versions import VersionId
 
@@ -96,6 +97,22 @@ def test_prepare_runs_normalize_validate_then_encode():
         "validate:alpha-normalized",
         "encode:alpha-normalized",
     ]
+
+
+def test_prepare_has_no_git_side_effects():
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    family = _demo_family()
+
+    prepared = store.prepare(family, "example", DemoDocument("alpha"))
+
+    assert prepared.content
+    assert backend.branch_sha("master") is None
+    assert backend.log(max_count=10) == []
+
+
+def test_document_store_backend_extends_read_only_backend_protocol():
+    assert ReadOnlyDocumentStoreBackend in DocumentStoreBackend.__mro__
 
 
 def test_delete_removes_document_from_branch():

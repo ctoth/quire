@@ -12,6 +12,7 @@ from quire.artifacts import (
     ArtifactHandle,
     PathArtifactLocator,
     PreparedArtifact,
+    ReadOnlyDocumentStoreBackend,
     TDoc,
     TRef,
 )
@@ -26,10 +27,7 @@ from quire.documents.codecs import (
 TOwner = TypeVar("TOwner")
 
 
-class DocumentStoreBackend(Protocol):
-    def read_file(self, path: str | Path, commit: str | None = None) -> bytes:
-        ...
-
+class DocumentStoreBackend(ReadOnlyDocumentStoreBackend, Protocol):
     def commit_batch(
         self,
         adds: Mapping[str | Path, bytes],
@@ -38,16 +36,6 @@ class DocumentStoreBackend(Protocol):
         *,
         branch: str | None = None,
     ) -> str:
-        ...
-
-    def branch_sha(self, name: str) -> str | None:
-        ...
-
-    def list_dir_entries(
-        self,
-        subdir: str | Path,
-        commit: str | None = None,
-    ) -> list[tuple[str, bool]]:
         ...
 
 
@@ -262,9 +250,7 @@ class DocumentFamilyStore(Generic[TOwner]):
     ) -> str:
         with self.transact(message=message, branch=branch) as transaction:
             transaction.move(family, old_ref, new_ref, doc)
-        if transaction.commit_sha is None:
-            raise ValueError("artifact move did not produce a commit")
-        return transaction.commit_sha
+        return cast(str, transaction.commit_sha)
 
     def delete(
         self,
@@ -355,8 +341,6 @@ class DocumentFamilyTransaction(Generic[TOwner]):
             raise ValueError(
                 f"Transaction branch mismatch: expected {self.branch!r}, got {prepared.address.branch!r}"
             )
-        elif prepared.branch != self.branch:
-            raise ValueError(f"Transaction branch mismatch: expected {self.branch!r}, got {prepared.branch!r}")
         path = address_path(prepared.address)
         self._adds[path] = prepared.content
         self._deletes.discard(path)
