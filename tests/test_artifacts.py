@@ -17,6 +17,7 @@ from quire.artifacts import (
     SingletonFilePlacement,
     TemplateFilePlacement,
 )
+from quire.documents.loaded import LoadedDocument
 from quire.versions import VersionId
 
 
@@ -172,4 +173,88 @@ def test_hash_scattered_yaml_rejects_unknown_filename_mode_at_construction():
             DemoRef,
             ref_field="name",
             filename_mode="unknown",  # type: ignore[arg-type]
+        )
+
+
+def test_flat_yaml_ref_from_loaded_anchors_to_knowledge_root(tmp_path):
+    placement = FlatYamlPlacement("claims", DemoRef, ref_field="name")
+    root = tmp_path / "repo" / "claims" / "stuff"
+    source_path = root / "claims" / "alpha.yaml"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("name: alpha\n")
+
+    loaded = LoadedDocument(
+        filename="alpha.yaml",
+        source_path=source_path,
+        knowledge_root=root,
+    )
+
+    assert placement.ref_from_loaded(loaded) == DemoRef("alpha")
+
+
+def test_flat_yaml_ref_from_loaded_rejects_nested_path_relative_to_root(tmp_path):
+    placement = FlatYamlPlacement("claims", DemoRef, ref_field="name")
+    root = tmp_path / "repo"
+    source_path = root / "claims" / "stuff" / "claims" / "alpha.yaml"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("name: alpha\n")
+
+    loaded = LoadedDocument(
+        filename="alpha.yaml",
+        source_path=source_path,
+        knowledge_root=root,
+    )
+
+    with pytest.raises(ValueError, match="expected direct child"):
+        placement.ref_from_loaded(loaded)
+
+
+def test_hash_scattered_encoded_ref_recovers_from_loaded_path(tmp_path):
+    placement = HashScatteredYamlPlacement[Owner, DemoRef](
+        namespace="stances",
+        ref_factory=DemoRef,
+        ref_field="name",
+        codec="colon_to_double_underscore",
+        filename_mode="encoded_ref",
+    )
+    path = tmp_path / "repo" / "stances" / "aa" / "bb" / "claim__a.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("name: claim:a\n")
+
+    loaded = LoadedDocument(
+        filename="claim__a.yaml",
+        source_path=path,
+        knowledge_root=tmp_path / "repo",
+    )
+
+    assert placement.ref_from_loaded(loaded) == DemoRef("claim:a")
+
+
+def test_hash_scattered_digest_loaded_recovery_requires_document_ref(tmp_path):
+    placement = HashScatteredYamlPlacement[Owner, DemoRef](
+        namespace="claims",
+        ref_factory=DemoRef,
+        ref_field="name",
+        filename_mode="digest",
+    )
+    path = tmp_path / "repo" / "claims" / "aa" / "bb" / "opaque.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("name: alpha\n")
+
+    assert placement.ref_from_loaded(
+        LoadedDocument(
+            filename="opaque.yaml",
+            source_path=path,
+            knowledge_root=tmp_path / "repo",
+            document=DemoRef("alpha"),
+        )
+    ) == DemoRef("alpha")
+
+    with pytest.raises(TypeError, match="cannot recover refs"):
+        placement.ref_from_loaded(
+            LoadedDocument(
+                filename="opaque.yaml",
+                source_path=path,
+                knowledge_root=tmp_path / "repo",
+            )
         )

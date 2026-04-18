@@ -31,6 +31,34 @@ def _normalize_path(path: str | Path) -> str:
     return str(path).replace("\\", "/").strip("/")
 
 
+def _render_path(path: object) -> str:
+    if hasattr(path, "as_posix"):
+        return str(path.as_posix())
+    return str(path)
+
+
+def _loaded_source_path(loaded: object) -> str:
+    source_path = getattr(loaded, "source_path", None)
+    if source_path is None:
+        raise ValueError("loaded artifact does not expose source_path")
+    knowledge_root = getattr(loaded, "knowledge_root", None)
+    if knowledge_root is not None:
+        source_concrete = getattr(source_path, "concrete_path", None)
+        root_concrete = getattr(knowledge_root, "concrete_path", None)
+        if callable(source_concrete) and callable(root_concrete):
+            try:
+                return source_concrete().resolve().relative_to(root_concrete().resolve()).as_posix()
+            except ValueError:
+                pass
+        rendered = _normalize_path(_render_path(source_path))
+        root = _normalize_path(_render_path(knowledge_root))
+        if rendered == root:
+            return ""
+        if root and rendered.startswith(f"{root}/"):
+            return rendered[len(root) + 1:]
+    return _render_path(source_path)
+
+
 def _slug(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip().lower())
     cleaned = cleaned.strip("_-")
@@ -304,13 +332,10 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
         return self.ref_factory(decode_ref_value(tail.removesuffix(self.extension), self.codec))
 
     def ref_from_loaded(self, loaded: object) -> TRef:
-        source_path = getattr(loaded, "source_path", None)
-        if source_path is None:
-            raise ValueError("loaded artifact does not expose source_path")
-        rendered = source_path.as_posix() if hasattr(source_path, "as_posix") else str(source_path)
+        rendered = _loaded_source_path(loaded)
         marker = f"{self.namespace}/"
         normalized = rendered.replace("\\", "/")
-        if not normalized.startswith(marker):
+        if not normalized.startswith(marker) and getattr(loaded, "knowledge_root", None) is None:
             index = normalized.rfind(f"/{marker}")
             if index < 0:
                 raise ValueError(f"loaded source path is not under {self.namespace}: {rendered!r}")
@@ -397,7 +422,7 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
             value = getattr(document, self.ref_field, None)
             if isinstance(value, str) and value:
                 return self.ref_factory(value)
-        return self.ref_from_locator(PathArtifactLocator(getattr(loaded, "source_path")))
+        return self.ref_from_locator(PathArtifactLocator(_loaded_source_path(loaded)))
 
     def contract_body(self) -> dict[str, object]:
         return {
