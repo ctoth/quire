@@ -219,6 +219,21 @@ class GitStore:
         if self.read_ref(ref) is not None:
             _ref_delete(self._repo.refs, ref.as_bytes())
 
+    def write_blob_ref(self, ref: RefName, payload: bytes) -> str:
+        blob = Blob.from_string(payload)
+        self._repo.object_store.add_object(blob)
+        self.write_ref(ref, blob.id)
+        return blob.id.decode("ascii")
+
+    def read_blob_ref(self, ref: RefName) -> bytes | None:
+        sha = self.read_ref(ref)
+        if sha is None:
+            return None
+        obj = _repo_object(self._repo, sha.encode("ascii"))
+        if not isinstance(obj, Blob):
+            raise TypeError(f"Expected blob object at {ref}, got {type(obj).__name__}")
+        return obj.data
+
     def write_note(self, ref: NotesRef, object_sha: str | bytes, payload: bytes) -> str:
         note_commit = write_git_note(
             self._repo,

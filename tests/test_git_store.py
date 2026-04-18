@@ -87,6 +87,18 @@ def test_refs_read_write_delete_round_trip():
     assert store.read_ref(ref) is None
 
 
+def test_blob_refs_store_derived_index_payloads():
+    store = GitStore.init_memory()
+    ref = RefName("refs/quire/indexes/example")
+
+    blob_sha = store.write_blob_ref(ref, b"8\n")
+
+    assert store.read_ref(ref) == blob_sha
+    assert store.read_blob_ref(ref) == b"8\n"
+    store.delete_ref(ref)
+    assert store.read_blob_ref(ref) is None
+
+
 def test_notes_round_trip_against_arbitrary_notes_ref():
     store = GitStore.init_memory()
     blob = Blob.from_string(b"payload")
