@@ -150,6 +150,31 @@ def test_branch_operations_track_refs_and_merge_base():
     assert store.branch_sha("right") is None
 
 
+def test_branch_metadata_survives_reopening_filesystem_repo(tmp_path):
+    root = tmp_path / "repo"
+    store = GitStore.init(root)
+    base = store.commit_files({"base.txt": b"base"}, "base")
+
+    assert store.create_branch("feature") == base
+
+    reopened = GitStore.open(root)
+    branches = {branch.name: branch for branch in reopened.list_branches()}
+
+    assert branches["feature"].tip_sha == base
+    assert branches["feature"].parent_branch == "master"
+    assert branches["feature"].created_at > 0
+
+
+def test_delete_branch_removes_persisted_branch_metadata():
+    store = GitStore.init_memory()
+    store.commit_files({"base.txt": b"base"}, "base")
+    store.create_branch("feature")
+
+    store.delete_branch("feature")
+
+    assert store.read_blob_ref(RefName("refs/quire/branch-meta/feature")) is None
+
+
 def test_notes_round_trip_against_arbitrary_notes_ref():
     store = GitStore.init_memory()
     blob = Blob.from_string(b"payload")

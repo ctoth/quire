@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
+from urllib.parse import quote
 
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
@@ -83,6 +85,10 @@ def _tree_object(repo: BaseRepo, object_id: bytes) -> Tree:
     if isinstance(obj, Tree):
         return obj
     raise TypeError(f"Expected tree object, got {type(obj).__name__}")
+
+
+def _branch_meta_ref(name: str) -> RefName:
+    return RefName(f"refs/quire/branch-meta/{quote(name, safe='')}")
 
 
 class GitStore:
@@ -295,10 +301,16 @@ class GitStore:
             tip_sha = source_commit
 
         self.write_ref(ref, tip_sha)
-        self._branch_meta[name] = {
+        created_at = int(time.time())
+        meta = {
             "parent_branch": parent_branch,
-            "created_at": int(time.time()),
+            "created_at": created_at,
         }
+        self._branch_meta[name] = meta
+        self.write_blob_ref(
+            _branch_meta_ref(name),
+            json.dumps(meta, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
         return tip_sha
 
     def delete_branch(self, name: str) -> None:
@@ -308,6 +320,8 @@ class GitStore:
         if self.read_ref(ref) is None:
             raise ValueError(f"Branch {name!r} does not exist")
         self.delete_ref(ref)
+        self.delete_ref(_branch_meta_ref(name))
+        self._branch_meta.pop(name, None)
 
     def list_branches(self) -> list[GitBranch]:
         result: list[GitBranch] = []
@@ -316,7 +330,7 @@ class GitStore:
             if not ref_bytes.startswith(prefix):
                 continue
             name = ref_bytes[len(prefix):].decode("utf-8")
-            meta = self._branch_meta.get(name, {})
+            meta = self._read_branch_meta(name)
             parent_branch = meta.get("parent_branch", "")
             created_at = meta.get("created_at", 0)
             result.append(
@@ -599,6 +613,28 @@ class GitStore:
         if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
             _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
         return commit.id.decode("ascii")
+
+    def _read_branch_meta(self, name: str) -> dict[str, str | int]:
+        cached = self._branch_meta.get(name)
+        if cached is not None:
+            return cached
+        payload = self.read_blob_ref(_branch_meta_ref(name))
+        if payload is None:
+            return {}
+        try:
+            loaded = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(loaded, dict):
+            return {}
+        parent_branch = loaded.get("parent_branch", "")
+        created_at = loaded.get("created_at", 0)
+        meta: dict[str, str | int] = {
+            "parent_branch": parent_branch if isinstance(parent_branch, str) else "",
+            "created_at": created_at if isinstance(created_at, int) else 0,
+        }
+        self._branch_meta[name] = meta
+        return meta
 
     def _subtree(self, subdir: str | Path, *, commit: str | None) -> Tree | None:
         subdir = _normalize_path(subdir)
