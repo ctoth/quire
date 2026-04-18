@@ -187,11 +187,13 @@ Current execution checkpoint:
   the bound registry as the public repository family surface.
 - `propstore.artifacts.policy` has been deleted; tests now use bound families
   directly and enforce the absence of raw artifact-store factories.
+- Broad `propstore.artifacts` barrel exports for family constants and the
+  registry have been deleted. Production modules now import refs, indexes,
+  identity helpers, resolution helpers, or the family declaration module
+  directly instead of using the artifact barrel as a schema surface.
 
 Remaining production buckets:
 
-- Delete broad `propstore.artifacts` barrel exports for family constants; callers
-  should use `repo.families` or the single registry declaration.
 - Move source artifact-code verification, identity normalization, and reference
   indexes out of the artifact package when they are domain behavior rather than
   family declaration behavior.
