@@ -19,10 +19,17 @@ class GitStorePolicy:
     author: bytes = b"Quire <quire@example.com>"
     primary_branch: str = "master"
     initial_files: Mapping[str, bytes] = field(default_factory=dict)
+    initial_commit_message: str = "Initialize repository"
+    ignored_path_prefixes: tuple[str, ...] = ()
+    ignored_path_suffixes: tuple[str, ...] = ()
 
 
 def _normalize_path(path: str | Path) -> str:
     return str(path).replace("\\", "/").strip("/")
+
+
+def _tree_add(tree: Any, name: bytes, mode: int, object_id: bytes) -> None:
+    tree.add(name, mode, object_id)
 
 
 def _ref_get(refs: Any, ref_name: bytes) -> bytes | None:
@@ -96,7 +103,7 @@ class GitStore:
         resolved_policy = policy or GitStorePolicy()
         store = cls(Repo.init(str(root)), root, policy=resolved_policy)
         if resolved_policy.initial_files:
-            store.commit_files(resolved_policy.initial_files, "Initialize repository")
+            store.commit_files(resolved_policy.initial_files, resolved_policy.initial_commit_message)
         return store
 
     @classmethod
@@ -104,7 +111,7 @@ class GitStore:
         resolved_policy = policy or GitStorePolicy()
         store = cls(MemoryRepo(), policy=resolved_policy)
         if resolved_policy.initial_files:
-            store.commit_files(resolved_policy.initial_files, "Initialize repository")
+            store.commit_files(resolved_policy.initial_files, resolved_policy.initial_commit_message)
         return store
 
     @classmethod
@@ -259,7 +266,7 @@ class GitStore:
             })
         return result
 
-    def materialize_worktree(self) -> None:
+    def materialize_worktree(self, *, remove_extra: bool = False) -> None:
         if self._root is None:
             return
         try:
@@ -276,6 +283,59 @@ class GitStore:
             blob = self._walk_tree(tree, PurePosixPath(rel_path).parts)
             if isinstance(blob, Blob):
                 abs_path.write_bytes(blob.data)
+        if remove_extra:
+            self._remove_extra_worktree_files(paths)
+
+    def sync_worktree(self) -> None:
+        self.materialize_worktree(remove_extra=True)
+
+    def diff_commits(
+        self,
+        commit1: str | None = None,
+        commit2: str | None = None,
+    ) -> dict[str, list[str]]:
+        if commit1 is None:
+            try:
+                commit1 = self._repo.head().decode("ascii")
+            except KeyError:
+                return {"added": [], "modified": [], "deleted": []}
+
+        if commit2 is None:
+            commit1_obj = _commit_object(self._repo, commit1.encode("ascii"))
+            commit2 = commit1_obj.parents[0].decode("ascii") if commit1_obj.parents else None
+
+        entries1: dict[str, bytes] = {}
+        tree1 = self._get_tree(commit1)
+        if tree1 is not None:
+            self._flatten_tree(tree1, "", entries1)
+
+        entries2: dict[str, bytes] = {}
+        if commit2 is not None:
+            tree2 = self._get_tree(commit2)
+            if tree2 is not None:
+                self._flatten_tree(tree2, "", entries2)
+
+        return {
+            "added": sorted(path for path in entries1 if path not in entries2),
+            "modified": sorted(
+                path for path in entries1 if path in entries2 and entries1[path] != entries2[path]
+            ),
+            "deleted": sorted(path for path in entries2 if path not in entries1),
+        }
+
+    def show_commit(self, sha: str) -> dict[str, object]:
+        commit = _commit_object(self._repo, sha.encode("ascii"))
+        parent_sha = commit.parents[0].decode("ascii") if commit.parents else None
+        diff = self.diff_commits(sha, parent_sha)
+        return {
+            "sha": sha,
+            "message": commit.message.decode("utf-8", errors="replace").strip(),
+            "author": commit.author.decode("utf-8", errors="replace"),
+            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(commit.commit_time)),
+            "added": diff["added"],
+            "modified": diff["modified"],
+            "deleted": diff["deleted"],
+        }
 
     def _resolve_read_branch_name(self, branch: str | None = None) -> str | None:
         if branch:
@@ -403,12 +463,12 @@ class GitStore:
 
         tree = Tree()
         for name, sha in sorted(direct_blobs):
-            tree.add(name.encode("utf-8"), 0o100644, sha)
+            _tree_add(tree, name.encode("utf-8"), 0o100644, sha)
         for dirname in sorted(children):
             sub_entries = {rest: sha for rest, sha in children[dirname]}
             subtree = self._build_tree_from_flat(sub_entries)
             self._repo.object_store.add_object(subtree)
-            tree.add(dirname.encode("utf-8"), 0o040000, subtree.id)
+            _tree_add(tree, dirname.encode("utf-8"), 0o040000, subtree.id)
         self._repo.object_store.add_object(tree)
         return tree
 
@@ -421,3 +481,23 @@ class GitStore:
                 self._collect_tree_paths(obj, path, out)
             elif isinstance(obj, Blob):
                 out.add(path)
+
+    def _remove_extra_worktree_files(self, tracked_paths: set[str]) -> None:
+        if self._root is None:
+            return
+        for disk_file in self._root.rglob("*"):
+            if not disk_file.is_file():
+                continue
+            rel = disk_file.relative_to(self._root).as_posix()
+            if rel.startswith(".git/") or rel == ".git":
+                continue
+            if self._is_ignored_runtime_path(rel):
+                continue
+            if rel not in tracked_paths:
+                disk_file.unlink()
+
+    def _is_ignored_runtime_path(self, relpath: str) -> bool:
+        normalized = relpath.replace("\\", "/")
+        return normalized.startswith(self._policy.ignored_path_prefixes) or normalized.endswith(
+            self._policy.ignored_path_suffixes
+        )

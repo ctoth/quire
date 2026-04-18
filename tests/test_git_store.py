@@ -28,6 +28,53 @@ def test_commit_and_read_are_object_store_operations(tmp_path):
     assert not (root / "docs" / "example.yaml").exists()
 
 
+def test_materialize_worktree_can_remove_stale_files_and_preserve_runtime_paths(tmp_path):
+    root = tmp_path / "repo"
+    store = GitStore.init(
+        root,
+        policy=GitStorePolicy(
+            ignored_path_prefixes=("sidecar/",),
+            ignored_path_suffixes=(".sqlite", ".hash"),
+        ),
+    )
+    store.commit_files({"docs/example.yaml": b"name: demo\n"}, "add example")
+    store.materialize_worktree(remove_extra=True)
+
+    assert (root / "docs" / "example.yaml").read_bytes() == b"name: demo\n"
+
+    sidecar = root / "sidecar" / "cache.sqlite"
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_bytes(b"cache")
+    stale = root / "docs" / "stale.yaml"
+    stale.write_bytes(b"old")
+
+    store.commit_deletes(["docs/example.yaml"], "remove example")
+    store.materialize_worktree(remove_extra=True)
+
+    assert not (root / "docs" / "example.yaml").exists()
+    assert not stale.exists()
+    assert sidecar.read_bytes() == b"cache"
+
+
+def test_diff_and_show_commit_report_tree_changes():
+    store = GitStore.init_memory()
+    first = store.commit_files({"a.txt": b"one", "b.txt": b"two"}, "first")
+    second = store.commit_batch({"a.txt": b"changed", "c.txt": b"three"}, ["b.txt"], "second")
+
+    assert store.diff_commits(second, first) == {
+        "added": ["c.txt"],
+        "modified": ["a.txt"],
+        "deleted": ["b.txt"],
+    }
+
+    shown = store.show_commit(second)
+    assert shown["sha"] == second
+    assert shown["message"] == "second"
+    assert shown["added"] == ["c.txt"]
+    assert shown["modified"] == ["a.txt"]
+    assert shown["deleted"] == ["b.txt"]
+
+
 def test_refs_read_write_delete_round_trip():
     store = GitStore.init_memory()
     sha = store.commit_files({"a.txt": b"a"}, "add a")
