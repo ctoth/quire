@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Generic, Protocol, TypeVar, cast
 
 from quire.artifacts import (
+    ArtifactAddress,
     ArtifactContext,
     ArtifactFamily,
     ArtifactHandle,
+    PathArtifactLocator,
     PreparedArtifact,
-    ResolvedArtifact,
     TDoc,
     TRef,
 )
@@ -42,12 +43,25 @@ class DocumentStoreBackend(Protocol):
     def branch_sha(self, name: str) -> str | None:
         ...
 
+    def list_dir_entries(
+        self,
+        subdir: str | Path,
+        commit: str | None = None,
+    ) -> list[tuple[str, bool]]:
+        ...
+
 
 BranchHeadResolver = Callable[[DocumentStoreBackend, str], str | None]
 
 
 def normalized_path(path: str | Path) -> str:
     return str(path).replace("\\", "/")
+
+
+def address_path(address: ArtifactAddress) -> str:
+    if not isinstance(address.locator, PathArtifactLocator):
+        raise TypeError(f"document family store only supports path locators, got {type(address.locator).__name__}")
+    return normalized_path(address.locator.path)
 
 
 def default_branch_head(backend: DocumentStoreBackend, branch: str) -> str | None:
@@ -73,35 +87,31 @@ class DocumentFamilyStore(Generic[TOwner]):
     render_document_value: Callable[[object], str] = render_document
     document_to_payload: Callable[[object], object] = document_to_payload
 
-    def resolve(
+    def address(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
         commit: str | None = None,
-    ) -> ResolvedArtifact:
-        resolved = family.resolve_ref(self.owner, ref)
+    ) -> ArtifactAddress:
+        address = family.address_for(self.owner, ref)
         if commit is None:
-            return resolved
-        return ResolvedArtifact(branch=resolved.branch, relpath=resolved.relpath, commit=commit)
+            return address
+        return ArtifactAddress(branch=address.branch, locator=address.locator, commit=commit)
 
     def ref_from_path(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         path: str | Path,
     ) -> TRef:
-        if family.ref_from_path is None:
-            raise TypeError(f"{family.name} does not support path-derived refs")
-        return family.ref_from_path(path)
+        return family.placement.ref_from_locator(PathArtifactLocator(path))
 
     def ref_from_loaded(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         loaded: object,
     ) -> TRef:
-        if family.ref_from_loaded is None:
-            raise TypeError(f"{family.name} does not support loaded-object refs")
-        return family.ref_from_loaded(loaded)
+        return family.placement.ref_from_loaded(loaded)
 
     def coerce(
         self,
@@ -132,13 +142,17 @@ class DocumentFamilyStore(Generic[TOwner]):
         *,
         branch: str | None = None,
     ) -> PreparedArtifact[TOwner, TRef, TDoc]:
-        resolved = self.resolve(family, ref)
-        target_branch = branch or resolved.branch
+        address = self.address(family, ref)
+        target_branch = branch or address.branch
         context = ArtifactContext(
             repo=self.owner,
             ref=ref,
             branch=target_branch,
-            relpath=resolved.relpath,
+            address=ArtifactAddress(
+                branch=target_branch,
+                locator=address.locator,
+                commit=address.commit,
+            ),
         )
         normalized = doc
         if family.normalize_for_write is not None:
@@ -149,7 +163,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         return PreparedArtifact(
             family=family,
             ref=ref,
-            resolved=resolved,
+            address=address,
             branch=target_branch,
             document=normalized,
             content=encoder(normalized),
@@ -163,17 +177,18 @@ class DocumentFamilyStore(Generic[TOwner]):
         commit: str | None = None,
     ) -> TDoc | None:
         backend = self._require_backend()
-        resolved = self.resolve(family, ref, commit=commit)
-        target_commit = commit or resolved.commit
+        address = self.address(family, ref, commit=commit)
+        target_commit = commit or address.commit
         if target_commit is None:
-            target_commit = self.branch_head(backend, resolved.branch)
+            target_commit = self.branch_head(backend, address.branch)
             if target_commit is None:
                 return None
+        path = address_path(address)
         try:
-            raw = backend.read_file(resolved.relpath, commit=target_commit)
+            raw = backend.read_file(path, commit=target_commit)
         except FileNotFoundError:
             return None
-        source = f"{resolved.branch}:{normalized_path(resolved.relpath)}"
+        source = f"{address.branch}:{path}"
         if family.decode_bytes is not None:
             return family.decode_bytes(raw, source)
         return self.decode_document(raw, family.doc_type, source)
@@ -191,7 +206,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         return ArtifactHandle(
             family=family,
             ref=ref,
-            resolved=self.resolve(family, ref, commit=commit),
+            address=self.address(family, ref, commit=commit),
             document=document,
         )
 
@@ -204,8 +219,8 @@ class DocumentFamilyStore(Generic[TOwner]):
     ) -> ArtifactHandle[TOwner, TRef, TDoc]:
         handle = self.handle(family, ref, commit=commit)
         if handle is None:
-            resolved = self.resolve(family, ref, commit=commit)
-            raise FileNotFoundError(f"{family.name}: {resolved.branch}:{normalized_path(resolved.relpath)}")
+            address = self.address(family, ref, commit=commit)
+            raise FileNotFoundError(f"{family.name}: {address.branch}:{address_path(address)}")
         return handle
 
     def require(
@@ -229,7 +244,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         backend = self._require_backend()
         prepared = self.prepare(family, ref, doc, branch=branch)
         return backend.commit_batch(
-            adds={normalized_path(prepared.resolved.relpath): prepared.content},
+            adds={address_path(prepared.address): prepared.content},
             deletes=[],
             message=message,
             branch=prepared.branch,
@@ -260,11 +275,11 @@ class DocumentFamilyStore(Generic[TOwner]):
         branch: str | None = None,
     ) -> str:
         backend = self._require_backend()
-        resolved = self.resolve(family, ref)
-        target_branch = branch or resolved.branch
+        address = self.address(family, ref)
+        target_branch = branch or address.branch
         return backend.commit_batch(
             adds={},
-            deletes=[normalized_path(resolved.relpath)],
+            deletes=[address_path(address)],
             message=message,
             branch=target_branch,
         )
@@ -276,9 +291,12 @@ class DocumentFamilyStore(Generic[TOwner]):
         branch: str | None = None,
         commit: str | None = None,
     ) -> list[TRef]:
-        if family.list_refs is None:
-            raise TypeError(f"{family.name} does not support listing")
-        return family.list_refs(self.owner, branch, commit)
+        return family.placement.list_refs(
+            self.owner,
+            self.backend,
+            branch=branch,
+            commit=commit,
+        )
 
     def transact(
         self,
@@ -333,37 +351,37 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         prepared = self.store.prepare(family, ref, doc, branch=self.branch)
         if self.branch is None:
             self.branch = prepared.branch
-        elif not self._explicit_branch and prepared.resolved.branch != self.branch:
+        elif not self._explicit_branch and prepared.address.branch != self.branch:
             raise ValueError(
-                f"Transaction branch mismatch: expected {self.branch!r}, got {prepared.resolved.branch!r}"
+                f"Transaction branch mismatch: expected {self.branch!r}, got {prepared.address.branch!r}"
             )
         elif prepared.branch != self.branch:
             raise ValueError(f"Transaction branch mismatch: expected {self.branch!r}, got {prepared.branch!r}")
-        relpath = normalized_path(prepared.resolved.relpath)
-        self._adds[relpath] = prepared.content
-        self._deletes.discard(relpath)
+        path = address_path(prepared.address)
+        self._adds[path] = prepared.content
+        self._deletes.discard(path)
 
     def delete(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef) -> None:
         self._ensure_open()
-        _, resolved = self._resolved_target(family, ref)
-        relpath = normalized_path(resolved.relpath)
-        self._deletes.add(relpath)
-        self._adds.pop(relpath, None)
+        _, address = self._addressed_target(family, ref)
+        path = address_path(address)
+        self._deletes.add(path)
+        self._adds.pop(path, None)
 
     def move(self, family: ArtifactFamily[TOwner, TRef, TDoc], old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
         self.save(family, new_ref, doc)
-        old_branch, old_resolved = self._resolved_target(family, old_ref)
-        new_branch, _ = self._resolved_target(family, new_ref)
+        old_branch, old_address = self._addressed_target(family, old_ref)
+        new_branch, new_address = self._addressed_target(family, new_ref)
         if old_branch != new_branch:
             raise ValueError(
                 f"Transaction branch mismatch for move: expected {new_branch!r}, got {old_branch!r}"
             )
-        old_relpath = normalized_path(old_resolved.relpath)
-        new_relpath = normalized_path(family.resolve_ref(self.owner, new_ref).relpath)
-        if old_relpath != new_relpath:
-            self._deletes.add(old_relpath)
-            self._adds.pop(old_relpath, None)
+        old_path = address_path(old_address)
+        new_path = address_path(new_address)
+        if old_path != new_path:
+            self._deletes.add(old_path)
+            self._adds.pop(old_path, None)
 
     def commit(self) -> str:
         if self._commit_sha is not None:
@@ -379,18 +397,18 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         )
         return self._commit_sha
 
-    def _resolved_target(
+    def _addressed_target(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
-    ) -> tuple[str, ResolvedArtifact]:
-        resolved = family.resolve_ref(self.owner, ref)
-        branch = self.branch or resolved.branch
+    ) -> tuple[str, ArtifactAddress]:
+        address = family.address_for(self.owner, ref)
+        branch = self.branch or address.branch
         if self.branch is None:
             self.branch = branch
         elif branch != self.branch:
             raise ValueError(f"Transaction branch mismatch: expected {self.branch!r}, got {branch!r}")
-        return branch, resolved
+        return branch, address
 
     def _ensure_open(self) -> None:
         if self._commit_sha is not None:

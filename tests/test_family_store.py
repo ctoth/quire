@@ -5,7 +5,12 @@ from dataclasses import dataclass
 import msgspec
 import pytest
 
-from quire.artifacts import ArtifactContext, ArtifactFamily, ResolvedArtifact
+from quire.artifacts import (
+    ArtifactContext,
+    ArtifactFamily,
+    BranchPlacement,
+    FlatYamlPlacement,
+)
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore
 from quire.versions import VersionId
@@ -20,6 +25,12 @@ class Owner:
     branch: str = "master"
 
 
+@dataclass(frozen=True)
+class BranchRef:
+    branch: str
+    name: str
+
+
 def _demo_family(
     *,
     normalize_for_write=None,
@@ -30,16 +41,10 @@ def _demo_family(
         name="demo",
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
         doc_type=DemoDocument,
-        resolve_ref=lambda owner, ref: ResolvedArtifact(
-            branch=owner.branch,
-            relpath=f"demo/{ref}.yaml",
-        ),
+        placement=FlatYamlPlacement("demo", str),
         normalize_for_write=normalize_for_write,
         validate_for_write=validate_for_write,
         encode_document=encode_document,
-        list_refs=lambda _owner, _branch, _commit: ["example"],
-        ref_from_path=lambda path: str(path).replace("\\", "/").removeprefix("demo/").removesuffix(".yaml"),
-        ref_from_loaded=lambda loaded: loaded.name,
     )
 
 
@@ -61,7 +66,7 @@ def test_prepare_runs_normalize_validate_then_encode():
         document: DemoDocument,
         _store: DocumentFamilyStore[Owner],
     ) -> DemoDocument:
-        events.append(f"normalize:{context.relpath}:{document.name}")
+        events.append(f"normalize:{context.require_path()}:{document.name}")
         return DemoDocument(f"{document.name}-normalized")
 
     def validate(
@@ -85,6 +90,7 @@ def test_prepare_runs_normalize_validate_then_encode():
     prepared = store.prepare(family, "example", DemoDocument("alpha"))
 
     assert prepared.document == DemoDocument("alpha-normalized")
+    assert prepared.address.require_path() == "demo/example.yaml"
     assert events == [
         "normalize:demo/example.yaml:alpha",
         "validate:alpha-normalized",
@@ -119,20 +125,22 @@ def test_transaction_writes_multiple_documents_in_one_commit():
 def test_transaction_rejects_cross_branch_writes():
     backend = GitStore.init_memory()
     store = DocumentFamilyStore(owner=Owner(), backend=backend)
-    family = ArtifactFamily(
+    family = ArtifactFamily[Owner, BranchRef, DemoDocument](
         name="branching",
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
         doc_type=DemoDocument,
-        resolve_ref=lambda _owner, ref: ResolvedArtifact(
-            branch=ref.split(":", 1)[0],
-            relpath=f"demo/{ref}.yaml",
+        placement=FlatYamlPlacement(
+            "demo",
+            lambda name: BranchRef("master", name),
+            ref_field="name",
+            branch=BranchPlacement(policy="template", template="{stem}", ref_field="branch"),
         ),
     )
 
     with pytest.raises(ValueError, match="Transaction branch mismatch"):
         with store.transact(message="cross branch") as transaction:
-            transaction.save(family, "master:one", DemoDocument("one"))
-            transaction.save(family, "other:two", DemoDocument("two"))
+            transaction.save(family, BranchRef("master", "one"), DemoDocument("one"))
+            transaction.save(family, BranchRef("other", "two"), DemoDocument("two"))
 
 
 def test_move_deletes_old_path_and_writes_new_path():
@@ -151,10 +159,7 @@ def test_custom_codecs_override_defaults():
         name="custom",
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
         doc_type=DemoDocument,
-        resolve_ref=lambda owner, ref: ResolvedArtifact(
-            branch=owner.branch,
-            relpath=f"custom/{ref}.txt",
-        ),
+        placement=FlatYamlPlacement("custom", str, extension=".txt"),
         encode_document=lambda document: f"name={document.name}".encode("utf-8"),
         decode_bytes=lambda payload, _source: DemoDocument(payload.decode("utf-8").split("=", 1)[1]),
         render_document=lambda document: f"name={document.name}",
@@ -175,15 +180,8 @@ def test_unsupported_family_operations_fail_clearly():
         name="minimal",
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
         doc_type=DemoDocument,
-        resolve_ref=lambda owner, ref: ResolvedArtifact(
-            branch=owner.branch,
-            relpath=f"minimal/{ref}.yaml",
-        ),
+        placement=FlatYamlPlacement("minimal", str),
     )
 
-    with pytest.raises(TypeError, match="path-derived refs"):
-        store.ref_from_path(family, "minimal/example.yaml")
-    with pytest.raises(TypeError, match="loaded-object refs"):
-        store.ref_from_loaded(family, DemoDocument("example"))
-    with pytest.raises(TypeError, match="does not support listing"):
-        store.list(family)
+    with pytest.raises(ValueError, match="expected minimal"):
+        store.ref_from_path(family, "other/example.yaml")
