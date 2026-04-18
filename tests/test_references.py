@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from types import MappingProxyType
 
+import msgspec
 import pytest
 
+from quire.artifacts import ArtifactFamily, FlatYamlPlacement
+from quire.families import FamilyDefinition, FamilyRegistry
+from quire.family_store import DocumentFamilyStore
+from quire.git_store import GitStore
 from quire.references import (
     CrossFamilyReferenceIndex,
     ForeignKeySpec,
@@ -18,6 +24,26 @@ from quire.versions import VersionId
 class Record:
     artifact_id: str
     aliases: tuple[str, ...] = ()
+
+
+class ConceptDoc(msgspec.Struct):
+    artifact_id: str
+    aliases: tuple[str, ...] = ()
+
+
+class ClaimDoc(msgspec.Struct):
+    artifact_id: str
+    concept: str
+
+
+class DemoFamily(str, Enum):
+    CONCEPTS = "concepts"
+    CLAIMS = "claims"
+
+
+@dataclass(frozen=True)
+class Owner:
+    branch: str = "master"
 
 
 def _index() -> ReferenceIndex[object]:
@@ -81,3 +107,79 @@ def test_foreign_key_spec_contract_body_is_stable() -> None:
         "required": True,
         "many": False,
     }
+
+
+def test_cross_family_reference_index_integrates_with_bound_family_registry() -> None:
+    concepts = ArtifactFamily(
+        name="concepts",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=ConceptDoc,
+        placement=FlatYamlPlacement("concepts", str),
+    )
+    claims = ArtifactFamily(
+        name="claims",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=ClaimDoc,
+        placement=FlatYamlPlacement("claims", str),
+    )
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(
+            FamilyDefinition(
+                key=DemoFamily.CONCEPTS,
+                name="concepts",
+                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                artifact_family=concepts,
+            ),
+            FamilyDefinition(
+                key=DemoFamily.CLAIMS,
+                name="claims",
+                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                artifact_family=claims,
+                foreign_keys=(
+                    ForeignKeySpec(
+                        name="claim_concept",
+                        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                        source_family="claims",
+                        source_field="concept",
+                        target_family="concepts",
+                    ),
+                ),
+            ),
+        ),
+    )
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+
+    with bound.transact(message="seed families") as transaction:
+        transaction.concepts.save(
+            "concept:mass",
+            ConceptDoc("concept:mass", ("mass", "m")),
+        )
+        transaction.claims.save(
+            "claim:1",
+            ClaimDoc("claim:1", "mass"),
+        )
+
+    concept_records = {
+        ref: bound.concepts.require(ref)
+        for ref in bound.concepts.list()
+    }
+    concept_lookup = build_reference_lookup(
+        concept_records.values(),
+        target_id=lambda concept: concept.artifact_id,
+        keys=lambda concept: concept.aliases,
+    )
+    cross_family = CrossFamilyReferenceIndex(
+        families={
+            "concepts": ReferenceIndex(
+                family="concepts",
+                records_by_id=concept_records,
+                lookup=concept_lookup,
+            ),
+        },
+    )
+    claim = bound.claims.require("claim:1")
+
+    assert cross_family.resolve_id("concepts", claim.concept) == "concept:mass"
