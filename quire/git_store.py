@@ -4,7 +4,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
@@ -103,7 +103,8 @@ class GitStore:
         resolved_policy = policy or GitStorePolicy()
         store = cls(Repo.init(str(root)), root, policy=resolved_policy)
         if resolved_policy.initial_files:
-            store.commit_files(resolved_policy.initial_files, resolved_policy.initial_commit_message)
+            initial_files = cast("dict[str | Path, bytes]", dict(resolved_policy.initial_files))
+            store.commit_files(initial_files, resolved_policy.initial_commit_message)
         return store
 
     @classmethod
@@ -111,7 +112,8 @@ class GitStore:
         resolved_policy = policy or GitStorePolicy()
         store = cls(MemoryRepo(), policy=resolved_policy)
         if resolved_policy.initial_files:
-            store.commit_files(resolved_policy.initial_files, resolved_policy.initial_commit_message)
+            initial_files = cast("dict[str | Path, bytes]", dict(resolved_policy.initial_files))
+            store.commit_files(initial_files, resolved_policy.initial_commit_message)
         return store
 
     @classmethod
@@ -196,6 +198,57 @@ class GitStore:
     ) -> str:
         return self._commit(adds=adds, deletes=deletes, message=message, branch=branch)
 
+    def flat_tree_entries(self, commit: str | None = None) -> dict[str, str]:
+        tree = self._get_tree(commit)
+        if tree is None:
+            return {}
+        entries: dict[str, bytes] = {}
+        self._flatten_tree(tree, "", entries)
+        return {path: sha.decode("ascii") for path, sha in entries.items()}
+
+    def store_blob(self, payload: bytes) -> str:
+        blob = Blob.from_string(payload)
+        self._repo.object_store.add_object(blob)
+        return blob.id.decode("ascii")
+
+    def commit_flat_tree(
+        self,
+        entries: Mapping[str, str | bytes],
+        message: str,
+        *,
+        parents: Sequence[str | bytes],
+        branch: str | None = None,
+    ) -> str:
+        normalized_entries = {
+            _normalize_path(path): sha if isinstance(sha, bytes) else sha.encode("ascii")
+            for path, sha in entries.items()
+        }
+        root_tree = self._build_tree_from_flat(normalized_entries)
+
+        commit = Commit()
+        commit.tree = root_tree.id
+        commit.author = self._policy.author
+        commit.committer = self._policy.author
+        commit.encoding = b"UTF-8"
+        commit.message = message.encode("utf-8")
+        now = int(time.time())
+        commit.commit_time = now
+        commit.author_time = now
+        commit.commit_timezone = 0
+        commit.author_timezone = 0
+        commit.parents = [
+            parent if isinstance(parent, bytes) else parent.encode("ascii")
+            for parent in parents
+        ]
+        self._repo.object_store.add_object(commit)
+
+        branch_name = self._resolve_write_branch_name(branch)
+        branch_ref = f"refs/heads/{branch_name}".encode()
+        _ref_set(self._repo.refs, branch_ref, commit.id)
+        if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
+            _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
+        return commit.id.decode("ascii")
+
     def head_sha(self) -> str | None:
         try:
             return self._repo.head().decode("ascii")
@@ -270,7 +323,7 @@ class GitStore:
         if tip is None:
             return []
         result: list[dict[str, object]] = []
-        for entry in self._repo.get_walker(include=[tip], max_entries=max_count):
+        for entry in self._repo.get_walker(include=cast(Any, [tip]), max_entries=max_count):
             commit = entry.commit
             result.append({
                 "sha": commit.id.decode("ascii"),
@@ -453,7 +506,10 @@ class GitStore:
                 _mode, sha = obj[part.encode("utf-8")]
             except KeyError:
                 return None
-            obj = _repo_object(self._repo, sha)
+            next_obj = _repo_object(self._repo, sha)
+            if not isinstance(next_obj, (Blob, Tree)):
+                return None
+            obj = next_obj
         return obj
 
     def _flatten_tree(self, tree: Tree, prefix: str, out: dict[str, bytes]) -> None:

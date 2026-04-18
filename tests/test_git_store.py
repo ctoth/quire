@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dulwich.objects import Blob
+from typing import Any, cast
+
+from dulwich.objects import Blob, Commit
 from dulwich.repo import MemoryRepo
 
 from quire.git_store import GitStore, GitStorePolicy
@@ -99,6 +101,31 @@ def test_blob_refs_store_derived_index_payloads():
     assert store.read_blob_ref(ref) is None
 
 
+def test_flat_tree_entries_and_commit_flat_tree_create_merge_commit():
+    store = GitStore.init_memory()
+    left = store.commit_files({"a.txt": b"left"}, "left", branch="left")
+    right = store.commit_files({"b.txt": b"right"}, "right", branch="right")
+
+    entries = store.flat_tree_entries(right)
+    entries.update(store.flat_tree_entries(left))
+    entries["merged.txt"] = store.store_blob(b"merged")
+
+    merge = store.commit_flat_tree(
+        entries,
+        "merge branches",
+        parents=[left, right],
+        branch="merged",
+    )
+
+    merge_obj = store.raw_repo[merge.encode("ascii")]
+    assert isinstance(merge_obj, Commit)
+    assert merge_obj.parents == [left.encode("ascii"), right.encode("ascii")]
+    assert store.branch_sha("merged") == merge
+    assert store.read_file("a.txt", commit=merge) == b"left"
+    assert store.read_file("b.txt", commit=merge) == b"right"
+    assert store.read_file("merged.txt", commit=merge) == b"merged"
+
+
 def test_notes_round_trip_against_arbitrary_notes_ref():
     store = GitStore.init_memory()
     blob = Blob.from_string(b"payload")
@@ -128,7 +155,7 @@ def test_free_note_helpers_work_with_plain_dulwich_repo():
         message=b"Record helper note",
     )
 
-    assert repo.refs[notes_ref.as_bytes()] == note_commit
+    assert repo.refs[cast(Any, notes_ref.as_bytes())] == note_commit
     assert read_git_note(repo, notes_ref, blob.id) == b"helper payload"
     assert remove_git_note(repo, notes_ref, blob.id) is not None
     assert read_git_note(repo, notes_ref, blob.id) is None
