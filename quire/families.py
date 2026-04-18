@@ -4,9 +4,9 @@ from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from quire.artifacts import ArtifactFamily, ArtifactHandle, PreparedArtifact
+from quire.artifacts import ArtifactAddress, ArtifactFamily, ArtifactHandle, PreparedArtifact
 from quire.contracts import CompatibilityMarker, ContractEntry, ContractManifest
-from quire.family_store import DocumentFamilyStore
+from quire.family_store import DocumentFamilyStore, DocumentFamilyTransaction
 from quire.references import ForeignKeySpec
 from quire.versions import VersionId
 
@@ -184,6 +184,17 @@ class BoundFamilyRegistry(Generic[TOwner, TKey]):
     def by_name(self, name: str) -> BoundFamily[TOwner, Any, Any]:
         return BoundFamily(self.store, self.registry.by_name(name).artifact_family)
 
+    def transact(
+        self,
+        *,
+        message: str,
+        branch: str | None = None,
+    ) -> BoundFamilyTransaction[TOwner, TKey]:
+        return BoundFamilyTransaction(
+            transaction=self.store.transact(message=message, branch=branch),
+            registry=self.registry,
+        )
+
     def __getattr__(self, name: str) -> BoundFamily[TOwner, Any, Any]:
         return BoundFamily(self.store, self.registry.by_accessor(name).artifact_family)
 
@@ -192,6 +203,18 @@ class BoundFamilyRegistry(Generic[TOwner, TKey]):
 class BoundFamily(Generic[TOwner, TRef, TDoc]):
     store: DocumentFamilyStore[TOwner]
     family: ArtifactFamily[TOwner, TRef, TDoc]
+
+    def address(self, ref: TRef, *, commit: str | None = None) -> ArtifactAddress:
+        return self.store.address(self.family, ref, commit=commit)
+
+    def coerce(self, payload: object, *, source: str) -> TDoc:
+        return self.store.coerce(self.family, payload, source=source)
+
+    def render(self, document: TDoc) -> str:
+        return self.store.render(document, family=self.family)
+
+    def payload(self, document: TDoc) -> object:
+        return self.store.payload(document, family=self.family)
 
     def list(self, *, branch: str | None = None, commit: str | None = None) -> list[TRef]:
         return self.store.list(self.family, branch=branch, commit=commit)
@@ -240,6 +263,60 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         branch: str | None = None,
     ) -> str:
         return self.store.move(self.family, old_ref, new_ref, doc, message=message, branch=branch)
+
+
+@dataclass(frozen=True)
+class BoundFamilyTransaction(Generic[TOwner, TKey]):
+    transaction: DocumentFamilyTransaction[TOwner]
+    registry: FamilyRegistry[TOwner, TKey]
+
+    @property
+    def commit_sha(self) -> str | None:
+        return self.transaction.commit_sha
+
+    @property
+    def owner(self) -> TOwner:
+        return self.transaction.owner
+
+    def by_key(self, key: TKey) -> TransactionalBoundFamily[TOwner, Any, Any]:
+        return TransactionalBoundFamily(self.transaction, self.registry.by_key(key).artifact_family)
+
+    def by_name(self, name: str) -> TransactionalBoundFamily[TOwner, Any, Any]:
+        return TransactionalBoundFamily(self.transaction, self.registry.by_name(name).artifact_family)
+
+    def commit(self) -> str:
+        return self.transaction.commit()
+
+    def __enter__(self) -> BoundFamilyTransaction[TOwner, TKey]:
+        self.transaction.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return self.transaction.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name: str) -> TransactionalBoundFamily[TOwner, Any, Any]:
+        return TransactionalBoundFamily(self.transaction, self.registry.by_accessor(name).artifact_family)
+
+
+@dataclass(frozen=True)
+class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
+    transaction: DocumentFamilyTransaction[TOwner]
+    family: ArtifactFamily[TOwner, TRef, TDoc]
+
+    def coerce(self, payload: object, *, source: str) -> TDoc:
+        return self.transaction.coerce(self.family, payload, source=source)
+
+    def payload(self, document: TDoc) -> object:
+        return self.transaction.store.payload(document, family=self.family)
+
+    def save(self, ref: TRef, doc: TDoc) -> None:
+        self.transaction.save(self.family, ref, doc)
+
+    def delete(self, ref: TRef) -> None:
+        self.transaction.delete(self.family, ref)
+
+    def move(self, old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
+        self.transaction.move(self.family, old_ref, new_ref, doc)
 
 
 def _duplicates(values: Sequence[object]) -> list[object]:

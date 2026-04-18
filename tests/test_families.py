@@ -147,6 +147,46 @@ def test_bound_registry_exposes_family_operations_by_attribute_key_and_name() ->
     assert bound.claims.list() == []
 
 
+def test_bound_family_exposes_address_coercion_render_and_payload() -> None:
+    registry = _registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+
+    document = bound.claims.coerce({"name": "alpha"}, source="input")
+
+    assert document == DemoDocument("alpha")
+    assert bound.claims.address("paper").require_path() == "claims/paper.yaml"
+    assert bound.claims.payload(document) == {"name": "alpha"}
+    assert "name: alpha" in bound.claims.render(document)
+
+
+def test_bound_registry_transaction_writes_multiple_families() -> None:
+    registry = _registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+
+    with bound.transact(message="save rows") as transaction:
+        transaction.claims.save("claim-one", DemoDocument("alpha"))
+        transaction.concepts.save("concept-one", DemoDocument("beta"))
+
+    assert transaction.commit_sha is not None
+    assert bound.claims.require("claim-one") == DemoDocument("alpha")
+    assert bound.concepts.require("concept-one") == DemoDocument("beta")
+
+
+def test_bound_transaction_supports_key_and_name_lookup() -> None:
+    registry = _registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+
+    with bound.transact(message="save rows") as transaction:
+        transaction.by_key(DemoFamily.CLAIMS).save("claim-one", DemoDocument("alpha"))
+        transaction.by_name("concepts").save("concept-one", DemoDocument("beta"))
+
+    assert bound.claims.require("claim-one") == DemoDocument("alpha")
+    assert bound.concepts.require("concept-one") == DemoDocument("beta")
+
+
 def test_contract_manifest_contains_registry_and_family_versions() -> None:
     registry = _registry()
     manifest = registry.contract_manifest(package_name="demo", package_version="2026.04.18")
@@ -183,4 +223,3 @@ def test_contract_manifest_changes_when_family_surface_changes() -> None:
     assert baseline.to_yaml() != with_fk.to_yaml()
     with pytest.raises(Exception, match="Contract body changed"):
         check_contract_manifest(baseline, moved)
-

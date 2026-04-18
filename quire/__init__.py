@@ -5,11 +5,19 @@ from quire.refs import RefName
 from quire.notes import NotesRef
 from quire.references import ForeignKeySpec, ReferenceIndex, ReferenceResolution
 from quire.versions import VersionId
-from quire.families import BoundFamily, BoundFamilyRegistry, FamilyDefinition, FamilyRegistry
+from quire.families import (
+    BoundFamily,
+    BoundFamilyRegistry,
+    BoundFamilyTransaction,
+    FamilyDefinition,
+    FamilyRegistry,
+    TransactionalBoundFamily,
+)
 
 __all__ = [
     "BoundFamily",
     "BoundFamilyRegistry",
+    "BoundFamilyTransaction",
     "FamilyDefinition",
     "FamilyRegistry",
     "ForeignKeySpec",
@@ -19,5 +27,6 @@ __all__ = [
     "RefName",
     "ReferenceIndex",
     "ReferenceResolution",
+    "TransactionalBoundFamily",
     "VersionId",
 ]
