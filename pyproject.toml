@@ -3,7 +3,7 @@ name = "quire"
 version = "0.1.0"
 description = "Typed schema-aware document storage on git objects, refs, and notes"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "dulwich>=1.1.0",
     "msgspec>=0.19.0",
