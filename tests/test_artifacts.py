@@ -117,3 +117,14 @@ def test_fixed_template_and_singleton_placements_have_contract_bodies():
     assert fixed.contract_body()["kind"] == "fixed-file"
     assert templated.contract_body()["kind"] == "template-file"
     assert singleton.contract_body()["kind"] == "singleton-file"
+
+
+def test_branch_template_can_preserve_case_for_safe_source_slugs():
+    placement = BranchPlacement(
+        policy="template",
+        template="source/{stem}",
+        ref_field="name",
+        codec="safe_slug",
+    )
+
+    assert placement.branch_name(Owner(), DemoRef("Smith 2024.TestPaper")) == "source/Smith_2024.TestPaper"

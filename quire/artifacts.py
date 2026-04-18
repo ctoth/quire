@@ -26,6 +26,12 @@ def _slug(value: str) -> str:
     return cleaned or "artifact"
 
 
+def _safe_slug(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in value.strip())
+    cleaned = cleaned.strip("._-")
+    return cleaned or "artifact"
+
+
 def _ref_value(ref: object, field: str) -> str:
     if field == "self":
         value = ref
@@ -43,6 +49,8 @@ def encode_ref_value(value: str, codec: str) -> str:
         return value.replace(":", "__")
     if codec == "slug":
         return _slug(value)
+    if codec == "safe_slug":
+        return _safe_slug(value)
     raise ValueError(f"unknown ref codec: {codec}")
 
 
@@ -51,7 +59,7 @@ def decode_ref_value(value: str, codec: str) -> str:
         return value
     if codec == "colon_to_double_underscore":
         return value.replace("__", ":")
-    if codec == "slug":
+    if codec in {"slug", "safe_slug"}:
         raise ValueError("slug codec is not reversible")
     raise ValueError(f"unknown ref codec: {codec}")
 
