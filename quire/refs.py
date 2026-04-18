@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, make_dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -22,3 +23,34 @@ class RefName:
 
     def __str__(self) -> str:
         return self.value
+
+
+def single_field_ref_type(
+    type_name: str,
+    field_name: str,
+    *,
+    module: str | None = None,
+) -> type[Any]:
+    """Create an immutable family ref type with one string key field."""
+    if not type_name or not type_name.isidentifier():
+        raise ValueError(f"invalid ref type name: {type_name!r}")
+    if not field_name or not field_name.isidentifier():
+        raise ValueError(f"invalid ref field name: {field_name!r}")
+    ref_type = make_dataclass(type_name, [(field_name, str)], frozen=True)
+    if module is not None:
+        ref_type.__module__ = module
+    return ref_type
+
+
+def singleton_ref_type(
+    type_name: str,
+    *,
+    module: str | None = None,
+) -> type[Any]:
+    """Create an immutable family ref type for singleton artifacts."""
+    if not type_name or not type_name.isidentifier():
+        raise ValueError(f"invalid ref type name: {type_name!r}")
+    ref_type = make_dataclass(type_name, [], frozen=True)
+    if module is not None:
+        ref_type.__module__ = module
+    return ref_type

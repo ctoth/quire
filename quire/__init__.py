@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from quire.git_store import GitStore, GitStorePolicy
-from quire.refs import RefName
+from quire.refs import RefName, single_field_ref_type, singleton_ref_type
 from quire.notes import NotesRef
 from quire.references import ForeignKeySpec, ReferenceIndex, ReferenceResolution
 from quire.versions import VersionId
@@ -29,4 +29,6 @@ __all__ = [
     "ReferenceResolution",
     "TransactionalBoundFamily",
     "VersionId",
+    "single_field_ref_type",
+    "singleton_ref_type",
 ]
