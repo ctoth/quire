@@ -16,6 +16,21 @@ class RefName:
             raise ValueError(f"Ref name must start with 'refs/': {value!r}")
         if "\\" in value or "//" in value or value.endswith("/"):
             raise ValueError(f"Invalid ref name: {value!r}")
+        if ".." in value or "@{" in value:
+            raise ValueError(f"Invalid ref name: {value!r}")
+        if any(ch.isspace() or ord(ch) < 32 or ch == "\x7f" for ch in value):
+            raise ValueError(f"Invalid ref name: {value!r}")
+        if any(ch in "~^:?*[" for ch in value):
+            raise ValueError(f"Invalid ref name: {value!r}")
+        for component in value.split("/"):
+            if (
+                component in {"", ".", ".."}
+                or component.startswith(".")
+                or component.startswith("-")
+                or component.endswith(".")
+                or component.endswith(".lock")
+            ):
+                raise ValueError(f"Invalid ref name: {value!r}")
         object.__setattr__(self, "value", value)
 
     def as_bytes(self) -> bytes:

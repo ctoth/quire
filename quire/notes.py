@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from dulwich.notes import Notes
@@ -11,15 +11,17 @@ from quire.refs import RefName
 @dataclass(frozen=True)
 class NotesRef:
     value: str
+    ref_name: RefName = field(init=False)
 
     def __post_init__(self) -> None:
         ref = RefName(self.value)
         if not ref.value.startswith("refs/notes/"):
             raise ValueError(f"Notes ref must start with 'refs/notes/': {self.value!r}")
+        object.__setattr__(self, "ref_name", ref)
         object.__setattr__(self, "value", ref.value)
 
     def as_ref(self) -> RefName:
-        return RefName(self.value)
+        return self.ref_name
 
     def as_bytes(self) -> bytes:
         return self.value.encode("utf-8")
