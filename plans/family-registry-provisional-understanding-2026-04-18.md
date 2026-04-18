@@ -207,12 +207,14 @@ Current execution checkpoint:
   directly instead of using the artifact barrel as a schema surface.
 - Artifact-code computation and verification has moved out of the artifacts
   package to the top-level `propstore.artifact_codes` domain module.
+- Claim-reference indexes/resolvers and identity normalization have moved out
+  of the artifacts package. They are Propstore domain behavior.
+- Generic YAML/document codec helpers are public Quire document APIs.
+  Propstore-specific concept document rendering is declared on the concept
+  family entry, not in a parallel global codec module.
 
 Remaining production buckets:
 
-- Move identity normalization and claim-reference indexes/resolvers out of the
-  artifact package. They are domain identity/graph behavior, not family
-  declaration behavior.
 - Delete the remaining `propstore.artifacts` barrel imports. Callers should
   import from concrete owner modules while the final family/schema module shape
   is being reduced.
