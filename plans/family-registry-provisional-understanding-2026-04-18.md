@@ -77,6 +77,9 @@ keys or bound attributes.
   not possible without an index.
 - How mandatory version changes are enforced when code or contract surfaces
   change.
+- How Quire should expose transactions at the bound-registry level so downstream
+  code does not need to drop back to the raw artifact store for multi-family
+  commits.
 
 ## Execution Workstream
 
@@ -155,15 +158,24 @@ Current execution checkpoint:
   production module still calling `repo.artifacts.<operation>(FAMILY, ...)`,
   replace it with the owning bound family, delete the now-unused family imports,
   run the narrow logged tests, and commit the kept reduction.
+- Additional kept reductions have cut over form workflows, compiler historical
+  loading, micropub workflows, worldlines, merge inputs, source authoring,
+  source promotion path resolution, claim CLI reads, and merge CLI reads.
+- Project initialization is being cut over from raw artifact-family operations
+  to bound families for seed forms and seed concepts.
 
 Remaining production buckets:
 
-- Form workflows and form utilities.
-- Compiler workflow loading across current and historical commits.
+- Finish project initialization and commit the kept reduction.
 - Concept CLI owner logic still inside `propstore.cli.concept`.
-- Source authoring/finalize/promote modules.
-- Merge classification and structured merge.
-- Micropub, proposal, worldline, repository-history, alias, and index helpers.
+- Source finalize/promote transaction bodies that still save raw family
+  constants through artifact-store transactions.
+- Proposal workflows and structured merge commit helpers.
+- Reasoning demo seed/import code.
+- Decide whether the remaining generic `repo.artifacts.render(...)` calls should
+  stay as codec/render boundaries or move behind a Quire family/registry API.
+- Add the Quire transaction abstraction if needed, then delete downstream raw
+  transaction family saves instead of wrapping them locally.
 
 ### Phase 6: Remove Propstore-Local Registry Machinery
 
