@@ -1,14 +1,48 @@
 [project]
 name = "quire"
 version = "0.1.0"
-description = "Typed schema-aware document storage on git objects, refs, and notes"
+description = "A typed, schema-aware document store built on git plumbing — object store, refs, and notes, with no working tree required."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Christopher Toth", email = "q.alpha@gmail.com" },
+]
+keywords = [
+    "git",
+    "dulwich",
+    "document-store",
+    "msgspec",
+    "schema",
+    "contracts",
+    "content-addressable",
+    "versioning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database :: Database Engines/Servers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Typing :: Typed",
+]
 dependencies = [
     "dulwich>=1.1.0",
     "msgspec>=0.19.0",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ctoth/quire"
+Repository = "https://github.com/ctoth/quire"
+Issues = "https://github.com/ctoth/quire/issues"
 
 [project.optional-dependencies]
 dev = [
