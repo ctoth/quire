@@ -6,6 +6,10 @@ from quire.documents import (
     DocumentSchemaError,
     DocumentStruct,
     decode_document_bytes,
+    decode_json_mapping,
+    decode_text_document,
+    encode_json_mapping,
+    encode_text_document,
     load_document,
     load_document_dir,
 )
@@ -49,3 +53,29 @@ def test_load_document_dir_loads_direct_yaml_children_deterministically(tmp_path
 
     assert [document.filename for document in loaded] == ["a", "b"]
     assert [document.document.name for document in loaded] == ["alpha", "beta"]
+
+
+def test_text_document_codec_round_trips_utf8_text():
+    document = "notes\nwith unicode: cafe\n"
+
+    encoded = encode_text_document(document)
+
+    assert decode_text_document(encoded, source="notes.md") == document
+
+
+def test_text_document_codec_rejects_non_utf8_bytes():
+    with pytest.raises(ValueError, match="UTF-8 text payload"):
+        decode_text_document(b"\xff", source="notes.md")
+
+
+def test_json_mapping_codec_round_trips_json_object():
+    document = {"name": "demo", "value": 3}
+
+    encoded = encode_json_mapping(document)
+
+    assert decode_json_mapping(encoded, source="metadata.json") == document
+
+
+def test_json_mapping_codec_rejects_non_object_payload():
+    with pytest.raises(ValueError, match="JSON object payload"):
+        decode_json_mapping(b"[1, 2, 3]", source="metadata.json")
