@@ -11,6 +11,7 @@ from quire.documents.schema import (
     to_document_builtins,
 )
 from quire.documents.codecs import (
+    convert_document,
     decode_document,
     decode_yaml_mapping,
     decode_yaml_value,
@@ -26,6 +27,7 @@ __all__ = [
     "DocumentSchemaError",
     "DocumentStruct",
     "LoadedDocument",
+    "convert_document",
     "convert_document_value",
     "decode_document",
     "decode_document_bytes",
