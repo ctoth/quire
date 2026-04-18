@@ -142,6 +142,29 @@ path. No compatibility bridge is part of this plan.
 - Serialized strings such as `claims`, path fragments such as `.yaml`, and
   fixed source filenames live in family/placement declarations only.
 
+Current execution checkpoint:
+
+- Quire has `FamilyRegistry`, `BoundFamilyRegistry`, and `BoundFamily`, exported
+  from the package and covered by tests.
+- Propstore depends on the pushed Quire commit that contains that API.
+- Propstore exposes `repo.families` from its `Repository`.
+- Sidecar build, compilation context loading, concept ID allocation, grounding
+  loading/inspection, artifact-code verification, and context workflows have
+  been cut over to bound families.
+- The remaining deletion-first loop is mechanical but important: for each
+  production module still calling `repo.artifacts.<operation>(FAMILY, ...)`,
+  replace it with the owning bound family, delete the now-unused family imports,
+  run the narrow logged tests, and commit the kept reduction.
+
+Remaining production buckets:
+
+- Form workflows and form utilities.
+- Compiler workflow loading across current and historical commits.
+- Concept CLI owner logic still inside `propstore.cli.concept`.
+- Source authoring/finalize/promote modules.
+- Merge classification and structured merge.
+- Micropub, proposal, worldline, repository-history, alias, and index helpers.
+
 ### Phase 6: Remove Propstore-Local Registry Machinery
 
 - Delete propstore-local family registry behavior that has moved to Quire.
