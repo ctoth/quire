@@ -25,7 +25,7 @@ def _demo_family(
     normalize_for_write=None,
     validate_for_write=None,
     encode_document=None,
-) -> ArtifactFamily[str, DemoDocument]:
+) -> ArtifactFamily[Owner, str, DemoDocument]:
     return ArtifactFamily(
         name="demo",
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
@@ -57,7 +57,7 @@ def test_prepare_runs_normalize_validate_then_encode():
     events: list[str] = []
 
     def normalize(
-        context: ArtifactContext[str],
+        context: ArtifactContext[Owner, str],
         document: DemoDocument,
         _store: DocumentFamilyStore[Owner],
     ) -> DemoDocument:
@@ -65,7 +65,7 @@ def test_prepare_runs_normalize_validate_then_encode():
         return DemoDocument(f"{document.name}-normalized")
 
     def validate(
-        _context: ArtifactContext[str],
+        _context: ArtifactContext[Owner, str],
         document: DemoDocument,
         _store: DocumentFamilyStore[Owner],
     ) -> None:

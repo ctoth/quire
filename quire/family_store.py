@@ -75,7 +75,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def resolve(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
         commit: str | None = None,
@@ -87,7 +87,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def ref_from_path(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         path: str | Path,
     ) -> TRef:
         if family.ref_from_path is None:
@@ -96,7 +96,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def ref_from_loaded(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         loaded: object,
     ) -> TRef:
         if family.ref_from_loaded is None:
@@ -105,7 +105,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def coerce(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         payload: object,
         *,
         source: str,
@@ -114,24 +114,24 @@ class DocumentFamilyStore(Generic[TOwner]):
             return family.coerce_payload(payload, source)
         return self.convert_document(payload, family.doc_type, source)
 
-    def render(self, document: object, family: ArtifactFamily[object, object] | None = None) -> str:
+    def render(self, document: object, family: ArtifactFamily[object, object, object] | None = None) -> str:
         if family is not None and family.render_document is not None:
             return family.render_document(document)
         return self.render_document_value(document)
 
-    def payload(self, document: object, family: ArtifactFamily[object, object] | None = None) -> object:
+    def payload(self, document: object, family: ArtifactFamily[object, object, object] | None = None) -> object:
         if family is not None and family.document_payload is not None:
             return family.document_payload(document)
         return self.document_to_payload(document)
 
     def prepare(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         doc: TDoc,
         *,
         branch: str | None = None,
-    ) -> PreparedArtifact[TRef, TDoc]:
+    ) -> PreparedArtifact[TOwner, TRef, TDoc]:
         resolved = self.resolve(family, ref)
         target_branch = branch or resolved.branch
         context = ArtifactContext(
@@ -157,7 +157,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def load(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
         commit: str | None = None,
@@ -180,11 +180,11 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def handle(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
         commit: str | None = None,
-    ) -> ArtifactHandle[TRef, TDoc] | None:
+    ) -> ArtifactHandle[TOwner, TRef, TDoc] | None:
         document = self.load(family, ref, commit=commit)
         if document is None:
             return None
@@ -197,11 +197,11 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def require_handle(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
         commit: str | None = None,
-    ) -> ArtifactHandle[TRef, TDoc]:
+    ) -> ArtifactHandle[TOwner, TRef, TDoc]:
         handle = self.handle(family, ref, commit=commit)
         if handle is None:
             resolved = self.resolve(family, ref, commit=commit)
@@ -210,7 +210,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def require(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
         commit: str | None = None,
@@ -219,7 +219,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def save(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         doc: TDoc,
         *,
@@ -237,7 +237,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def move(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         old_ref: TRef,
         new_ref: TRef,
         doc: TDoc,
@@ -253,7 +253,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def delete(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
         message: str,
@@ -271,7 +271,7 @@ class DocumentFamilyStore(Generic[TOwner]):
 
     def list(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         *,
         branch: str | None = None,
         commit: str | None = None,
@@ -315,7 +315,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
     def owner(self) -> TOwner:
         return self.store.owner
 
-    def coerce(self, family: ArtifactFamily[TRef, TDoc], payload: object, *, source: str) -> TDoc:
+    def coerce(self, family: ArtifactFamily[TOwner, TRef, TDoc], payload: object, *, source: str) -> TDoc:
         return self.store.coerce(family, payload, source=source)
 
     def payload(self, document: object) -> object:
@@ -328,7 +328,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         if exc_type is None and self._commit_sha is None and (self._adds or self._deletes):
             self.commit()
 
-    def save(self, family: ArtifactFamily[TRef, TDoc], ref: TRef, doc: TDoc) -> None:
+    def save(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
         prepared = self.store.prepare(family, ref, doc, branch=self.branch)
         if self.branch is None:
@@ -343,14 +343,14 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         self._adds[relpath] = prepared.content
         self._deletes.discard(relpath)
 
-    def delete(self, family: ArtifactFamily[TRef, TDoc], ref: TRef) -> None:
+    def delete(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef) -> None:
         self._ensure_open()
         _, resolved = self._resolved_target(family, ref)
         relpath = normalized_path(resolved.relpath)
         self._deletes.add(relpath)
         self._adds.pop(relpath, None)
 
-    def move(self, family: ArtifactFamily[TRef, TDoc], old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
+    def move(self, family: ArtifactFamily[TOwner, TRef, TDoc], old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
         self.save(family, new_ref, doc)
         old_branch, old_resolved = self._resolved_target(family, old_ref)
@@ -381,7 +381,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
 
     def _resolved_target(
         self,
-        family: ArtifactFamily[TRef, TDoc],
+        family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
     ) -> tuple[str, ResolvedArtifact]:
         resolved = family.resolve_ref(self.owner, ref)

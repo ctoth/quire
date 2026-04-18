@@ -11,7 +11,7 @@ class DemoDocument(msgspec.Struct):
 
 
 def test_artifact_family_declares_contract_version_and_resolution():
-    family = ArtifactFamily[str, DemoDocument](
+    family = ArtifactFamily[object, str, DemoDocument](
         name="demo",
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
         doc_type=DemoDocument,
