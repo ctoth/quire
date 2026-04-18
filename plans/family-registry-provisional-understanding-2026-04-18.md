@@ -191,12 +191,13 @@ Current execution checkpoint:
   registry have been deleted. Production modules now import refs, indexes,
   identity helpers, resolution helpers, or the family declaration module
   directly instead of using the artifact barrel as a schema surface.
+- Artifact-code computation and verification has moved out of the artifacts
+  package to the top-level `propstore.artifact_codes` domain module.
 
 Remaining production buckets:
 
-- Move source artifact-code verification, identity normalization, and reference
-  indexes out of the artifact package when they are domain behavior rather than
-  family declaration behavior.
+- Move identity normalization and reference indexes out of the artifact package
+  when they are domain behavior rather than family declaration behavior.
 - Decide the final module shape for large msgspec structs: colocated with
   family declaration when small, or imported as private helper schema modules
   when large. In both cases the family registry is the only public schema
