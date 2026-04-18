@@ -30,6 +30,33 @@ def test_commit_and_read_are_object_store_operations(tmp_path):
     assert not (root / "docs" / "example.yaml").exists()
 
 
+def test_deep_tree_paths_do_not_depend_on_python_recursion_limit():
+    store = GitStore.init_memory()
+    deep_path = "/".join(f"d{index}" for index in range(1100)) + "/leaf.txt"
+
+    commit = store.commit_files({deep_path: b"leaf"}, "add deep leaf")
+
+    assert store.read_file(deep_path, commit=commit) == b"leaf"
+    assert store.flat_tree_entries(commit)[deep_path]
+
+
+def test_single_file_update_preserves_unrelated_tree_contents():
+    store = GitStore.init_memory()
+    first = store.commit_files(
+        {
+            "a/one.txt": b"one",
+            "b/two.txt": b"two",
+        },
+        "seed",
+    )
+
+    second = store.commit_files({"a/one.txt": b"changed"}, "update one")
+
+    assert store.read_file("a/one.txt", commit=second) == b"changed"
+    assert store.read_file("b/two.txt", commit=second) == b"two"
+    assert store.read_file("a/one.txt", commit=first) == b"one"
+
+
 def test_materialize_worktree_can_remove_stale_files_and_preserve_runtime_paths(tmp_path):
     root = tmp_path / "repo"
     store = GitStore.init(

@@ -676,45 +676,64 @@ class GitStore:
         return obj
 
     def _flatten_tree(self, tree: Tree, prefix: str, out: dict[str, bytes]) -> None:
-        for entry in tree.items():
-            name = entry.path.decode("utf-8")
-            path = f"{prefix}/{name}" if prefix else name
-            obj = _repo_object(self._repo, entry.sha)
-            if isinstance(obj, Tree):
-                self._flatten_tree(obj, path, out)
-            elif isinstance(obj, Blob):
-                out[path] = entry.sha
+        stack: list[tuple[str, Tree]] = [(prefix, tree)]
+        while stack:
+            current_prefix, current_tree = stack.pop()
+            for entry in reversed(list(current_tree.items())):
+                name = entry.path.decode("utf-8")
+                path = f"{current_prefix}/{name}" if current_prefix else name
+                obj = _repo_object(self._repo, entry.sha)
+                if isinstance(obj, Tree):
+                    stack.append((path, obj))
+                elif isinstance(obj, Blob):
+                    out[path] = entry.sha
 
     def _build_tree_from_flat(self, entries: dict[str, bytes]) -> Tree:
-        children: dict[str, list[tuple[str, bytes]]] = {}
-        direct_blobs: list[tuple[str, bytes]] = []
-        for path, sha in entries.items():
-            parts = path.split("/", 1)
-            if len(parts) == 1:
-                direct_blobs.append((parts[0], sha))
-            else:
-                children.setdefault(parts[0], []).append((parts[1], sha))
+        direct_blobs: dict[tuple[str, ...], list[tuple[str, bytes]]] = {(): []}
+        child_dirs: dict[tuple[str, ...], set[str]] = {(): set()}
 
-        tree = Tree()
-        for name, sha in sorted(direct_blobs):
-            _tree_add(tree, name.encode("utf-8"), 0o100644, sha)
-        for dirname in sorted(children):
-            sub_entries = {rest: sha for rest, sha in children[dirname]}
-            subtree = self._build_tree_from_flat(sub_entries)
-            self._repo.object_store.add_object(subtree)
-            _tree_add(tree, dirname.encode("utf-8"), 0o040000, subtree.id)
-        self._repo.object_store.add_object(tree)
-        return tree
+        for path, sha in entries.items():
+            parts = PurePosixPath(path).parts
+            if not parts:
+                raise ValueError("Tree entry path must not be empty")
+
+            parent = tuple(parts[:-1])
+            filename = parts[-1]
+            direct_blobs.setdefault(parent, []).append((filename, sha))
+            child_dirs.setdefault(parent, set())
+
+            for index in range(len(parent) + 1):
+                current = tuple(parts[:index])
+                child_dirs.setdefault(current, set())
+                if index < len(parent):
+                    child_dirs[current].add(parts[index])
+
+        built_trees: dict[tuple[str, ...], Tree] = {}
+        directories = sorted(child_dirs, key=lambda directory: (len(directory), directory), reverse=True)
+        for directory in directories:
+            tree = Tree()
+            for name, sha in sorted(direct_blobs.get(directory, [])):
+                _tree_add(tree, name.encode("utf-8"), 0o100644, sha)
+            for dirname in sorted(child_dirs[directory]):
+                subtree = built_trees[(*directory, dirname)]
+                _tree_add(tree, dirname.encode("utf-8"), 0o040000, subtree.id)
+            self._repo.object_store.add_object(tree)
+            built_trees[directory] = tree
+
+        return built_trees[()]
 
     def _collect_tree_paths(self, tree: Tree, prefix: str, out: set[str]) -> None:
-        for entry in tree.items():
-            name = entry.path.decode("utf-8")
-            path = f"{prefix}/{name}" if prefix else name
-            obj = _repo_object(self._repo, entry.sha)
-            if isinstance(obj, Tree):
-                self._collect_tree_paths(obj, path, out)
-            elif isinstance(obj, Blob):
-                out.add(path)
+        stack: list[tuple[str, Tree]] = [(prefix, tree)]
+        while stack:
+            current_prefix, current_tree = stack.pop()
+            for entry in reversed(list(current_tree.items())):
+                name = entry.path.decode("utf-8")
+                path = f"{current_prefix}/{name}" if current_prefix else name
+                obj = _repo_object(self._repo, entry.sha)
+                if isinstance(obj, Tree):
+                    stack.append((path, obj))
+                elif isinstance(obj, Blob):
+                    out.add(path)
 
     def _remove_extra_worktree_files(self, tracked_paths: set[str]) -> None:
         if self._root is None:
