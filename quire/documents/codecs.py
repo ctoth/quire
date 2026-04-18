@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 import json
 from typing import Any, TypeVar
 
@@ -125,3 +126,48 @@ def decode_document(
     source: str,
 ) -> TDocument:
     return decode_document_bytes(payload, document_type, source=source)
+
+
+@dataclass(frozen=True)
+class DocumentCodec:
+    convert_document: Callable[..., object]
+    decode_document: Callable[..., object]
+    encode_document: Callable[[object], bytes]
+    render_document: Callable[[object], str]
+    document_to_payload: Callable[[object], object]
+
+    def convert(
+        self,
+        payload: object,
+        document_type: type[TDocument],
+        *,
+        source: str,
+    ) -> TDocument:
+        return self.convert_document(payload, document_type, source=source)  # type: ignore[return-value]
+
+    def decode(
+        self,
+        payload: bytes,
+        document_type: type[TDocument],
+        *,
+        source: str,
+    ) -> TDocument:
+        return self.decode_document(payload, document_type, source=source)  # type: ignore[return-value]
+
+    def encode(self, document: object) -> bytes:
+        return self.encode_document(document)
+
+    def render(self, document: object) -> str:
+        return self.render_document(document)
+
+    def payload(self, document: object) -> object:
+        return self.document_to_payload(document)
+
+
+DEFAULT_DOCUMENT_CODEC = DocumentCodec(
+    convert_document=convert_document,
+    decode_document=decode_document,
+    encode_document=encode_document,
+    render_document=render_document,
+    document_to_payload=document_to_payload,
+)

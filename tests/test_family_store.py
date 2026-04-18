@@ -12,6 +12,7 @@ from quire.artifacts import (
     FlatYamlPlacement,
     ReadOnlyDocumentStoreBackend,
 )
+from quire.documents import DocumentCodec
 from quire.family_store import DocumentFamilyStore, DocumentStoreBackend
 from quire.git_store import GitStore
 from quire.versions import VersionId
@@ -189,6 +190,39 @@ def test_custom_codecs_override_defaults():
     assert store.require(family, "example") == DemoDocument("alpha")
     assert store.render(DemoDocument("beta"), family) == "name=beta"
     assert store.payload(DemoDocument("beta"), family) == {"custom_name": "beta"}
+
+
+def test_store_uses_single_document_codec_for_default_operations():
+    events: list[str] = []
+    codec = DocumentCodec(
+        convert_document=lambda payload, document_type, *, source: (
+            events.append(f"convert:{source}") or document_type(**payload)
+        ),
+        decode_document=lambda payload, document_type, *, source: (
+            events.append(f"decode:{source}") or document_type(payload.decode("utf-8").split("=", 1)[1])
+        ),
+        encode_document=lambda document: (
+            events.append(f"encode:{document.name}") or f"name={document.name}".encode("utf-8")
+        ),
+        render_document=lambda document: events.append(f"render:{document.name}") or f"name={document.name}",
+        document_to_payload=lambda document: events.append(f"payload:{document.name}") or {"name": document.name},
+    )
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory(), codec=codec)
+    family = _demo_family()
+
+    store.save(family, "alpha", DemoDocument("alpha"), message="save alpha")
+
+    assert store.require(family, "alpha") == DemoDocument("alpha")
+    assert store.coerce(family, {"name": "beta"}, source="input") == DemoDocument("beta")
+    assert store.render(DemoDocument("gamma")) == "name=gamma"
+    assert store.payload(DemoDocument("delta")) == {"name": "delta"}
+    assert events == [
+        "encode:alpha",
+        "decode:master:demo/alpha.yaml",
+        "convert:input",
+        "render:gamma",
+        "payload:delta",
+    ]
 
 
 def test_unsupported_family_operations_fail_clearly():

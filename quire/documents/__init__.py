@@ -11,6 +11,8 @@ from quire.documents.schema import (
     to_document_builtins,
 )
 from quire.documents.codecs import (
+    DEFAULT_DOCUMENT_CODEC,
+    DocumentCodec,
     coerce_json_mapping,
     coerce_text_document,
     convert_document,
@@ -35,6 +37,8 @@ from quire.documents.loaded import LoadedDocument
 __all__ = [
     "DocumentSchemaError",
     "DocumentStruct",
+    "DEFAULT_DOCUMENT_CODEC",
+    "DocumentCodec",
     "LoadedDocument",
     "coerce_json_mapping",
     "coerce_text_document",

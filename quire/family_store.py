@@ -17,11 +17,8 @@ from quire.artifacts import (
     TRef,
 )
 from quire.documents.codecs import (
-    convert_document,
-    decode_document,
-    document_to_payload,
-    encode_document,
-    render_document,
+    DEFAULT_DOCUMENT_CODEC,
+    DocumentCodec,
 )
 
 TOwner = TypeVar("TOwner")
@@ -56,24 +53,12 @@ def default_branch_head(backend: DocumentStoreBackend, branch: str) -> str | Non
     return backend.branch_sha(branch)
 
 
-def _convert_document(payload: object, document_type: type[TDoc], source: str) -> TDoc:
-    return convert_document(payload, document_type, source=source)
-
-
-def _decode_document(payload: bytes, document_type: type[TDoc], source: str) -> TDoc:
-    return decode_document(payload, document_type, source=source)
-
-
 @dataclass
 class DocumentFamilyStore(Generic[TOwner]):
     owner: TOwner
     backend: DocumentStoreBackend | None
     branch_head: BranchHeadResolver = default_branch_head
-    convert_document: Callable[[object, type[TDoc], str], TDoc] = _convert_document
-    decode_document: Callable[[bytes, type[TDoc], str], TDoc] = _decode_document
-    encode_document: Callable[[object], bytes] = encode_document
-    render_document_value: Callable[[object], str] = render_document
-    document_to_payload: Callable[[object], object] = document_to_payload
+    codec: DocumentCodec = DEFAULT_DOCUMENT_CODEC
 
     def address(
         self,
@@ -110,17 +95,17 @@ class DocumentFamilyStore(Generic[TOwner]):
     ) -> TDoc:
         if family.coerce_payload is not None:
             return family.coerce_payload(payload, source)
-        return self.convert_document(payload, family.doc_type, source)
+        return self.codec.convert(payload, family.doc_type, source=source)
 
     def render(self, document: object, family: ArtifactFamily[object, object, object] | None = None) -> str:
         if family is not None and family.render_document is not None:
             return family.render_document(document)
-        return self.render_document_value(document)
+        return self.codec.render(document)
 
     def payload(self, document: object, family: ArtifactFamily[object, object, object] | None = None) -> object:
         if family is not None and family.document_payload is not None:
             return family.document_payload(document)
-        return self.document_to_payload(document)
+        return self.codec.payload(document)
 
     def prepare(
         self,
@@ -147,7 +132,7 @@ class DocumentFamilyStore(Generic[TOwner]):
             normalized = family.normalize_for_write(context, normalized, self)
         if family.validate_for_write is not None:
             family.validate_for_write(context, normalized, self)
-        encoder = family.encode_document or self.encode_document
+        encoder = family.encode_document or self.codec.encode
         return PreparedArtifact(
             family=family,
             ref=ref,
@@ -179,7 +164,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         source = f"{address.branch}:{path}"
         if family.decode_bytes is not None:
             return family.decode_bytes(raw, source)
-        return self.decode_document(raw, family.doc_type, source)
+        return self.codec.decode(raw, family.doc_type, source=source)
 
     def handle(
         self,

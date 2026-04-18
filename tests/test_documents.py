@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from quire.documents import (
+    DEFAULT_DOCUMENT_CODEC,
+    DocumentCodec,
     DocumentSchemaError,
     DocumentStruct,
     decode_document_bytes,
@@ -79,3 +81,31 @@ def test_json_mapping_codec_round_trips_json_object():
 def test_json_mapping_codec_rejects_non_object_payload():
     with pytest.raises(ValueError, match="JSON object payload"):
         decode_json_mapping(b"[1, 2, 3]", source="metadata.json")
+
+
+def test_default_document_codec_round_trips_struct_documents():
+    document = ExampleDocument(name="demo", value=3)
+
+    encoded = DEFAULT_DOCUMENT_CODEC.encode(document)
+
+    assert DEFAULT_DOCUMENT_CODEC.decode(encoded, ExampleDocument, source="demo.yaml") == document
+    assert DEFAULT_DOCUMENT_CODEC.convert({"name": "demo", "value": 3}, ExampleDocument, source="input") == document
+    assert DEFAULT_DOCUMENT_CODEC.payload(document) == {"name": "demo", "value": 3}
+    assert "name: demo" in DEFAULT_DOCUMENT_CODEC.render(document)
+
+
+def test_document_codec_can_group_custom_document_operations():
+    codec = DocumentCodec(
+        convert_document=lambda payload, document_type, *, source: document_type(**payload),
+        decode_document=lambda payload, document_type, *, source: document_type(
+            **dict(item.split("=", 1) for item in payload.decode("utf-8").splitlines())
+        ),
+        encode_document=lambda document: f"name={document.name}\nvalue={document.value}".encode("utf-8"),
+        render_document=lambda document: f"name={document.name}",
+        document_to_payload=lambda document: {"custom": document.name},
+    )
+    document = ExampleDocument(name="demo", value="3")  # type: ignore[arg-type]
+
+    assert codec.decode(codec.encode(document), ExampleDocument, source="custom.txt") == document
+    assert codec.render(document) == "name=demo"
+    assert codec.payload(document) == {"custom": "demo"}
