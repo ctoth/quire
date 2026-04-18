@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
+import msgspec
 import yaml
 
 from quire.versions import VersionId
@@ -39,7 +40,7 @@ class ContractEntry:
         return cls(
             kind=str(payload["kind"]),
             name=str(payload["name"]),
-            contract_version=VersionId(str(payload["contract_version"])),
+            contract_version=VersionId(str(payload["contract_version"]), allow_placeholder=False),
             body=_normalize_payload(dict(payload["body"])),
         )
 
@@ -61,7 +62,7 @@ class CompatibilityMarker:
     def from_payload(cls, payload: dict[str, Any]) -> CompatibilityMarker:
         return cls(
             contract=str(payload["contract"]),
-            contract_version=VersionId(str(payload["contract_version"])),
+            contract_version=VersionId(str(payload["contract_version"]), allow_placeholder=False),
             reason=str(payload["reason"]),
         )
 
@@ -77,6 +78,21 @@ class ContractManifest:
     compatible_changes: tuple[CompatibilityMarker, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "contracts",
+            tuple(sorted(self.contracts, key=lambda entry: entry.key)),
+        )
+        object.__setattr__(
+            self,
+            "compatible_changes",
+            tuple(
+                sorted(
+                    self.compatible_changes,
+                    key=lambda item: (item.contract, str(item.contract_version), item.reason),
+                )
+            ),
+        )
         keys = [entry.key for entry in self.contracts]
         duplicates = sorted({key for key in keys if keys.count(key) > 1})
         if duplicates:
@@ -129,7 +145,9 @@ class ContractManifest:
             package_version=str(package["version"]),
             registry_name=registry.get("name"),
             registry_contract_version=(
-                None if registry_version is None else VersionId(str(registry_version))
+                None
+                if registry_version is None
+                else VersionId(str(registry_version), allow_placeholder=False)
             ),
             contracts=tuple(
                 ContractEntry.from_payload(dict(entry))
@@ -201,6 +219,10 @@ def check_contract_manifest(
 def _normalize_payload(value: Any) -> Any:
     if isinstance(value, VersionId):
         return str(value)
+    if isinstance(value, msgspec.Struct):
+        return _normalize_payload(msgspec.to_builtins(value))
+    if is_dataclass(value) and not isinstance(value, type):
+        return _normalize_payload(asdict(value))
     if isinstance(value, dict):
         return {
             str(key): _normalize_payload(item)
