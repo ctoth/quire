@@ -215,6 +215,18 @@ Current execution checkpoint:
 - Propstore family declarations now live in `propstore.families.registry`.
   Propstore document schemas live under `propstore.families.documents`.
   The old `propstore.artifacts` package has been deleted.
+- Generic text and JSON document codecs are public Quire document APIs.
+  Propstore source notes and metadata families use those Quire callbacks
+  instead of owning local registry codec functions.
+- Propstore concept document rendering and write normalization now live in
+  the concept-domain module, while the family registry only points the
+  concept family at those callbacks.
+- Repository-import normalization now lives under Propstore storage import
+  code, not in the family registry. The registry declares which families are
+  importable and in what order; import rewrite behavior belongs to repository
+  import.
+- Propstore semantic family relpaths that cross the import/planning boundary
+  use a `SemanticFamilyAddress` newtype rather than an unlabelled string.
 
 Remaining production buckets:
 
