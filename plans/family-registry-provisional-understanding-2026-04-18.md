@@ -177,13 +177,14 @@ Current execution checkpoint:
   source promotion path resolution, claim CLI reads, merge CLI reads, project
   initialization, proposal writes, repository import writes, concept CLI reads,
   and merge manifest writes.
+- Propstore's separate `SemanticFamilyDefinition` / `SemanticFamilyRegistry`
+  module has been deleted. Semantic family metadata now lives on the Quire
+  `FamilyDefinition` entries in `PROPSTORE_FAMILY_REGISTRY`, and the checked-in
+  contract manifest uses `family-registry:propstore` / `family:*` entries
+  instead of `semantic_family:*` entries.
 
 Remaining production buckets:
 
-- Delete propstore's separate `SemanticFamilyDefinition` /
-  `SemanticFamilyRegistry` surface and represent semantic metadata on the
-  Quire family definitions that already own schema, placement, keys, versions,
-  and foreign keys.
 - Delete or shrink `propstore.artifacts.policy` once tests no longer require a
   raw `repo.artifacts` construction path.
 - Delete broad `propstore.artifacts` barrel exports for family constants; callers
