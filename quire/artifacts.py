@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, runtime_checkable
 
 import msgspec
 
@@ -14,6 +14,17 @@ from quire.versions import VersionId
 TRef = TypeVar("TRef")
 TDoc = TypeVar("TDoc")
 TOwner = TypeVar("TOwner")
+
+BranchPolicy: TypeAlias = Literal["owner", "primary", "current", "fixed", "template"]
+ReversibleRefCodec: TypeAlias = Literal["identity", "stem", "colon_to_double_underscore"]
+OneWayRefCodec: TypeAlias = Literal["slug", "safe_slug"]
+RefCodec: TypeAlias = ReversibleRefCodec | OneWayRefCodec
+HashScatteredFilenameMode: TypeAlias = Literal["digest", "encoded_ref"]
+
+_BRANCH_POLICIES = frozenset({"owner", "primary", "current", "fixed", "template"})
+_REVERSIBLE_REF_CODECS = frozenset({"identity", "stem", "colon_to_double_underscore"})
+_REF_CODECS = _REVERSIBLE_REF_CODECS | frozenset({"slug", "safe_slug"})
+_HASH_SCATTERED_FILENAME_MODES = frozenset({"digest", "encoded_ref"})
 
 
 def _normalize_path(path: str | Path) -> str:
@@ -64,30 +75,57 @@ def decode_ref_value(value: str, codec: str) -> str:
     raise ValueError(f"unknown ref codec: {codec}")
 
 
+@runtime_checkable
+class PrimaryBranchOwner(Protocol):
+    """Owner shape for placements that need a primary branch name."""
+
+    def primary_branch_name(self) -> str:
+        ...
+
+
+@runtime_checkable
+class CurrentBranchOwner(Protocol):
+    """Owner shape for placements that can expose a current branch name."""
+
+    def current_branch_name(self) -> str | None:
+        ...
+
+
+def _require_ref_codec(codec: str) -> None:
+    if codec not in _REF_CODECS:
+        raise ValueError(f"unknown ref codec: {codec}")
+
+
+def _require_reversible_ref_codec(codec: str) -> None:
+    _require_ref_codec(codec)
+    if codec not in _REVERSIBLE_REF_CODECS:
+        raise ValueError(f"{codec!r} requires a reversible ref codec")
+
+
 def _owner_primary_branch(owner: object) -> str:
-    if hasattr(owner, "primary_branch_name"):
+    if isinstance(owner, PrimaryBranchOwner):
         return str(owner.primary_branch_name())
     snapshot = getattr(owner, "snapshot", None)
-    if snapshot is not None and hasattr(snapshot, "primary_branch_name"):
+    if isinstance(snapshot, PrimaryBranchOwner):
         return str(snapshot.primary_branch_name())
     git = getattr(owner, "git", None)
-    if git is not None and hasattr(git, "primary_branch_name"):
+    if isinstance(git, PrimaryBranchOwner):
         return str(git.primary_branch_name())
     raise ValueError("primary branch policy requires an owner with primary_branch_name")
 
 
 def _owner_current_branch(owner: object) -> str:
-    if hasattr(owner, "current_branch_name"):
+    if isinstance(owner, CurrentBranchOwner):
         current = owner.current_branch_name()
         if current:
             return str(current)
     snapshot = getattr(owner, "snapshot", None)
-    if snapshot is not None and hasattr(snapshot, "current_branch_name"):
+    if isinstance(snapshot, CurrentBranchOwner):
         current = snapshot.current_branch_name()
         if current:
             return str(current)
     git = getattr(owner, "git", None)
-    if git is not None and hasattr(git, "current_branch_name"):
+    if isinstance(git, CurrentBranchOwner):
         current = git.current_branch_name()
         if current:
             return str(current)
@@ -141,11 +179,16 @@ class DocumentStoreBackend(Protocol):
 
 @dataclass(frozen=True)
 class BranchPlacement:
-    policy: str = "owner"
+    policy: BranchPolicy = "owner"
     fixed_branch: str | None = None
     template: str | None = None
     ref_field: str = "name"
-    codec: str = "stem"
+    codec: RefCodec = "stem"
+
+    def __post_init__(self) -> None:
+        if self.policy not in _BRANCH_POLICIES:
+            raise ValueError(f"unknown branch policy: {self.policy}")
+        _require_ref_codec(self.codec)
 
     def branch_name(self, owner: object, ref: object | None = None) -> str:
         if self.policy == "owner":
@@ -212,8 +255,11 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
     ref_factory: Callable[[str], TRef]
     ref_field: str = "self"
     extension: str = ".yaml"
-    codec: str = "stem"
+    codec: ReversibleRefCodec = "stem"
     branch: BranchPlacement = BranchPlacement()
+
+    def __post_init__(self) -> None:
+        _require_reversible_ref_codec(self.codec)
 
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         stem = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
@@ -288,11 +334,18 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
     ref_factory: Callable[[str], TRef]
     ref_field: str = "self"
     extension: str = ".yaml"
-    codec: str = "stem"
+    codec: RefCodec = "stem"
     hash_algorithm: str = "sha256"
     fanout: tuple[int, ...] = (2, 2)
-    filename_mode: str = "digest"
+    filename_mode: HashScatteredFilenameMode = "digest"
     branch: BranchPlacement = BranchPlacement()
+
+    def __post_init__(self) -> None:
+        _require_ref_codec(self.codec)
+        if self.filename_mode not in _HASH_SCATTERED_FILENAME_MODES:
+            raise ValueError(f"unknown hash-scattered filename_mode: {self.filename_mode}")
+        if self.filename_mode == "encoded_ref":
+            _require_reversible_ref_codec(self.codec)
 
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         encoded = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
@@ -433,8 +486,11 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
 class TemplateFilePlacement(Generic[TOwner, TRef]):
     template: str
     ref_field: str = "self"
-    codec: str = "stem"
+    codec: RefCodec = "stem"
     branch: BranchPlacement = BranchPlacement()
+
+    def __post_init__(self) -> None:
+        _require_ref_codec(self.codec)
 
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         value = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)

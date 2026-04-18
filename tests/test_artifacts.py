@@ -29,6 +29,14 @@ class Owner:
     branch: str = "master"
 
 
+class MethodOwner:
+    def primary_branch_name(self) -> str:
+        return "main"
+
+    def current_branch_name(self) -> str:
+        return "topic"
+
+
 @dataclass(frozen=True)
 class DemoRef:
     name: str
@@ -128,3 +136,40 @@ def test_branch_template_can_preserve_case_for_safe_source_slugs():
     )
 
     assert placement.branch_name(Owner(), DemoRef("Smith 2024.TestPaper")) == "source/Smith_2024.TestPaper"
+
+
+def test_branch_placement_accepts_owner_protocol_methods():
+    assert BranchPlacement(policy="primary").branch_name(MethodOwner()) == "main"
+    assert BranchPlacement(policy="current").branch_name(MethodOwner()) == "topic"
+
+
+def test_branch_placement_rejects_unknown_policy_and_codec_at_construction():
+    with pytest.raises(ValueError, match="unknown branch policy"):
+        BranchPlacement(policy="unknown")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="unknown ref codec"):
+        BranchPlacement(policy="template", template="source/{stem}", codec="unknown")  # type: ignore[arg-type]
+
+
+def test_reversible_path_placements_reject_one_way_codecs_at_construction():
+    with pytest.raises(ValueError, match="requires a reversible ref codec"):
+        FlatYamlPlacement("claims", DemoRef, ref_field="name", codec="slug")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="requires a reversible ref codec"):
+        HashScatteredYamlPlacement(
+            "claims",
+            DemoRef,
+            ref_field="name",
+            codec="safe_slug",  # type: ignore[arg-type]
+            filename_mode="encoded_ref",
+        )
+
+
+def test_hash_scattered_yaml_rejects_unknown_filename_mode_at_construction():
+    with pytest.raises(ValueError, match="unknown hash-scattered filename_mode"):
+        HashScatteredYamlPlacement(
+            "claims",
+            DemoRef,
+            ref_field="name",
+            filename_mode="unknown",  # type: ignore[arg-type]
+        )
