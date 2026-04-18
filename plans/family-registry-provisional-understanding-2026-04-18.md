@@ -212,12 +212,12 @@ Current execution checkpoint:
 - Generic YAML/document codec helpers are public Quire document APIs.
   Propstore-specific concept document rendering is declared on the concept
   family entry, not in a parallel global codec module.
+- Propstore family declarations now live in `propstore.families.registry`.
+  Propstore document schemas live under `propstore.families.documents`.
+  The old `propstore.artifacts` package has been deleted.
 
 Remaining production buckets:
 
-- Delete the remaining `propstore.artifacts` barrel imports. Callers should
-  import from concrete owner modules while the final family/schema module shape
-  is being reduced.
 - Move or generate handwritten family key/ref wrappers from the family
   declarations. The target is that family declarations state key shape once and
   Quire supplies the key/ref mechanics.
