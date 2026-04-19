@@ -749,6 +749,117 @@ def test_flat_tree_merge_commit_surface(
     assert repo.diff_commits(merge, right) == _model_diff(_flat_snapshot(repo, merge), _flat_snapshot(repo, right))
 
 
+@settings(deadline=None)
+@given(
+    keep=raw_bytes,
+    before=raw_bytes,
+    after=raw_bytes,
+    deleted=raw_bytes,
+    added=raw_bytes,
+)
+def test_revert_commit_restores_parent_tree(
+    keep: bytes,
+    before: bytes,
+    after: bytes,
+    deleted: bytes,
+    added: bytes,
+) -> None:
+    repo = _make_repo()
+    parent = repo.commit_files(
+        {
+            "keep.bin": keep,
+            "modify.bin": before,
+            "delete.bin": deleted,
+        },
+        "parent",
+    )
+    target = repo.commit_batch(
+        {
+            "modify.bin": after,
+            "add.bin": added,
+        },
+        ["delete.bin"],
+        "target",
+    )
+
+    reverted = repo.revert_commit(target)
+
+    assert repo.commit_parent_shas(reverted) == [target]
+    assert _snapshot(repo, reverted) == _snapshot(repo, parent)
+
+
+@settings(deadline=None)
+@given(later=raw_bytes)
+def test_revert_rejects_conflict_without_moving_branch(later: bytes) -> None:
+    repo = _make_repo()
+    repo.commit_files({"a.bin": b"one"}, "one")
+    target = repo.commit_files({"a.bin": b"two"}, "two")
+    current = repo.commit_files({"a.bin": later}, "later")
+    before = _snapshot(repo, current)
+
+    if later == b"two":
+        reverted = repo.revert_commit(target)
+        assert _snapshot(repo, reverted)["a.bin"] == b"one"
+        return
+
+    with pytest.raises(ValueError, match="has changed"):
+        repo.revert_commit(target)
+    assert repo.head_sha() == current
+    assert _snapshot(repo) == before
+
+
+@settings(deadline=None)
+@given(files=path_map)
+def test_revert_rejects_root_and_merge_commits(files: dict[str, bytes]) -> None:
+    repo = GitStore.init_memory()
+    root = repo.commit_files(files, "root")
+    right = repo.commit_files({"right.bin": b"right"}, "right", branch="right")
+    merge = repo.commit_flat_tree(
+        {**repo.flat_tree_entries(root), **repo.flat_tree_entries(right)},
+        "merge",
+        parents=[root, right],
+        branch="merged",
+    )
+
+    with pytest.raises(ValueError, match="single-parent"):
+        repo.revert_commit(root)
+    with pytest.raises(ValueError, match="single-parent"):
+        repo.revert_commit(merge)
+
+
+@settings(deadline=None)
+@given(branch=branch_name, before=raw_bytes, after=raw_bytes)
+def test_revert_respects_explicit_branch(branch: str, before: bytes, after: bytes) -> None:
+    repo = _make_repo()
+    base = repo.commit_files({"a.bin": before}, "base")
+    repo.create_branch(branch, source_commit=base)
+    target = repo.commit_files({"a.bin": after}, "branch target", branch=branch)
+    master = repo.commit_files({"master.bin": b"master"}, "master")
+
+    reverted = repo.revert_commit(target, branch=branch, expected_head=target)
+
+    assert repo.branch_sha(branch) == reverted
+    assert repo.branch_sha("master") == master
+    assert repo.commit_parent_shas(reverted) == [target]
+    assert _snapshot(repo, reverted) == _snapshot(repo, base)
+
+
+@settings(deadline=None)
+@given(files=path_map)
+def test_noop_revert_preserves_tree_but_creates_commit(files: dict[str, bytes]) -> None:
+    repo = _make_repo()
+    base = _commit_model(repo, files)
+    noop = repo.commit_batch({}, [], "noop")
+    before = _snapshot(repo, noop)
+
+    reverted = repo.revert_commit(noop)
+
+    assert reverted != noop
+    assert repo.commit_parent_shas(reverted) == [noop]
+    assert _snapshot(repo, reverted) == before
+    assert _snapshot(repo, reverted) == _snapshot(repo, base)
+
+
 @settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(path=valid_path, content=yaml_bytes)
 def test_idempotent_sync(path: str, content: bytes) -> None:
