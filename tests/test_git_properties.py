@@ -419,6 +419,23 @@ def test_empty_batch_preserves_tree_and_advances_branch(seed: dict[str, bytes]) 
 
 
 @settings(deadline=None)
+@given(path=nested_path, original=raw_bytes, replacement=raw_bytes)
+def test_batch_delete_wins_when_same_path_is_added_and_deleted(
+    path: str,
+    original: bytes,
+    replacement: bytes,
+) -> None:
+    repo = _make_repo()
+    repo.commit_files({path: original}, "seed")
+
+    batch = repo.commit_batch({path: replacement}, [path], "delete wins")
+
+    assert path not in repo.flat_tree_entries(batch)
+    with pytest.raises(FileNotFoundError):
+        repo.read_file(path, commit=batch)
+
+
+@settings(deadline=None)
 @given(seed=path_map)
 def test_repeated_deletes_match_single_delete(seed: dict[str, bytes]) -> None:
     path = sorted(seed)[0]
@@ -530,6 +547,28 @@ def test_expected_head_uses_explicit_branch_not_current_branch(branch: str) -> N
     assert repo.branch_sha("master") == master_tip
 
 
+@settings(deadline=None)
+@given(branch=branch_name, content=raw_bytes)
+def test_expected_head_rejects_wrong_sha_and_missing_branch(branch: str, content: bytes) -> None:
+    repo = _make_repo()
+    base = repo.commit_files({"base.bin": b"base"}, "base")
+    before_snapshot = _snapshot(repo, base)
+    wrong_sha = "0" * 40
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        repo.commit_files({"wrong.bin": content}, "wrong", expected_head=wrong_sha)
+
+    assert repo.head_sha() == base
+    assert _snapshot(repo) == before_snapshot
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        repo.commit_files({"missing.bin": content}, "missing", branch=branch, expected_head=base)
+
+    assert repo.branch_sha(branch) is None
+    assert repo.head_sha() == base
+    assert _snapshot(repo) == before_snapshot
+
+
 @settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(path=valid_path, content=yaml_bytes)
 def test_worktree_fidelity(path: str, content: bytes) -> None:
@@ -593,6 +632,8 @@ def test_sync_worktree_prunes_stale_files_and_preserves_ignored_paths(
         ignored_prefix.write_bytes(runtime)
         ignored_suffix = root / "local.cache"
         ignored_suffix.write_bytes(runtime)
+        git_head = root / ".git" / "HEAD"
+        git_head_before = git_head.read_bytes()
 
         commit = repo.commit_batch({"update.bin": new}, ["delete.bin"], "sync")
         repo.sync_worktree()
@@ -606,7 +647,32 @@ def test_sync_worktree_prunes_stale_files_and_preserves_ignored_paths(
         assert not stale.exists()
         assert not (root / "stale").exists()
         assert (root / ".git").is_dir()
+        assert git_head.read_bytes() == git_head_before
         assert (root / "update.bin").read_bytes() == new
+
+
+@settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(old=raw_bytes, new=raw_bytes, disk_mutation=raw_bytes)
+def test_historical_commit_reads_ignore_worktree_mutations_and_sync(
+    old: bytes,
+    new: bytes,
+    disk_mutation: bytes,
+) -> None:
+    repo, root, tmpdir = _make_disk_repo()
+    with tmpdir:
+        first = repo.commit_files({"tracked.bin": old}, "first")
+        second = repo.commit_files({"tracked.bin": new}, "second")
+        repo.sync_worktree()
+        (root / "tracked.bin").write_bytes(disk_mutation)
+        (root / "untracked.bin").write_bytes(disk_mutation)
+
+        repo.sync_worktree()
+
+        assert repo.read_file("tracked.bin", commit=first) == old
+        assert _snapshot(repo, first)["tracked.bin"] == old
+        assert repo.read_file("tracked.bin", commit=second) == new
+        assert (root / "tracked.bin").read_bytes() == new
+        assert not (root / "untracked.bin").exists()
 
 
 @settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
