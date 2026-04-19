@@ -186,6 +186,43 @@ def test_contract_body_normalizes_dataclasses_and_msgspec_structs():
     }
 
 
+def test_contract_body_sorts_sets_by_normalized_payload() -> None:
+    @dataclass(frozen=True)
+    class ReorderedMetadata:
+        z_value: str
+        a_value: str
+
+    entry = ContractEntry(
+        kind="document_schema",
+        name="demo-document",
+        contract_version=VersionId("2026.04.18"),
+        body={
+            "items": {
+                ReorderedMetadata(z_value="alpha", a_value="zulu"),
+                ReorderedMetadata(z_value="zulu", a_value="alpha"),
+            },
+        },
+    )
+
+    assert entry.body["items"] == [
+        {"a_value": "alpha", "z_value": "zulu"},
+        {"a_value": "zulu", "z_value": "alpha"},
+    ]
+
+
+def test_contract_body_rejects_unsupported_payload_objects() -> None:
+    class UnsupportedPayload:
+        pass
+
+    with pytest.raises(TypeError, match="Unsupported contract payload"):
+        ContractEntry(
+            kind="document_schema",
+            name="demo-document",
+            contract_version=VersionId("2026.04.18"),
+            body={"metadata": UnsupportedPayload()},
+        )
+
+
 def _registry_manifest(
     *,
     registry_version: str = "2026.04.18",

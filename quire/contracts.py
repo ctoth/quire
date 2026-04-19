@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
@@ -239,14 +240,29 @@ def _normalize_payload(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _normalize_payload(asdict(value))
     if isinstance(value, (set, frozenset)):
-        return [_normalize_payload(item) for item in sorted(value, key=str)]
+        normalized_items = [_normalize_payload(item) for item in value]
+        return sorted(normalized_items, key=_normalized_sort_key)
     if isinstance(value, dict):
-        return {
-            str(key): _normalize_payload(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"Unsupported contract payload dict key: {key!r}")
+            normalized[key] = _normalize_payload(item)
+        return {key: normalized[key] for key in sorted(normalized)}
     if isinstance(value, tuple):
         return [_normalize_payload(item) for item in value]
     if isinstance(value, list):
         return [_normalize_payload(item) for item in value]
-    return value
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    raise TypeError(f"Unsupported contract payload value: {value!r}")
+
+
+def _normalized_sort_key(value: Any) -> str:
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
