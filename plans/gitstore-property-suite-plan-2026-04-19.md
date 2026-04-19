@@ -259,3 +259,21 @@ property for oracle correctness before committing.
 7. **Batch G: consumer contracts.** Decide what remains in Quire vs propstore
    for 146-155, then add propstore tests only for real consumer semantics.
 
+## Execution Notes
+
+- Quire commits `9f771f0`, `166a870`, `e2e38b5`, `8186078`,
+  `8d4ce7a`, `0bfc84d`, and `5dc7707` cover property IDs 1-145,
+  including the previously deferred root alias and first-parent negative
+  checks.
+- Property ID 30 chose the contract that `"."` and `Path(".")` are root
+  aliases matching `""`; commit `7d592b5` fixed the production
+  normalization bug exposed by that property.
+- Propstore commit `294bf98` covers consumer-contract IDs 147, 150, 152,
+  and 154 with tests for `.gitignore` materialization, ignored runtime
+  outputs, committed semantic repository imports, and source-branch document
+  isolation.
+- IDs 146, 148, 149, 151, 153, and the generic part of 155 are covered by
+  Quire's policy, branch, merge/flat-tree, current-branch, and revert
+  property families. Propstore-specific undo policy for ID 155 remains an
+  application-command concern because this workstream found no propstore undo
+  command surface to assert against.
