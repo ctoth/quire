@@ -35,6 +35,7 @@ path_map = st.dictionaries(nested_path, raw_bytes, min_size=1, max_size=8)
 branch_name = st.lists(segment, min_size=1, max_size=3).map("/".join).filter(lambda name: name != "master")
 branch_pair = st.tuples(branch_name, branch_name).filter(lambda names: names[0] != names[1])
 notes_ref = branch_name.map(lambda name: NotesRef(f"refs/notes/{name}"))
+message_text = st.text(min_size=0, max_size=80)
 
 yaml_bytes = st.dictionaries(
     st.text(st.characters(whitelist_categories=("L", "N")), min_size=1, max_size=20),
@@ -207,6 +208,18 @@ def test_flat_tree_entries_and_exists_match_snapshot(files: dict[str, bytes]) ->
     assert repo.exists(missing, commit=commit) is None
     with pytest.raises(FileNotFoundError):
         repo.read_file(missing, commit=commit)
+
+
+@settings(deadline=None)
+@given(files=path_map)
+def test_root_aliases_match_empty_path(files: dict[str, bytes]) -> None:
+    repo = _make_repo()
+    commit = _commit_model(repo, files)
+
+    assert repo.exists(".", commit=commit) == repo.exists("", commit=commit)
+    assert repo.exists(Path("."), commit=commit) == repo.exists("", commit=commit)
+    assert list(repo.iter_dir(".", commit=commit)) == list(repo.iter_dir("", commit=commit))
+    assert list(repo.iter_dir(Path("."), commit=commit)) == list(repo.iter_dir("", commit=commit))
 
 
 @settings(deadline=None)
@@ -403,6 +416,37 @@ def test_empty_batch_preserves_tree_and_advances_branch(seed: dict[str, bytes]) 
     assert repo.head_sha() == empty
     assert repo.commit_parent_shas(empty) == [base]
     assert _snapshot(repo, empty) == before
+
+
+@settings(deadline=None)
+@given(seed=path_map)
+def test_repeated_deletes_match_single_delete(seed: dict[str, bytes]) -> None:
+    path = sorted(seed)[0]
+    single_repo = _make_repo()
+    repeated_repo = _make_repo()
+    _commit_model(single_repo, seed)
+    _commit_model(repeated_repo, seed)
+
+    single = single_repo.commit_deletes([path], "single delete")
+    repeated = repeated_repo.commit_deletes([path, path, path], "repeated delete")
+
+    assert _snapshot(single_repo, single) == _snapshot(repeated_repo, repeated)
+
+
+@settings(deadline=None)
+@given(seed=path_map, adds=path_map)
+def test_add_order_does_not_change_batch_tree(seed: dict[str, bytes], adds: dict[str, bytes]) -> None:
+    forward_repo = _make_repo()
+    reverse_repo = _make_repo()
+    _commit_model(forward_repo, seed)
+    _commit_model(reverse_repo, seed)
+    forward_adds = dict(sorted(adds.items()))
+    reverse_adds = dict(reversed(sorted(adds.items())))
+
+    forward = forward_repo.commit_batch(forward_adds, [], "forward")
+    reverse = reverse_repo.commit_batch(reverse_adds, [], "reverse")
+
+    assert _snapshot(forward_repo, forward) == _snapshot(reverse_repo, reverse)
 
 
 def _assert_stale_head_rejected(
@@ -703,6 +747,37 @@ def test_branch_isolation_and_ancestry_properties(
     for entry in branch_log:
         assert entry["sha"] in repo.ancestor_distances(branch_tip)
         assert entry["parents"] == repo.commit_parent_shas(str(entry["sha"]))
+
+
+@settings(deadline=None)
+@given(names=branch_pair, left_content=raw_bytes, right_content=raw_bytes)
+def test_non_first_parent_is_reachable_but_not_on_first_parent_chain(
+    names: tuple[str, str],
+    left_content: bytes,
+    right_content: bytes,
+) -> None:
+    left_branch, right_branch = names
+    repo = _make_repo()
+    base = repo.commit_files({"base.bin": b"base"}, "base")
+    repo.create_branch(left_branch, source_commit=base)
+    repo.create_branch(right_branch, source_commit=base)
+    left_tip = repo.commit_files({"left.bin": left_content}, "left", branch=left_branch)
+    right_tip = repo.commit_files({"right.bin": right_content}, "right", branch=right_branch)
+    merged = repo.commit_flat_tree(
+        _flat_snapshot(repo, left_tip),
+        "merge",
+        branch=left_branch,
+        parents=[left_tip, right_tip],
+    )
+
+    first_parent_chain: list[str] = []
+    current = merged
+    while parents := repo.commit_parent_shas(current):
+        current = parents[0]
+        first_parent_chain.append(current)
+
+    assert right_tip in repo.ancestor_distances(merged)
+    assert right_tip not in first_parent_chain
 
 
 @settings(deadline=None)
@@ -1073,19 +1148,39 @@ def test_root_commit_diff_reports_all_files_added(files: dict[str, bytes]) -> No
 @given(
     path=valid_path,
     content=yaml_bytes,
-    message=st.text(
-        st.characters(whitelist_categories=("L", "N", "Z"), whitelist_characters=" -_:."),
-        min_size=1,
-        max_size=80,
-    ),
+    message=message_text,
 )
+@example(path="documents/example.yaml", content=b"x: 1\n", message="   \n\t  ")
+@example(path="documents/example.yaml", content=b"x: 1\n", message="unicode snowman \u2603")
 def test_commit_message_preservation(path: str, content: bytes, message: str) -> None:
     repo = _make_repo()
 
-    repo.commit_files({path: content}, message)
+    commit = repo.commit_files({path: content}, message)
 
     history = repo.log(max_count=1)
     assert history[0]["message"] == message.strip()
+    assert repo.show_commit(commit)["message"] == message.strip()
+
+
+@settings(deadline=None)
+@given(messages=st.lists(message_text, min_size=1, max_size=6), max_count=st.integers(min_value=0, max_value=8))
+def test_log_limits_tip_and_parent_metadata(messages: list[str], max_count: int) -> None:
+    repo = _make_repo()
+    commits: list[str] = []
+    for index, message in enumerate(messages):
+        commits.append(repo.commit_files({f"log-{index}.bin": bytes([index])}, message))
+
+    history = repo.log(max_count=max_count)
+
+    assert len(history) <= max_count
+    if max_count == 0:
+        assert history == []
+        return
+
+    assert history[0]["sha"] == commits[-1]
+    for entry in history:
+        sha = str(entry["sha"])
+        assert entry["parents"] == repo.commit_parent_shas(sha)
 
 
 @settings(deadline=None)
