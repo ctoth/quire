@@ -33,6 +33,28 @@ def _key_contract_value(key: object) -> str:
 
 
 @dataclass(frozen=True)
+class FamilyIdentityPolicy:
+    artifact_id_function: str | None = None
+    version_id_function: str | None = None
+    canonical_payload_function: str | None = None
+    normalize_payload_function: str | None = None
+    logical_id_fields: tuple[str, ...] = ()
+    version_excluded_fields: tuple[str, ...] = ()
+    source_local_fields: tuple[str, ...] = ()
+
+    def contract_body(self) -> dict[str, object]:
+        return {
+            "artifact_id_function": self.artifact_id_function,
+            "version_id_function": self.version_id_function,
+            "canonical_payload_function": self.canonical_payload_function,
+            "normalize_payload_function": self.normalize_payload_function,
+            "logical_id_fields": self.logical_id_fields,
+            "version_excluded_fields": self.version_excluded_fields,
+            "source_local_fields": self.source_local_fields,
+        }
+
+
+@dataclass(frozen=True)
 class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
     key: TKey
     name: str
@@ -40,6 +62,7 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
     artifact_family: ArtifactFamily[TOwner, TRef, TDoc]
     accessor: str | None = None
     foreign_keys: tuple[ForeignKeySpec, ...] = ()
+    identity_policy: FamilyIdentityPolicy | None = None
     metadata: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
@@ -68,6 +91,8 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
         }
         if self.metadata:
             body["metadata"] = dict(self.metadata)
+        if self.identity_policy is not None:
+            body["identity_policy"] = self.identity_policy.contract_body()
         return body
 
 

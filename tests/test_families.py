@@ -8,7 +8,7 @@ import pytest
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.contracts import check_contract_manifest
-from quire.families import FamilyDefinition, FamilyRegistry
+from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore
 from quire.references import ForeignKeySpec
@@ -45,6 +45,7 @@ def _family_definition(
     *,
     accessor: str | None = None,
     foreign_keys: tuple[ForeignKeySpec, ...] = (),
+    identity_policy: FamilyIdentityPolicy | None = None,
 ) -> FamilyDefinition[Owner, DemoFamily, str, DemoDocument]:
     return FamilyDefinition(
         key=key,
@@ -53,6 +54,7 @@ def _family_definition(
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
         artifact_family=_artifact_family(f"{name}_artifact", namespace),
         foreign_keys=foreign_keys,
+        identity_policy=identity_policy,
     )
 
 
@@ -224,6 +226,33 @@ def test_contract_manifest_contains_registry_and_family_versions() -> None:
     entries = {entry.key: entry for entry in manifest.contracts}
     assert entries["family-registry:demo"].contract_version == VersionId("2026.04.18")
     assert entries["family:claims"].contract_version == VersionId("2026.04.18")
+
+
+def test_family_identity_policy_is_contract_surface() -> None:
+    family = _family_definition(
+        DemoFamily.CLAIMS,
+        "claims",
+        "claims",
+        identity_policy=FamilyIdentityPolicy(
+            artifact_id_function="demo.identity.claim_artifact_id",
+            version_id_function="demo.identity.claim_version_id",
+            canonical_payload_function="demo.identity.claim_canonical_payload",
+            normalize_payload_function="demo.identity.normalize_claim",
+            logical_id_fields=("logical_ids",),
+            version_excluded_fields=("artifact_id", "version_id"),
+            source_local_fields=("id",),
+        ),
+    )
+
+    assert family.contract_body()["identity_policy"] == {
+        "artifact_id_function": "demo.identity.claim_artifact_id",
+        "version_id_function": "demo.identity.claim_version_id",
+        "canonical_payload_function": "demo.identity.claim_canonical_payload",
+        "normalize_payload_function": "demo.identity.normalize_claim",
+        "logical_id_fields": ("logical_ids",),
+        "version_excluded_fields": ("artifact_id", "version_id"),
+        "source_local_fields": ("id",),
+    }
 
 
 def test_contract_manifest_changes_when_family_surface_changes() -> None:

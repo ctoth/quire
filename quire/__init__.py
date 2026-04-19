@@ -10,6 +10,7 @@ from quire.families import (
     BoundFamilyRegistry,
     BoundFamilyTransaction,
     FamilyDefinition,
+    FamilyIdentityPolicy,
     FamilyRegistry,
     TransactionalBoundFamily,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "BoundFamilyRegistry",
     "BoundFamilyTransaction",
     "FamilyDefinition",
+    "FamilyIdentityPolicy",
     "FamilyRegistry",
     "ForeignKeySpec",
     "GitStore",
