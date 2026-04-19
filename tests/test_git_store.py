@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from dulwich.objects import Blob, Commit
 from dulwich.repo import MemoryRepo
 
@@ -198,7 +199,7 @@ def test_branch_operations_track_refs_and_merge_base():
     left = store.commit_files({"left.txt": b"left"}, "left", branch="left")
     right = store.commit_files({"right.txt": b"right"}, "right", branch="right")
 
-    branches = {branch.name: branch for branch in store.list_branches()}
+    branches = {branch.name: branch for branch in store.iter_branches()}
     assert branches["left"].tip_sha == left
     assert branches["left"].parent_branch == "master"
     assert branches["right"].tip_sha == right
@@ -220,11 +221,84 @@ def test_branch_metadata_survives_reopening_filesystem_repo(tmp_path):
     assert store.create_branch("feature") == base
 
     reopened = GitStore.open(root)
-    branches = {branch.name: branch for branch in reopened.list_branches()}
+    branches = {branch.name: branch for branch in reopened.iter_branches()}
 
     assert branches["feature"].tip_sha == base
     assert branches["feature"].parent_branch == "master"
     assert branches["feature"].created_at > 0
+
+
+def test_commit_batch_rejects_moved_branch_head():
+    store = GitStore.init_memory()
+    first = store.commit_files({"a.txt": b"one"}, "first")
+    store.commit_files({"a.txt": b"two"}, "second")
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        store.commit_batch(
+            {"b.txt": b"three"},
+            [],
+            "stale write",
+            expected_head=first,
+        )
+
+
+def test_commit_flat_tree_rejects_moved_branch_head():
+    store = GitStore.init_memory()
+    first = store.commit_files({"a.txt": b"one"}, "first")
+    second = store.commit_files({"a.txt": b"two"}, "second")
+    blob_sha = store.store_blob(b"flat")
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        store.commit_flat_tree(
+            {"b.txt": blob_sha},
+            "stale flat tree",
+            parents=[first],
+            expected_head=first,
+        )
+
+    assert store.head_sha() == second
+    with pytest.raises(FileNotFoundError):
+        store.read_file("b.txt")
+
+
+def test_revert_commit_creates_inverse_commit():
+    store = GitStore.init_memory()
+    first = store.commit_files(
+        {
+            "keep.txt": b"keep",
+            "modify.txt": b"before",
+            "delete.txt": b"delete",
+        },
+        "first",
+    )
+    second = store.commit_batch(
+        {
+            "modify.txt": b"after",
+            "add.txt": b"add",
+        },
+        ["delete.txt"],
+        "second",
+    )
+
+    reverted = store.revert_commit(second)
+
+    assert store.commit_parent_shas(reverted) == [second]
+    assert store.read_file("keep.txt") == b"keep"
+    assert store.read_file("modify.txt") == b"before"
+    assert store.read_file("delete.txt") == b"delete"
+    with pytest.raises(FileNotFoundError):
+        store.read_file("add.txt")
+    assert first in store.ancestor_distances(reverted)
+
+
+def test_revert_commit_rejects_conflicting_later_change():
+    store = GitStore.init_memory()
+    store.commit_files({"a.txt": b"one"}, "first")
+    second = store.commit_files({"a.txt": b"two"}, "second")
+    store.commit_files({"a.txt": b"three"}, "third")
+
+    with pytest.raises(ValueError, match="has changed"):
+        store.revert_commit(second)
 
 
 def test_delete_branch_removes_persisted_branch_metadata():

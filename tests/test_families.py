@@ -137,7 +137,7 @@ def test_bound_registry_exposes_family_operations_by_attribute_key_and_name() ->
     commit = bound.claims.save("paper", DemoDocument("alpha"), message="save claim")
 
     assert len(commit) == 40
-    assert bound.claims.list() == ["paper"]
+    assert list(bound.claims.iter()) == ["paper"]
     assert bound.by_key(DemoFamily.CLAIMS).require("paper") == DemoDocument("alpha")
     assert bound.by_name("claims").require_handle("paper").address.require_path() == "claims/paper.yaml"
 
@@ -146,7 +146,7 @@ def test_bound_registry_exposes_family_operations_by_attribute_key_and_name() ->
     assert bound.claims.require("renamed") == DemoDocument("beta")
 
     bound.claims.delete("renamed", message="delete claim")
-    assert bound.claims.list() == []
+    assert list(bound.claims.iter()) == []
 
 
 def test_bound_family_exposes_address_coercion_render_and_payload() -> None:
@@ -160,6 +160,28 @@ def test_bound_family_exposes_address_coercion_render_and_payload() -> None:
     assert bound.claims.address("paper").require_path() == "claims/paper.yaml"
     assert bound.claims.payload(document) == {"name": "alpha"}
     assert "name: alpha" in bound.claims.render(document)
+
+
+def test_bound_family_forwards_expected_head_checks() -> None:
+    registry = _registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+
+    first = bound.claims.save("paper", DemoDocument("alpha"), message="first")
+    bound.claims.save("paper", DemoDocument("beta"), message="second")
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        bound.claims.save(
+            "paper",
+            DemoDocument("gamma"),
+            message="stale save",
+            expected_head=first,
+        )
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        with bound.transact(message="stale transaction", expected_head=first) as transaction:
+            transaction.claims.save("other", DemoDocument("delta"))
 
 
 def test_bound_registry_transaction_writes_multiple_families() -> None:

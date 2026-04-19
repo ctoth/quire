@@ -164,7 +164,7 @@ def test_cross_family_reference_index_integrates_with_bound_family_registry() ->
 
     concept_records = {
         ref: bound.concepts.require(ref)
-        for ref in bound.concepts.list()
+        for ref in bound.concepts.iter()
     }
     concept_lookup = build_reference_lookup(
         concept_records.values(),

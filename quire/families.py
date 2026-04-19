@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -229,9 +229,14 @@ class BoundFamilyRegistry(Generic[TOwner, TKey]):
         *,
         message: str,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> BoundFamilyTransaction[TOwner, TKey]:
         return BoundFamilyTransaction(
-            transaction=self.store.transact(message=message, branch=branch),
+            transaction=self.store.transact(
+                message=message,
+                branch=branch,
+                expected_head=expected_head,
+            ),
             registry=self.registry,
         )
 
@@ -262,8 +267,8 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
     def payload(self, document: TDoc) -> object:
         return self.store.payload(document, family=self.family)
 
-    def list(self, *, branch: str | None = None, commit: str | None = None) -> list[TRef]:
-        return self.store.list(self.family, branch=branch, commit=commit)
+    def iter(self, *, branch: str | None = None, commit: str | None = None) -> Iterator[TRef]:
+        return self.store.iter(self.family, branch=branch, commit=commit)
 
     def load(self, ref: TRef, *, commit: str | None = None) -> TDoc | None:
         return self.store.load(self.family, ref, commit=commit)
@@ -293,11 +298,32 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         *,
         message: str,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
-        return self.store.save(self.family, ref, doc, message=message, branch=branch)
+        return self.store.save(
+            self.family,
+            ref,
+            doc,
+            message=message,
+            branch=branch,
+            expected_head=expected_head,
+        )
 
-    def delete(self, ref: TRef, *, message: str, branch: str | None = None) -> str:
-        return self.store.delete(self.family, ref, message=message, branch=branch)
+    def delete(
+        self,
+        ref: TRef,
+        *,
+        message: str,
+        branch: str | None = None,
+        expected_head: str | None = None,
+    ) -> str:
+        return self.store.delete(
+            self.family,
+            ref,
+            message=message,
+            branch=branch,
+            expected_head=expected_head,
+        )
 
     def move(
         self,
@@ -307,8 +333,17 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         *,
         message: str,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
-        return self.store.move(self.family, old_ref, new_ref, doc, message=message, branch=branch)
+        return self.store.move(
+            self.family,
+            old_ref,
+            new_ref,
+            doc,
+            message=message,
+            branch=branch,
+            expected_head=expected_head,
+        )
 
 
 @dataclass(frozen=True)

@@ -95,7 +95,7 @@ bound = registry.bind(store.owner, store)
 bound.claims.save("alpha", Claim(name="alpha", strength=0.8), message="seed alpha")
 bound.claims.save("beta",  Claim(name="beta"),                message="seed beta")
 
-assert bound.claims.list() == ["alpha", "beta"]
+assert list(bound.claims.iter()) == ["alpha", "beta"]
 assert bound.claims.require("alpha").strength == 0.8
 ```
 
