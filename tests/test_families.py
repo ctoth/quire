@@ -8,7 +8,7 @@ import pytest
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.contracts import check_contract_manifest
-from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry
+from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry, _duplicates
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore
 from quire.references import ForeignKeySpec
@@ -127,6 +127,32 @@ def test_registry_rejects_duplicate_keys_names_and_accessors() -> None:
                 _family_definition(DemoFamily.CONCEPTS, "concepts", "concepts", accessor="rows"),
             ),
         )
+
+
+def test_duplicate_detection_does_not_rescan_collected_duplicates() -> None:
+    class CountingKey:
+        comparisons = 0
+
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def __hash__(self) -> int:
+            return hash(self.value)
+
+        def __eq__(self, other: object) -> bool:
+            CountingKey.comparisons += 1
+            return isinstance(other, CountingKey) and self.value == other.value
+
+    values = tuple(
+        key
+        for index in range(50)
+        for key in (CountingKey(str(index)), CountingKey(str(index)))
+    )
+
+    duplicates = _duplicates(values)
+
+    assert [item.value for item in duplicates] == [str(index) for index in range(50)]
+    assert CountingKey.comparisons < 150
 
 
 def test_bound_registry_exposes_family_operations_by_attribute_key_and_name() -> None:

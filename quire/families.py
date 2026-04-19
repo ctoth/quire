@@ -414,9 +414,11 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
 
 def _duplicates(values: Sequence[object]) -> list[object]:
     seen: set[object] = set()
+    duplicate_values: set[object] = set()
     duplicates: list[object] = []
     for value in values:
-        if value in seen and value not in duplicates:
+        if value in seen and value not in duplicate_values:
             duplicates.append(value)
+            duplicate_values.add(value)
         seen.add(value)
     return duplicates
