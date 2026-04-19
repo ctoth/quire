@@ -13,6 +13,7 @@ from quire.families import (
     FamilyRegistry,
     TransactionalBoundFamily,
 )
+from quire.hashing import canonical_json_bytes, canonical_json_sha256
 
 __all__ = [
     "BoundFamily",
@@ -29,6 +30,8 @@ __all__ = [
     "ReferenceResolution",
     "TransactionalBoundFamily",
     "VersionId",
+    "canonical_json_bytes",
+    "canonical_json_sha256",
     "single_field_ref_type",
     "singleton_ref_type",
 ]
