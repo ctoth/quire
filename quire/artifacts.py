@@ -62,13 +62,17 @@ def _loaded_source_path(loaded: object) -> str:
 def _slug(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip().lower())
     cleaned = cleaned.strip("_-")
-    return cleaned or "artifact"
+    if not cleaned:
+        raise ValueError(f"could not derive slug from {value!r}")
+    return cleaned
 
 
 def _safe_slug(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in value.strip())
     cleaned = cleaned.strip("._-")
-    return cleaned or "artifact"
+    if not cleaned:
+        raise ValueError(f"could not derive safe slug from {value!r}")
+    return cleaned
 
 
 def _ref_value(ref: object, field: str) -> str:
@@ -452,7 +456,13 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
         for width in self.fanout:
             if width <= 0:
                 raise ValueError("fanout widths must be positive")
-            segments.append(digest[offset: offset + width])
+            segment = digest[offset: offset + width]
+            if len(segment) != width:
+                raise ValueError(
+                    f"digest {digest!r} is too short for fanout {self.fanout!r} "
+                    f"at offset {offset}"
+                )
+            segments.append(segment)
             offset += width
         return tuple(segments)
 
