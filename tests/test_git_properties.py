@@ -96,6 +96,32 @@ def _missing_path(existing_paths: set[str]) -> str:
     return candidate
 
 
+def _directory_children(paths: set[str]) -> dict[str, dict[str, bool]]:
+    children: dict[str, dict[str, bool]] = {"": {}}
+    for path in paths:
+        parts = path.split("/")
+        for index, part in enumerate(parts):
+            directory = "/".join(parts[:index])
+            child_path = "/".join(parts[: index + 1])
+            is_dir = index < len(parts) - 1
+            children.setdefault(directory, {})
+            children[directory][part] = children[directory].get(part, False) or is_dir
+            if is_dir:
+                children.setdefault(child_path, {})
+    return children
+
+
+def _path_spellings(path: str) -> list[str | Path]:
+    backslash = path.replace("/", "\\")
+    return [
+        path,
+        f"/{path}",
+        f"{path}/",
+        backslash,
+        Path(*path.split("/")),
+    ]
+
+
 @settings(deadline=None)
 @given(path=valid_path, content=yaml_bytes)
 def test_roundtrip_preservation(path: str, content: bytes) -> None:
@@ -174,6 +200,71 @@ def test_listing_completeness(subdir: str, filenames: list[str]) -> None:
     listed = list(repo.iter_dir(subdir))
     for filename in filenames:
         assert filename in listed
+
+
+@settings(deadline=None)
+@given(files=path_map)
+def test_iter_dir_reports_direct_children_and_entry_types(files: dict[str, bytes]) -> None:
+    repo = _make_repo()
+    commit = _commit_model(repo, files)
+    children = _directory_children(set(_INITIAL_MODEL) | set(files))
+
+    for directory, expected_children in children.items():
+        assert list(repo.iter_dir(directory, commit=commit)) == sorted(expected_children)
+        assert list(repo.iter_dir_entries(directory, commit=commit)) == [
+            (name, expected_children[name]) for name in sorted(expected_children)
+        ]
+        for name in repo.iter_dir(directory, commit=commit):
+            assert "/" not in name
+            assert "\\" not in name
+
+
+@settings(deadline=None)
+@given(files=path_map)
+def test_git_tree_path_state_matches_store(files: dict[str, bytes]) -> None:
+    repo = _make_repo()
+    commit = _commit_model(repo, files)
+    tree = repo.tree(commit)
+    children = _directory_children(set(_INITIAL_MODEL) | set(files))
+
+    for path, expected in _snapshot(repo, commit).items():
+        node = tree / path
+        assert node.exists()
+        assert node.is_file()
+        assert not node.is_dir()
+        assert node.read_bytes() == expected
+        assert node.read_text(encoding="latin-1") == expected.decode("latin-1")
+        with pytest.raises(NotADirectoryError):
+            list(node.iterdir())
+
+    for directory, expected_children in children.items():
+        node = tree if not directory else tree / directory
+        assert node.exists()
+        assert node.is_dir()
+        assert not node.is_file()
+        assert sorted(child.name for child in node.iterdir()) == sorted(expected_children)
+        with pytest.raises(FileNotFoundError):
+            node.read_bytes()
+
+    missing = tree / _missing_path(set(files) | set(_INITIAL_MODEL))
+    assert not missing.exists()
+    assert not missing.is_file()
+    assert not missing.is_dir()
+
+
+@settings(deadline=None)
+@given(prefix=segment, left=raw_bytes, right=raw_bytes)
+def test_prefix_sibling_paths_remain_independent(prefix: str, left: bytes, right: bytes) -> None:
+    repo = _make_repo()
+    left_path = f"{prefix}.bin"
+    right_path = f"{prefix}{prefix}.bin"
+    if left_path == right_path:
+        right_path = f"{prefix}x.bin"
+
+    commit = repo.commit_files({left_path: left, right_path: right}, "add siblings")
+
+    assert repo.read_file(left_path, commit=commit) == left
+    assert repo.read_file(right_path, commit=commit) == right
 
 
 @settings(deadline=None)
@@ -470,6 +561,35 @@ def test_path_normalization(subdir: str, name: str, content: bytes) -> None:
 
     assert repo.read_file(posix_path) == content
     assert repo.read_file(backslash_path) == content
+
+
+@settings(deadline=None)
+@given(path=nested_path, content=raw_bytes)
+def test_path_spelling_matrix_targets_one_normalized_file(path: str, content: bytes) -> None:
+    for spelling in _path_spellings(path):
+        repo = _make_repo()
+        commit = repo.commit_files({spelling: content}, "add spelling")
+
+        for equivalent in _path_spellings(path):
+            assert repo.read_file(equivalent, commit=commit) == content
+
+        flat_keys = set(repo.flat_tree_entries(commit))
+        assert path in flat_keys
+        assert all("\\" not in key for key in flat_keys)
+
+
+@settings(deadline=None)
+@given(path=nested_path, content=raw_bytes)
+def test_delete_uses_same_path_normalization_as_add(path: str, content: bytes) -> None:
+    repo = _make_repo()
+    repo.commit_files({_path_spellings(path)[0]: content}, "add")
+
+    commit = repo.commit_deletes([_path_spellings(path)[-1]], "delete")
+
+    assert path not in repo.flat_tree_entries(commit)
+    for spelling in _path_spellings(path):
+        with pytest.raises(FileNotFoundError):
+            repo.read_file(spelling, commit=commit)
 
 
 class GitStoreMachine(RuleBasedStateMachine):
