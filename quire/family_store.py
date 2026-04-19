@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar, cast
@@ -32,6 +32,7 @@ class DocumentStoreBackend(ReadOnlyDocumentStoreBackend, Protocol):
         message: str,
         *,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
         ...
 
@@ -213,6 +214,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         *,
         message: str,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
         backend = self._require_backend()
         prepared = self.prepare(family, ref, doc, branch=branch)
@@ -221,6 +223,7 @@ class DocumentFamilyStore(Generic[TOwner]):
             deletes=[],
             message=message,
             branch=prepared.branch,
+            expected_head=expected_head,
         )
 
     def move(
@@ -232,8 +235,9 @@ class DocumentFamilyStore(Generic[TOwner]):
         *,
         message: str,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
-        with self.transact(message=message, branch=branch) as transaction:
+        with self.transact(message=message, branch=branch, expected_head=expected_head) as transaction:
             transaction.move(family, old_ref, new_ref, doc)
         return cast(str, transaction.commit_sha)
 
@@ -244,6 +248,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         *,
         message: str,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
         backend = self._require_backend()
         address = self.address(family, ref)
@@ -253,16 +258,17 @@ class DocumentFamilyStore(Generic[TOwner]):
             deletes=[address_path(address)],
             message=message,
             branch=target_branch,
+            expected_head=expected_head,
         )
 
-    def list(
+    def iter(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> list[TRef]:
-        return family.placement.list_refs(
+    ) -> Iterator[TRef]:
+        return family.placement.iter_refs(
             self.owner,
             self.backend,
             branch=branch,
@@ -274,8 +280,14 @@ class DocumentFamilyStore(Generic[TOwner]):
         *,
         message: str,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> DocumentFamilyTransaction[TOwner]:
-        return DocumentFamilyTransaction(store=self, message=message, branch=branch)
+        return DocumentFamilyTransaction(
+            store=self,
+            message=message,
+            branch=branch,
+            expected_head=expected_head,
+        )
 
     def _require_backend(self) -> DocumentStoreBackend:
         if self.backend is None:
@@ -288,6 +300,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
     store: DocumentFamilyStore[TOwner]
     message: str
     branch: str | None = None
+    expected_head: str | None = None
     _adds: dict[str, bytes] = field(default_factory=dict)
     _deletes: set[str] = field(default_factory=set)
     _commit_sha: str | None = None
@@ -319,6 +332,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
 
     def save(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
+        self._check_preemptive_head()
         prepared = self.store.prepare(family, ref, doc, branch=self.branch)
         if self.branch is None:
             self.branch = prepared.branch
@@ -332,6 +346,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
 
     def delete(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef) -> None:
         self._ensure_open()
+        self._check_preemptive_head()
         _, address = self._addressed_target(family, ref)
         path = address_path(address)
         self._deletes.add(path)
@@ -339,6 +354,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
 
     def move(self, family: ArtifactFamily[TOwner, TRef, TDoc], old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
+        self._check_preemptive_head()
         self.save(family, new_ref, doc)
         old_branch, old_address = self._addressed_target(family, old_ref)
         new_branch, new_address = self._addressed_target(family, new_ref)
@@ -355,6 +371,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
     def commit(self) -> str:
         if self._commit_sha is not None:
             return self._commit_sha
+        self._check_preemptive_head()
         backend = self.store._require_backend()
         if self.branch is None:
             raise ValueError("artifact transaction has no target branch")
@@ -363,8 +380,22 @@ class DocumentFamilyTransaction(Generic[TOwner]):
             deletes=sorted(self._deletes),
             message=self.message,
             branch=self.branch,
+            expected_head=self.expected_head,
         )
         return self._commit_sha
+
+    def _check_preemptive_head(self) -> None:
+        if self.expected_head is None or self.branch is None:
+            return
+        backend = self.store.backend
+        if backend is None:
+            return
+        current = self.store.branch_head(backend, self.branch)
+        if current is not None and current != self.expected_head:
+            raise ValueError(
+                f"Transaction branch {self.branch!r} head mismatch (preemptive): "
+                f"expected {self.expected_head}, got {current}"
+            )
 
     def _addressed_target(
         self,
