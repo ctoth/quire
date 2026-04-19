@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 
 from quire.git_store import GitStore, GitStorePolicy
+from quire.notes import NotesRef
 from quire.refs import RefName
 from quire.tree_path import FilesystemTreePath, GitTreePath
 
@@ -33,6 +34,7 @@ nested_path = st.lists(segment, min_size=1, max_size=5).map(
 path_map = st.dictionaries(nested_path, raw_bytes, min_size=1, max_size=8)
 branch_name = st.lists(segment, min_size=1, max_size=3).map("/".join).filter(lambda name: name != "master")
 branch_pair = st.tuples(branch_name, branch_name).filter(lambda names: names[0] != names[1])
+notes_ref = branch_name.map(lambda name: NotesRef(f"refs/notes/{name}"))
 
 yaml_bytes = st.dictionaries(
     st.text(st.characters(whitelist_categories=("L", "N")), min_size=1, max_size=20),
@@ -499,6 +501,71 @@ def test_worktree_fidelity(path: str, content: bytes) -> None:
 
 
 @settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(files=path_map)
+def test_materialize_worktree_matches_head_snapshot(files: dict[str, bytes]) -> None:
+    repo, root, tmpdir = _make_disk_repo()
+    with tmpdir:
+        commit = repo.commit_files(files, "files")
+
+        repo.materialize_worktree()
+
+        assert _snapshot_dir(root) == _snapshot(repo, commit)
+        for path in files:
+            assert (root / Path(*path.split("/"))).is_file()
+
+
+def test_memory_repo_materialize_worktree_is_noop() -> None:
+    repo = _make_repo()
+
+    repo.materialize_worktree(remove_extra=True)
+    repo.sync_worktree()
+
+    assert repo.root is None
+
+
+@settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(old=raw_bytes, new=raw_bytes, runtime=raw_bytes)
+def test_sync_worktree_prunes_stale_files_and_preserves_ignored_paths(
+    old: bytes,
+    new: bytes,
+    runtime: bytes,
+) -> None:
+    repo, root, tmpdir = _make_disk_repo()
+    with tmpdir:
+        repo.commit_files(
+            {
+                "delete.bin": old,
+                "update.bin": old,
+                "deep/keep.bin": old,
+            },
+            "seed",
+        )
+        repo.sync_worktree()
+        stale = root / "stale" / "nested" / "old.bin"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"stale")
+        ignored_prefix = root / "runtime" / "keep.bin"
+        ignored_prefix.parent.mkdir(parents=True)
+        ignored_prefix.write_bytes(runtime)
+        ignored_suffix = root / "local.cache"
+        ignored_suffix.write_bytes(runtime)
+
+        commit = repo.commit_batch({"update.bin": new}, ["delete.bin"], "sync")
+        repo.sync_worktree()
+
+        assert _snapshot_dir(root) == {
+            **_snapshot(repo, commit),
+            "runtime/keep.bin": runtime,
+            "local.cache": runtime,
+        }
+        assert not (root / "delete.bin").exists()
+        assert not stale.exists()
+        assert not (root / "stale").exists()
+        assert (root / ".git").is_dir()
+        assert (root / "update.bin").read_bytes() == new
+
+
+@settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(subdir=valid_subdir, filename=valid_filename, content=yaml_bytes)
 def test_tree_path_equivalence(subdir: str, filename: str, content: bytes) -> None:
     repo, root, tmpdir = _make_disk_repo()
@@ -886,6 +953,57 @@ def _snapshot_dir(root: Path) -> dict[str, bytes]:
             continue
         result[relpath] = file_path.read_bytes()
     return result
+
+
+@settings(deadline=None)
+@given(name=branch_name, payload=raw_bytes, other=raw_bytes)
+def test_blob_ref_properties(name: str, payload: bytes, other: bytes) -> None:
+    repo = _make_repo()
+    branch_tip = repo.commit_files({"branch.bin": other}, "branch")
+    ref = RefName(f"refs/quire/indexes/{name}")
+
+    blob_sha = repo.write_blob_ref(ref, payload)
+
+    assert repo.read_ref(ref) == blob_sha
+    assert repo.read_blob_ref(ref) == payload
+    assert repo.branch_sha("master") == branch_tip
+    repo.delete_ref(ref)
+    assert repo.read_blob_ref(ref) is None
+
+    repo.write_ref(ref, branch_tip)
+    with pytest.raises(TypeError):
+        repo.read_blob_ref(ref)
+
+
+@settings(deadline=None)
+@given(ref=notes_ref, other_ref=notes_ref, payload=raw_bytes, replacement=raw_bytes, other=raw_bytes)
+def test_note_properties(
+    ref: NotesRef,
+    other_ref: NotesRef,
+    payload: bytes,
+    replacement: bytes,
+    other: bytes,
+) -> None:
+    repo = _make_repo()
+    object_a = repo.store_blob(b"a")
+    object_b = repo.store_blob(b"b")
+
+    repo.write_note(ref, object_a, payload)
+    assert repo.read_note(ref, object_a) == payload
+    repo.write_note(ref, object_a, replacement)
+    assert repo.read_note(ref, object_a) == replacement
+
+    repo.write_note(ref, object_b, other)
+    if other_ref != ref:
+        repo.write_note(other_ref, object_a, other)
+        assert repo.read_note(other_ref, object_a) == other
+
+    repo.delete_note(ref, object_a)
+    assert repo.read_note(ref, object_a) is None
+    assert repo.read_note(ref, object_b) == other
+    assert repo.delete_note(ref, object_a) is None
+    if other_ref != ref:
+        assert repo.read_note(other_ref, object_a) == other
 
 
 @settings(deadline=None)
