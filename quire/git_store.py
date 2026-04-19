@@ -690,18 +690,22 @@ class GitStore:
             base_tree = _tree_object(self._repo, parent_commit.tree)
             parents = [tip_sha]
 
-        entries: dict[str, bytes] = {}
-        if base_tree is not None:
-            self._flatten_tree(base_tree, "", entries)
-
+        add_blob_ids: dict[tuple[str, ...], bytes] = {}
         for path, content in adds.items():
             blob = Blob.from_string(content)
             store.add_object(blob)
-            entries[_normalize_path(path)] = blob.id
-        for path in deletes:
-            entries.pop(_normalize_path(path), None)
+            normalized = _normalize_path(path)
+            parts = PurePosixPath(normalized).parts
+            if not parts:
+                raise ValueError("Tree entry path must not be empty")
+            add_blob_ids[parts] = blob.id
+        delete_parts = [
+            PurePosixPath(normalized).parts
+            for path in deletes
+            if (normalized := _normalize_path(path))
+        ]
 
-        root_tree = self._build_tree_from_flat(entries)
+        root_tree = self._apply_tree_changes(base_tree, add_blob_ids, delete_parts)
         commit = Commit()
         commit.tree = root_tree.id
         commit.author = self._policy.author
@@ -793,6 +797,115 @@ class GitStore:
                     stack.append((path, obj))
                 elif isinstance(obj, Blob):
                     out[path] = entry.sha
+
+    def _apply_tree_changes(
+        self,
+        base_tree: Tree | None,
+        adds: Mapping[tuple[str, ...], bytes],
+        deletes: Sequence[tuple[str, ...]],
+    ) -> Tree:
+        self._check_add_path_conflicts(adds)
+        touched_dirs: set[tuple[str, ...]] = {()}
+        add_parent_dirs: set[tuple[str, ...]] = set()
+        for parts in adds:
+            for index in range(len(parts)):
+                directory = parts[:index]
+                touched_dirs.add(directory)
+                add_parent_dirs.add(directory)
+
+        effective_deletes: list[tuple[str, ...]] = []
+        for parts in deletes:
+            if not parts:
+                continue
+            parent = parts[:-1]
+            parent_obj = self._tree_at(base_tree, parent)
+            if isinstance(parent_obj, Blob) and parent not in add_parent_dirs:
+                continue
+            effective_deletes.append(parts)
+            for index in range(len(parts)):
+                touched_dirs.add(parts[:index])
+
+        entries_by_dir: dict[tuple[str, ...], dict[str, tuple[int, bytes]]] = {}
+        for directory in sorted(touched_dirs, key=lambda item: (len(item), item)):
+            obj = self._tree_at(base_tree, directory)
+            if isinstance(obj, Blob):
+                raise ValueError(f"path conflict at {'/'.join(directory)}")
+            entries: dict[str, tuple[int, bytes]] = {}
+            if isinstance(obj, Tree):
+                entries = {
+                    entry.path.decode("utf-8"): (entry.mode, entry.sha)
+                    for entry in obj.items()
+                }
+            entries_by_dir[directory] = entries
+
+        for parts, sha in adds.items():
+            parent = parts[:-1]
+            name = parts[-1]
+            entries = entries_by_dir[parent]
+            existing = entries.get(name)
+            if existing is not None and existing[0] & 0o040000:
+                raise ValueError(f"path conflict at {'/'.join(parts)}")
+            entries[name] = (0o100644, sha)
+
+        for parts in effective_deletes:
+            parent = parts[:-1]
+            name = parts[-1]
+            entries = entries_by_dir.get(parent)
+            if entries is None:
+                continue
+            existing = entries.get(name)
+            if existing is not None and not existing[0] & 0o040000:
+                entries.pop(name)
+
+        root_tree: Tree | None = None
+        for directory in sorted(touched_dirs, key=lambda item: (len(item), item), reverse=True):
+            entries = entries_by_dir[directory]
+            if directory and not entries:
+                parent = directory[:-1]
+                if parent in entries_by_dir:
+                    entries_by_dir[parent].pop(directory[-1], None)
+                continue
+
+            tree = Tree()
+            for name, (mode, sha) in sorted(entries.items()):
+                _tree_add(tree, name.encode("utf-8"), mode, sha)
+            self._repo.object_store.add_object(tree)
+            if not directory:
+                root_tree = tree
+                continue
+            parent = directory[:-1]
+            if parent in entries_by_dir:
+                entries_by_dir[parent][directory[-1]] = (0o040000, tree.id)
+
+        if root_tree is None:
+            raise RuntimeError("tree edit did not produce a root tree")
+        return root_tree
+
+    def _check_add_path_conflicts(self, adds: Mapping[tuple[str, ...], bytes]) -> None:
+        add_paths = set(adds)
+        for parts in add_paths:
+            if not parts:
+                raise ValueError("Tree entry path must not be empty")
+            for index in range(1, len(parts)):
+                if parts[:index] in add_paths:
+                    raise ValueError(f"path conflict at {'/'.join(parts[:index])}")
+
+    def _tree_at(self, base_tree: Tree | None, directory: tuple[str, ...]) -> Blob | Tree | None:
+        if base_tree is None:
+            return None
+        obj: Blob | Tree = base_tree
+        for part in directory:
+            if not isinstance(obj, Tree):
+                return obj
+            try:
+                _mode, sha = obj[part.encode("utf-8")]
+            except KeyError:
+                return None
+            next_obj = _repo_object(self._repo, sha)
+            if not isinstance(next_obj, (Blob, Tree)):
+                return None
+            obj = next_obj
+        return obj
 
     def _build_tree_from_flat(self, entries: dict[str, bytes]) -> Tree:
         direct_blobs: dict[tuple[str, ...], list[tuple[str, bytes]]] = {(): []}

@@ -58,6 +58,32 @@ def test_single_file_update_preserves_unrelated_tree_contents():
     assert store.read_file("a/one.txt", commit=first) == b"one"
 
 
+def test_commit_rejects_writing_child_under_existing_file():
+    store = GitStore.init_memory()
+    store.commit_files({"docs": b"file"}, "add file")
+
+    with pytest.raises(ValueError, match="path conflict"):
+        store.commit_files({"docs/example.txt": b"child"}, "add child")
+
+
+def test_commit_rejects_replacing_existing_directory_with_file():
+    store = GitStore.init_memory()
+    store.commit_files({"docs/example.txt": b"child"}, "add child")
+
+    with pytest.raises(ValueError, match="path conflict"):
+        store.commit_files({"docs": b"file"}, "replace directory")
+
+
+def test_commit_delete_missing_path_remains_harmless():
+    store = GitStore.init_memory()
+    first = store.commit_files({"docs/example.txt": b"child"}, "add child")
+
+    second = store.commit_deletes(["docs/missing.txt"], "delete missing")
+
+    assert store.read_file("docs/example.txt", commit=second) == b"child"
+    assert store.commit_parent_shas(second) == [first]
+
+
 def test_materialize_worktree_can_remove_stale_files_and_preserve_runtime_paths(tmp_path):
     root = tmp_path / "repo"
     store = GitStore.init(
