@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -157,6 +157,27 @@ class GitStore:
     def tree(self, commit: str | None = None) -> GitTreePath:
         return GitTreePath(self, commit=commit)
 
+    def exists(self, path: str | Path, commit: str | None = None) -> tuple[int, str] | None:
+        path = _normalize_path(path)
+        tree = self._get_tree(commit)
+        if tree is None:
+            return None
+        if not path:
+            return 0o040000, tree.id.decode("ascii")
+        
+        parts = PurePosixPath(path).parts
+        obj = tree
+        for part in parts:
+            if not isinstance(obj, Tree):
+                return None
+            try:
+                mode, sha = obj[part.encode("utf-8")]
+            except KeyError:
+                return None
+            obj = self._repo.get_object(sha)
+        
+        return mode, obj.id.decode("ascii")
+
     def read_file(self, path: str | Path, commit: str | None = None) -> bytes:
         path = _normalize_path(path)
         tree = self._get_tree(commit)
@@ -165,31 +186,31 @@ class GitStore:
             raise FileNotFoundError(path)
         return obj.data
 
-    def list_dir(self, subdir: str | Path, commit: str | None = None) -> list[str]:
+    def iter_dir(self, subdir: str | Path, commit: str | None = None) -> Iterator[str]:
         subtree = self._subtree(subdir, commit=commit)
         if subtree is None:
-            return []
-        return sorted(
-            entry.path.decode("utf-8")
-            for entry in subtree.items()
-            if entry.mode & 0o100000
+            return
+        entries = sorted(
+            (entry for entry in subtree.items() if entry.mode & 0o100000),
+            key=lambda entry: entry.path,
         )
+        for entry in entries:
+            yield entry.path.decode("utf-8")
 
-    def list_dir_entries(
+    def iter_dir_entries(
         self,
         subdir: str | Path,
         commit: str | None = None,
-    ) -> list[tuple[str, bool]]:
+    ) -> Iterator[tuple[str, bool]]:
         subtree = self._subtree(subdir, commit=commit)
         if subtree is None:
-            return []
-        return sorted(
-            (
+            return
+        entries = sorted(subtree.items(), key=lambda entry: entry.path)
+        for entry in entries:
+            yield (
                 entry.path.decode("utf-8"),
                 bool(entry.mode & 0o040000),
             )
-            for entry in subtree.items()
-        )
 
     def commit_files(
         self,
@@ -197,8 +218,9 @@ class GitStore:
         message: str,
         *,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
-        return self._commit(adds=changes, deletes=(), message=message, branch=branch)
+        return self._commit(adds=changes, deletes=(), message=message, branch=branch, expected_head=expected_head)
 
     def commit_deletes(
         self,
@@ -206,8 +228,9 @@ class GitStore:
         message: str,
         *,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
-        return self._commit(adds={}, deletes=paths, message=message, branch=branch)
+        return self._commit(adds={}, deletes=paths, message=message, branch=branch, expected_head=expected_head)
 
     def commit_batch(
         self,
@@ -216,8 +239,9 @@ class GitStore:
         message: str,
         *,
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
-        return self._commit(adds=adds, deletes=deletes, message=message, branch=branch)
+        return self._commit(adds=adds, deletes=deletes, message=message, branch=branch, expected_head=expected_head)
 
     def flat_tree_entries(self, commit: str | None = None) -> dict[str, str]:
         tree = self._get_tree(commit)
@@ -239,7 +263,19 @@ class GitStore:
         *,
         parents: Sequence[str | bytes],
         branch: str | None = None,
+        expected_head: str | None = None,
     ) -> str:
+        branch_name = self._resolve_write_branch_name(branch)
+        branch_ref = f"refs/heads/{branch_name}".encode()
+        current_head = _ref_get(self._repo.refs, branch_ref)
+        if expected_head is not None:
+            expected = expected_head.encode("ascii")
+            if current_head != expected:
+                actual = None if current_head is None else current_head.decode("ascii")
+                raise ValueError(
+                    f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
+                )
+
         normalized_entries = {
             _normalize_path(path): sha if isinstance(sha, bytes) else sha.encode("ascii")
             for path, sha in entries.items()
@@ -263,8 +299,6 @@ class GitStore:
         ]
         self._repo.object_store.add_object(commit)
 
-        branch_name = self._resolve_write_branch_name(branch)
-        branch_ref = f"refs/heads/{branch_name}".encode()
         _ref_set(self._repo.refs, branch_ref, commit.id)
         if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
             _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
@@ -323,8 +357,7 @@ class GitStore:
         self.delete_ref(_branch_meta_ref(name))
         self._branch_meta.pop(name, None)
 
-    def list_branches(self) -> list[GitBranch]:
-        result: list[GitBranch] = []
+    def iter_branches(self) -> Iterator[GitBranch]:
         prefix = b"refs/heads/"
         for ref_bytes, sha_bytes in sorted(self._repo.refs.as_dict().items()):
             if not ref_bytes.startswith(prefix):
@@ -333,19 +366,84 @@ class GitStore:
             meta = self._read_branch_meta(name)
             parent_branch = meta.get("parent_branch", "")
             created_at = meta.get("created_at", 0)
-            result.append(
-                GitBranch(
-                    name=name,
-                    tip_sha=sha_bytes.decode("ascii"),
-                    parent_branch=parent_branch if isinstance(parent_branch, str) else "",
-                    created_at=created_at if isinstance(created_at, int) else 0,
-                )
+            yield GitBranch(
+                name=name,
+                tip_sha=sha_bytes.decode("ascii"),
+                parent_branch=parent_branch if isinstance(parent_branch, str) else "",
+                created_at=created_at if isinstance(created_at, int) else 0,
             )
-        return result
 
     def commit_parent_shas(self, commit: str) -> list[str]:
         commit_obj = _commit_object(self._repo, commit.encode("ascii"))
         return [parent.decode("ascii") for parent in commit_obj.parents]
+
+    def revert_commit(
+        self,
+        commit_sha: str,
+        *,
+        message: str | None = None,
+        branch: str | None = None,
+        expected_head: str | None = None,
+    ) -> str:
+        target_commit = _commit_object(self._repo, commit_sha.encode("ascii"))
+        if len(target_commit.parents) != 1:
+            raise ValueError("revert_commit requires a single-parent commit")
+
+        parent_sha = target_commit.parents[0]
+        parent_tree = _tree_object(self._repo, _commit_object(self._repo, parent_sha).tree)
+        target_tree = _tree_object(self._repo, target_commit.tree)
+
+        parent_entries: dict[str, bytes] = {}
+        target_entries: dict[str, bytes] = {}
+        self._flatten_tree(parent_tree, "", parent_entries)
+        self._flatten_tree(target_tree, "", target_entries)
+
+        branch_name = self._resolve_write_branch_name(branch)
+        branch_ref = f"refs/heads/{branch_name}".encode()
+        current_head = _ref_get(self._repo.refs, branch_ref)
+        if current_head is None:
+            raise ValueError(f"Branch {branch_name!r} has no commits")
+        if expected_head is not None:
+            expected = expected_head.encode("ascii")
+            if current_head != expected:
+                actual = current_head.decode("ascii")
+                raise ValueError(
+                    f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
+                )
+        current_tree = _tree_object(self._repo, _commit_object(self._repo, current_head).tree)
+        current_entries: dict[str, bytes] = {}
+        self._flatten_tree(current_tree, "", current_entries)
+
+        changed_paths = sorted(set(parent_entries) | set(target_entries))
+        changed_paths = [
+            path
+            for path in changed_paths
+            if parent_entries.get(path) != target_entries.get(path)
+        ]
+
+        adds: dict[str | Path, bytes] = {}
+        deletes: list[str | Path] = []
+        for path in changed_paths:
+            target_blob = target_entries.get(path)
+            current_blob = current_entries.get(path)
+            if current_blob != target_blob:
+                raise ValueError(f"Cannot revert {commit_sha}: path {path!r} has changed")
+            parent_blob = parent_entries.get(path)
+            if parent_blob is None:
+                deletes.append(path)
+                continue
+            blob = _repo_object(self._repo, parent_blob)
+            if not isinstance(blob, Blob):
+                raise TypeError(f"Expected blob for {path!r}, got {type(blob).__name__}")
+            adds[path] = blob.data
+
+        return self._commit(
+            adds=adds,
+            deletes=deletes,
+            message=message or f"Revert {commit_sha}",
+            branch=branch_name,
+            expected_head=current_head.decode("ascii"),
+        )
 
     def ancestor_distances(self, start_sha: str) -> dict[str, int]:
         distances: dict[str, int] = {start_sha: 0}
@@ -571,11 +669,19 @@ class GitStore:
         deletes: Sequence[str | Path],
         message: str,
         branch: str | None,
+        expected_head: str | None,
     ) -> str:
         branch_name = self._resolve_write_branch_name(branch)
         branch_ref = f"refs/heads/{branch_name}".encode()
         store = self._repo.object_store
         tip_sha = _ref_get(self._repo.refs, branch_ref)
+        if expected_head is not None:
+            expected = expected_head.encode("ascii")
+            if tip_sha != expected:
+                actual = None if tip_sha is None else tip_sha.decode("ascii")
+                raise ValueError(
+                    f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
+                )
         if tip_sha is None:
             base_tree = None
             parents: list[bytes] = []

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, runtime_checkable
@@ -191,14 +191,17 @@ class ArtifactAddress:
 
 @runtime_checkable
 class ReadOnlyDocumentStoreBackend(Protocol):
+    def exists(self, path: str | Path, commit: str | None = None) -> tuple[int, str] | None:
+        ...
+
     def read_file(self, path: str | Path, commit: str | None = None) -> bytes:
         ...
 
-    def list_dir_entries(
+    def iter_dir_entries(
         self,
         subdir: str | Path,
         commit: str | None = None,
-    ) -> list[tuple[str, bool]]:
+    ) -> Iterator[tuple[str, bool]]:
         ...
 
     def branch_sha(self, name: str) -> str | None:
@@ -257,14 +260,14 @@ class ArtifactPlacementPolicy(Protocol[TOwner, TRef]):
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         ...
 
-    def list_refs(
+    def iter_refs(
         self,
         owner: TOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> list[TRef]:
+    ) -> Iterator[TRef]:
         ...
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
@@ -296,28 +299,26 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
             locator=PathArtifactLocator(f"{self.namespace}/{stem}{self.extension}"),
         )
 
-    def list_refs(
+    def iter_refs(
         self,
         owner: TOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> list[TRef]:
+    ) -> Iterator[TRef]:
         if backend is None:
             raise ValueError("listing path-backed artifacts requires a backend")
         target_commit = commit
         if target_commit is None:
             target_commit = backend.branch_sha(branch or self.branch.branch_name(owner))
             if target_commit is None:
-                return []
-        refs: list[TRef] = []
-        for name, is_dir in backend.list_dir_entries(self.namespace, commit=target_commit):
+                return
+        for name, is_dir in backend.iter_dir_entries(self.namespace, commit=target_commit):
             if is_dir or not name.endswith(self.extension):
                 continue
             stem = name.removesuffix(self.extension)
-            refs.append(self.ref_factory(decode_ref_value(stem, self.codec)))
-        return refs
+            yield self.ref_factory(decode_ref_value(stem, self.codec))
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         if not isinstance(locator, PathArtifactLocator):
@@ -383,14 +384,14 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
             locator=PathArtifactLocator(rel),
         )
 
-    def list_refs(
+    def iter_refs(
         self,
         owner: TOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> list[TRef]:
+    ) -> Iterator[TRef]:
         if self.filename_mode != "encoded_ref":
             raise TypeError("opaque hash-scattered placement requires an index or loaded-document ref recovery")
         if backend is None:
@@ -399,8 +400,8 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
         if target_commit is None:
             target_commit = backend.branch_sha(branch or self.branch.branch_name(owner))
             if target_commit is None:
-                return []
-        return self._list_encoded_refs(backend, self.namespace, target_commit)
+                return
+        yield from self._iter_encoded_refs(backend, self.namespace, target_commit)
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         if self.filename_mode != "encoded_ref":
@@ -455,21 +456,19 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
             offset += width
         return tuple(segments)
 
-    def _list_encoded_refs(
+    def _iter_encoded_refs(
         self,
         backend: ReadOnlyDocumentStoreBackend,
         prefix: str,
         commit: str,
-    ) -> list[TRef]:
-        refs: list[TRef] = []
-        for name, is_dir in backend.list_dir_entries(prefix, commit=commit):
+    ) -> Iterator[TRef]:
+        for name, is_dir in backend.iter_dir_entries(prefix, commit=commit):
             child = f"{prefix}/{name}"
             if is_dir:
-                refs.extend(self._list_encoded_refs(backend, child, commit))
+                yield from self._iter_encoded_refs(backend, child, commit)
             elif name.endswith(self.extension):
                 stem = name.removesuffix(self.extension)
-                refs.append(self.ref_factory(decode_ref_value(stem, self.codec)))
-        return refs
+                yield self.ref_factory(decode_ref_value(stem, self.codec))
 
 
 @dataclass(frozen=True)
@@ -483,14 +482,14 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
             locator=PathArtifactLocator(self.filename),
         )
 
-    def list_refs(
+    def iter_refs(
         self,
         owner: TOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> list[TRef]:
+    ) -> Iterator[TRef]:
         raise TypeError("fixed-file placement cannot enumerate refs without an external source")
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
@@ -524,14 +523,14 @@ class TemplateFilePlacement(Generic[TOwner, TRef]):
             locator=PathArtifactLocator(self.template.format(value=value, stem=value)),
         )
 
-    def list_refs(
+    def iter_refs(
         self,
         owner: TOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> list[TRef]:
+    ) -> Iterator[TRef]:
         raise TypeError("template-file placement cannot enumerate refs without a parser")
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
@@ -562,15 +561,15 @@ class SingletonFilePlacement(Generic[TOwner, TRef]):
             locator=PathArtifactLocator(self.filename),
         )
 
-    def list_refs(
+    def iter_refs(
         self,
         owner: TOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> list[TRef]:
-        return [self.ref_factory()]
+    ) -> Iterator[TRef]:
+        yield self.ref_factory()
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         if not isinstance(locator, PathArtifactLocator):

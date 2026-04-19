@@ -152,25 +152,20 @@ class GitTreePath(_BaseTreePath):
         return GitTreePath(self._store, self._commit, path)
 
     def exists(self) -> bool:
-        return self.is_dir() or self.is_file()
+        return self._store.exists(self.as_posix(), commit=self._commit) is not None
 
     def is_dir(self) -> bool:
-        if not self._relative_path.parts:
-            return True
-        return len(self._store.list_dir_entries(self.as_posix(), commit=self._commit)) > 0
+        res = self._store.exists(self.as_posix(), commit=self._commit)
+        return res is not None and bool(res[0] & 0o040000)
 
     def is_file(self) -> bool:
-        try:
-            self._store.read_file(self.as_posix(), commit=self._commit)
-        except (FileNotFoundError, KeyError):
-            return False
-        return True
+        res = self._store.exists(self.as_posix(), commit=self._commit)
+        return res is not None and bool(res[0] & 0o100000)
 
     def iterdir(self) -> Iterator[GitTreePath]:
-        entries = self._store.list_dir_entries(self.as_posix(), commit=self._commit)
         if not self.is_dir():
             raise NotADirectoryError(self.as_posix())
-        for name, _is_dir in entries:
+        for name, _is_dir in self._store.iter_dir_entries(self.as_posix(), commit=self._commit):
             yield self / name
 
     def read_bytes(self) -> bytes:
