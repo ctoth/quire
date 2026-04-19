@@ -262,9 +262,9 @@ property for oracle correctness before committing.
 ## Execution Notes
 
 - Quire commits `9f771f0`, `166a870`, `e2e38b5`, `8186078`,
-  `8d4ce7a`, `0bfc84d`, and `5dc7707` cover property IDs 1-145,
-  including the previously deferred root alias and first-parent negative
-  checks.
+  `8d4ce7a`, `0bfc84d`, `5dc7707`, and `e812e6a` cover property IDs
+  1-145, including the previously deferred root alias and first-parent
+  negative checks.
 - Property ID 30 chose the contract that `"."` and `Path(".")` are root
   aliases matching `""`; commit `7d592b5` fixed the production
   normalization bug exposed by that property.
