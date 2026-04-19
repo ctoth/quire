@@ -238,6 +238,8 @@ def _normalize_payload(value: Any) -> Any:
         return _normalize_payload(msgspec.to_builtins(value))
     if is_dataclass(value) and not isinstance(value, type):
         return _normalize_payload(asdict(value))
+    if isinstance(value, (set, frozenset)):
+        return [_normalize_payload(item) for item in sorted(value, key=str)]
     if isinstance(value, dict):
         return {
             str(key): _normalize_payload(item)

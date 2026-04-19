@@ -191,7 +191,7 @@ class GitStore:
         if subtree is None:
             return
         entries = sorted(
-            (entry for entry in subtree.items() if entry.mode & 0o100000),
+            subtree.items(),
             key=lambda entry: entry.path,
         )
         for entry in entries:
