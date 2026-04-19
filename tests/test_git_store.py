@@ -86,6 +86,30 @@ def test_materialize_worktree_can_remove_stale_files_and_preserve_runtime_paths(
     assert sidecar.read_bytes() == b"cache"
 
 
+def test_materialize_worktree_prunes_directories_emptied_by_stale_file_removal(tmp_path):
+    root = tmp_path / "repo"
+    store = GitStore.init(
+        root,
+        policy=GitStorePolicy(ignored_path_prefixes=("runtime/",)),
+    )
+    store.commit_files({"docs/nested/example.yaml": b"name: demo\n"}, "add example")
+    store.materialize_worktree(remove_extra=True)
+
+    stale = root / "docs" / "nested" / "stale.yaml"
+    stale.write_bytes(b"old")
+    runtime = root / "runtime" / "cache" / "state.txt"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"runtime")
+
+    store.commit_deletes(["docs/nested/example.yaml"], "remove example")
+    store.materialize_worktree(remove_extra=True)
+
+    assert not stale.exists()
+    assert not (root / "docs" / "nested").exists()
+    assert not (root / "docs").exists()
+    assert runtime.read_bytes() == b"runtime"
+
+
 def test_diff_and_show_commit_report_tree_changes():
     store = GitStore.init_memory()
     first = store.commit_files({"a.txt": b"one", "b.txt": b"two"}, "first")

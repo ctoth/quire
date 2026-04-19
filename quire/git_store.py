@@ -844,6 +844,7 @@ class GitStore:
     def _remove_extra_worktree_files(self, tracked_paths: set[str]) -> None:
         if self._root is None:
             return
+        prune_candidates: set[Path] = set()
         for disk_file in self._root.rglob("*"):
             if not disk_file.is_file():
                 continue
@@ -854,6 +855,24 @@ class GitStore:
                 continue
             if rel not in tracked_paths:
                 disk_file.unlink()
+                parent = disk_file.parent
+                while parent != self._root:
+                    prune_candidates.add(parent)
+                    parent = parent.parent
+        for directory in sorted(
+            prune_candidates,
+            key=lambda path: len(path.relative_to(self._root).parts),
+            reverse=True,
+        ):
+            rel = directory.relative_to(self._root).as_posix()
+            if rel.startswith(".git/") or rel == ".git":
+                continue
+            if self._is_ignored_runtime_path(rel):
+                continue
+            try:
+                directory.rmdir()
+            except OSError:
+                continue
 
     def _is_ignored_runtime_path(self, relpath: str) -> bool:
         normalized = relpath.replace("\\", "/")
