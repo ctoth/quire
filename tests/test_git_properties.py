@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import pytest
 import yaml
+from dulwich.objects import Blob
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
@@ -82,6 +83,20 @@ def _model_diff(new: dict[str, str], old: dict[str, str]) -> dict[str, list[str]
         "added": sorted(path for path in new if path not in old),
         "modified": sorted(path for path in new if path in old and new[path] != old[path]),
         "deleted": sorted(path for path in old if path not in new),
+    }
+
+
+def _best_common_ancestors(store: GitStore, left: str, right: str) -> set[str]:
+    left_distances = store.ancestor_distances(left)
+    right_distances = store.ancestor_distances(right)
+    common = set(left_distances) & set(right_distances)
+    return {
+        candidate
+        for candidate in common
+        if not any(
+            other != candidate and candidate in store.ancestor_distances(other)
+            for other in common
+        )
     }
 
 
@@ -621,6 +636,117 @@ def test_branch_isolation_and_ancestry_properties(
     for entry in branch_log:
         assert entry["sha"] in repo.ancestor_distances(branch_tip)
         assert entry["parents"] == repo.commit_parent_shas(str(entry["sha"]))
+
+
+@settings(deadline=None)
+@given(names=branch_pair, left_steps=st.integers(min_value=0, max_value=3), right_steps=st.integers(min_value=0, max_value=3))
+def test_merge_base_core_shapes(names: tuple[str, str], left_steps: int, right_steps: int) -> None:
+    left_branch, right_branch = names
+    repo = _make_repo()
+    base = repo.commit_files({"base.bin": b"base"}, "base")
+    repo.create_branch(left_branch, source_commit=base)
+    repo.create_branch(right_branch, source_commit=base)
+
+    left_tip = base
+    for index in range(left_steps):
+        left_tip = repo.commit_files({f"left-{index}.bin": bytes([index])}, f"left {index}", branch=left_branch)
+    right_tip = base
+    for index in range(right_steps):
+        right_tip = repo.commit_files({f"right-{index}.bin": bytes([index])}, f"right {index}", branch=right_branch)
+
+    assert repo.merge_base(left_branch, left_branch) == left_tip
+    assert repo.merge_base(left_branch, right_branch) == base
+    assert repo.merge_base(right_branch, left_branch) == base
+    assert repo.merge_base("master", left_branch) == base
+    assert repo.merge_base("master", right_branch) == base
+
+    result = repo.merge_base(left_branch, right_branch)
+    assert result in repo.ancestor_distances(left_tip)
+    assert result in repo.ancestor_distances(right_tip)
+    assert result in _best_common_ancestors(repo, left_tip, right_tip)
+
+
+@settings(deadline=None)
+@given(names=branch_pair, payload=raw_bytes)
+def test_merge_base_criss_cross_tie_break_is_deterministic(names: tuple[str, str], payload: bytes) -> None:
+    left_branch, right_branch = names
+    repo = _make_repo()
+    base = repo.commit_files({"base.bin": b"base"}, "base")
+    repo.create_branch(left_branch, source_commit=base)
+    repo.create_branch(right_branch, source_commit=base)
+    left = repo.commit_files({"left.bin": payload}, "left", branch=left_branch)
+    right = repo.commit_files({"right.bin": payload}, "right", branch=right_branch)
+
+    left_entries = repo.flat_tree_entries(left)
+    left_entries.update(repo.flat_tree_entries(right))
+    left_merge = repo.commit_flat_tree(left_entries, "left merge", parents=[left, right], branch=left_branch)
+    right_entries = repo.flat_tree_entries(right)
+    right_entries.update(repo.flat_tree_entries(left))
+    right_merge = repo.commit_flat_tree(right_entries, "right merge", parents=[right, left], branch=right_branch)
+
+    assert repo.commit_parent_shas(left_merge) == [left, right]
+    assert repo.commit_parent_shas(right_merge) == [right, left]
+    assert repo.merge_base(left_branch, right_branch) == min(left, right)
+
+
+@settings(deadline=None)
+@given(files=path_map)
+def test_store_blob_and_commit_flat_tree_materialize_exact_entries(files: dict[str, bytes]) -> None:
+    repo = _make_repo()
+    entries = {path: repo.store_blob(content) for path, content in files.items()}
+    for path, blob_sha in entries.items():
+        blob = repo.raw_repo[blob_sha.encode("ascii")]
+        assert isinstance(blob, Blob)
+        assert blob.data == files[path]
+
+    flat = repo.commit_flat_tree(entries, "flat", parents=[], branch="flat")
+    empty = repo.commit_flat_tree({}, "empty", parents=[], branch="empty")
+
+    assert _snapshot(repo, flat) == files
+    assert _snapshot(repo, empty) == {}
+    assert repo.commit_parent_shas(flat) == []
+    assert repo.commit_parent_shas(empty) == []
+
+
+@settings(deadline=None)
+@given(files=path_map)
+def test_commit_flat_tree_round_trips_flat_tree_entries(files: dict[str, bytes]) -> None:
+    repo = _make_repo()
+    source = _commit_model(repo, files)
+
+    recreated = repo.commit_flat_tree(
+        repo.flat_tree_entries(source),
+        "recreate",
+        parents=[source],
+        branch="recreated",
+    )
+
+    assert _snapshot(repo, recreated) == _snapshot(repo, source)
+    assert repo.commit_parent_shas(recreated) == [source]
+
+
+@settings(deadline=None)
+@given(left_files=path_map, right_files=path_map, merge_content=raw_bytes)
+def test_flat_tree_merge_commit_surface(
+    left_files: dict[str, bytes],
+    right_files: dict[str, bytes],
+    merge_content: bytes,
+) -> None:
+    repo = _make_repo()
+    left = repo.commit_files(left_files, "left", branch="left")
+    right = repo.commit_files(right_files, "right", branch="right")
+    entries = repo.flat_tree_entries(right)
+    entries.update(repo.flat_tree_entries(left))
+    entries["merge.bin"] = repo.store_blob(merge_content)
+
+    merge = repo.commit_flat_tree(entries, "merge", parents=[left, right], branch="merged")
+
+    assert repo.commit_parent_shas(merge) == [left, right]
+    assert repo.branch_sha("merged") == merge
+    assert repo.log(max_count=1, branch="merged")[0]["sha"] == merge
+    assert _flat_snapshot(repo, merge) == entries
+    assert repo.diff_commits(merge, left) == _model_diff(_flat_snapshot(repo, merge), _flat_snapshot(repo, left))
+    assert repo.diff_commits(merge, right) == _model_diff(_flat_snapshot(repo, merge), _flat_snapshot(repo, right))
 
 
 @settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
