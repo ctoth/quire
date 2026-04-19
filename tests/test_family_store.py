@@ -172,6 +172,54 @@ def test_move_deletes_old_path_and_writes_new_path():
     assert store.require(family, "new") == DemoDocument("new")
 
 
+def test_transaction_move_and_save_order_preserves_later_operations():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _demo_family()
+    store.save(family, "old", DemoDocument("old"), message="save old")
+
+    with store.transact(message="move then replace old") as transaction:
+        transaction.move(family, "old", "new", DemoDocument("new"))
+        transaction.save(family, "old", DemoDocument("replacement"))
+
+    assert store.require(family, "old") == DemoDocument("replacement")
+    assert store.require(family, "new") == DemoDocument("new")
+
+
+def test_transaction_save_then_move_removes_staged_old_path():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _demo_family()
+
+    with store.transact(message="save then move") as transaction:
+        transaction.save(family, "old", DemoDocument("old"))
+        transaction.move(family, "old", "new", DemoDocument("new"))
+
+    assert store.load(family, "old") is None
+    assert store.require(family, "new") == DemoDocument("new")
+
+
+def test_transaction_delete_then_save_restores_path():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _demo_family()
+    store.save(family, "old", DemoDocument("old"), message="save old")
+
+    with store.transact(message="delete then save") as transaction:
+        transaction.delete(family, "old")
+        transaction.save(family, "old", DemoDocument("replacement"))
+
+    assert store.require(family, "old") == DemoDocument("replacement")
+
+
+def test_transaction_move_with_same_ref_does_not_stage_delete():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _demo_family()
+    store.save(family, "same", DemoDocument("old"), message="save old")
+
+    with store.transact(message="same path move") as transaction:
+        transaction.move(family, "same", "same", DemoDocument("updated"))
+
+    assert store.require(family, "same") == DemoDocument("updated")
+
+
 def test_custom_codecs_override_defaults():
     family = ArtifactFamily(
         name="custom",
