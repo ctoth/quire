@@ -36,7 +36,10 @@ class GitBranch:
 
 
 def _normalize_path(path: str | Path) -> str:
-    return str(path).replace("\\", "/").strip("/")
+    normalized = str(path).replace("\\", "/").strip("/")
+    if normalized == ".":
+        return ""
+    return normalized
 
 
 def _tree_add(tree: Any, name: bytes, mode: int, object_id: bytes) -> None:
