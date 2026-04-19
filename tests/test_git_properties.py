@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -12,6 +13,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 
 from quire.git_store import GitStore, GitStorePolicy
+from quire.refs import RefName
 from quire.tree_path import FilesystemTreePath, GitTreePath
 
 _TEST_POLICY = GitStorePolicy(
@@ -28,6 +30,8 @@ nested_path = st.lists(segment, min_size=1, max_size=5).map(
     lambda parts: "/".join([*parts[:-1], f"{parts[-1]}.bin"])
 )
 path_map = st.dictionaries(nested_path, raw_bytes, min_size=1, max_size=8)
+branch_name = st.lists(segment, min_size=1, max_size=3).map("/".join).filter(lambda name: name != "master")
+branch_pair = st.tuples(branch_name, branch_name).filter(lambda names: names[0] != names[1])
 
 yaml_bytes = st.dictionaries(
     st.text(st.characters(whitelist_categories=("L", "N")), min_size=1, max_size=20),
@@ -384,6 +388,87 @@ def test_empty_batch_preserves_tree_and_advances_branch(seed: dict[str, bytes]) 
     assert _snapshot(repo, empty) == before
 
 
+def _assert_stale_head_rejected(
+    repo: GitStore,
+    stale: str,
+    operation: str,
+    *,
+    target_commit: str | None = None,
+) -> None:
+    before_tip = repo.head_sha()
+    before_snapshot = _snapshot(repo)
+    assert before_tip is not None
+
+    if operation == "commit_files":
+        call = lambda: repo.commit_files({"stale-add.bin": b"stale"}, "stale", expected_head=stale)
+    elif operation == "commit_deletes":
+        call = lambda: repo.commit_deletes(["base.bin"], "stale", expected_head=stale)
+    elif operation == "commit_batch":
+        call = lambda: repo.commit_batch({"stale-batch.bin": b"stale"}, ["base.bin"], "stale", expected_head=stale)
+    elif operation == "commit_flat_tree":
+        blob = repo.store_blob(b"flat")
+        call = lambda: repo.commit_flat_tree({"flat.bin": blob}, "stale", parents=[before_tip], expected_head=stale)
+    elif operation == "revert_commit":
+        assert target_commit is not None
+        call = lambda: repo.revert_commit(target_commit, expected_head=stale)
+    else:
+        raise AssertionError(f"unknown operation: {operation}")
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        call()
+
+    assert repo.head_sha() == before_tip
+    assert _snapshot(repo) == before_snapshot
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["commit_files", "commit_deletes", "commit_batch", "commit_flat_tree", "revert_commit"],
+)
+@settings(deadline=None)
+@given(content=raw_bytes)
+def test_expected_head_guards_write_operations(operation: str, content: bytes) -> None:
+    repo = _make_repo()
+    stale = repo.commit_files({"base.bin": b"base"}, "base")
+    target = repo.commit_files({"base.bin": content}, "target")
+    current = repo.commit_files({"other.bin": b"current"}, "current")
+
+    _assert_stale_head_rejected(repo, stale, operation, target_commit=target)
+
+    if operation == "commit_files":
+        accepted = repo.commit_files({"accepted.bin": b"ok"}, "accepted", expected_head=current)
+    elif operation == "commit_deletes":
+        accepted = repo.commit_deletes(["other.bin"], "accepted", expected_head=current)
+    elif operation == "commit_batch":
+        accepted = repo.commit_batch({"accepted.bin": b"ok"}, ["other.bin"], "accepted", expected_head=current)
+    elif operation == "commit_flat_tree":
+        entries = repo.flat_tree_entries(current)
+        entries["accepted.bin"] = repo.store_blob(b"ok")
+        accepted = repo.commit_flat_tree(entries, "accepted", parents=[current], expected_head=current)
+    else:
+        accepted = repo.revert_commit(target, expected_head=current)
+
+    assert repo.head_sha() == accepted
+    assert repo.commit_parent_shas(accepted) == [current]
+
+
+@settings(deadline=None)
+@given(branch=branch_name)
+def test_expected_head_uses_explicit_branch_not_current_branch(branch: str) -> None:
+    repo = _make_repo()
+    base = repo.commit_files({"base.bin": b"base"}, "base")
+    repo.create_branch(branch, source_commit=base)
+    branch_tip = repo.commit_files({"branch.bin": b"branch"}, "branch", branch=branch)
+    master_tip = repo.commit_files({"master.bin": b"master"}, "master")
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        repo.commit_files({"bad.bin": b"bad"}, "bad", branch=branch, expected_head=master_tip)
+
+    accepted = repo.commit_files({"ok.bin": b"ok"}, "ok", branch=branch, expected_head=branch_tip)
+    assert repo.branch_sha(branch) == accepted
+    assert repo.branch_sha("master") == master_tip
+
+
 @settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(path=valid_path, content=yaml_bytes)
 def test_worktree_fidelity(path: str, content: bytes) -> None:
@@ -438,6 +523,104 @@ def test_history_monotonicity(paths: list[str]) -> None:
     expected = 1 + len(paths)
     history = repo.log(max_count=expected + 1)
     assert len(history) == expected
+
+
+@settings(deadline=None)
+@given(branch=branch_name, files=path_map, current_content=raw_bytes)
+def test_branch_ref_and_current_head_semantics(
+    branch: str,
+    files: dict[str, bytes],
+    current_content: bytes,
+) -> None:
+    repo = _make_repo()
+    master_tip = repo.head_sha()
+    assert master_tip is not None
+
+    assert repo.create_branch(branch) == master_tip
+    branch_commit = repo.commit_files(files, "branch write", branch=branch)
+
+    assert repo.branch_sha(branch) == branch_commit
+    assert repo.current_branch_name() == "master"
+    assert repo.head_sha() == master_tip
+    assert _snapshot(repo, master_tip) == _INITIAL_MODEL
+    assert _snapshot(repo, branch_commit) == {**_INITIAL_MODEL, **files}
+
+    repo.set_current_branch(branch)
+    implicit_path = _missing_path(set(_INITIAL_MODEL) | set(files))
+    implicit_commit = repo.commit_files({implicit_path: current_content}, "implicit branch write")
+
+    assert repo.current_branch_name() == branch
+    assert repo.head_sha() == implicit_commit
+    assert repo.branch_sha(branch) == implicit_commit
+    assert repo.branch_sha("master") == master_tip
+    assert repo.read_file(implicit_path) == current_content
+
+
+@settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(branch=branch_name)
+def test_branch_lifecycle_and_metadata_properties(branch: str) -> None:
+    repo, root, tmpdir = _make_disk_repo()
+    with tmpdir:
+        base = repo.head_sha()
+        assert base is not None
+
+        with pytest.raises(ValueError):
+            repo.set_current_branch(branch)
+
+        assert repo.create_branch(branch, source_commit=base) == base
+        reopened = GitStore.open(root, policy=_TEST_POLICY)
+        branches = {item.name: item for item in reopened.iter_branches()}
+        assert branches[branch].tip_sha == base
+        assert branches[branch].created_at > 0
+
+        repo.set_current_branch(branch)
+        with pytest.raises(ValueError):
+            repo.delete_branch(branch)
+        assert repo.branch_sha(branch) == base
+
+        repo.set_current_branch("master")
+        repo.delete_branch(branch)
+        assert repo.branch_sha(branch) is None
+        meta_ref = RefName(f"refs/quire/branch-meta/{quote(branch, safe='')}")
+        assert repo.read_blob_ref(meta_ref) is None
+
+        assert repo.create_branch(branch, source_commit=base) == base
+        assert repo.branch_sha(branch) == base
+
+
+@settings(deadline=None)
+@given(branch=branch_name, files=path_map, master_content=raw_bytes, branch_content=raw_bytes)
+def test_branch_isolation_and_ancestry_properties(
+    branch: str,
+    files: dict[str, bytes],
+    master_content: bytes,
+    branch_content: bytes,
+) -> None:
+    repo = _make_repo()
+    base = _commit_model(repo, files)
+    assert repo.create_branch(branch, source_commit=base) == base
+    shared_path = sorted(files)[0]
+
+    master = repo.commit_files({shared_path: master_content}, "master edit")
+    branch_tip = repo.commit_files({shared_path: branch_content}, "branch edit", branch=branch)
+
+    assert repo.read_file(shared_path, commit=master) == master_content
+    assert repo.read_file(shared_path, commit=branch_tip) == branch_content
+    assert repo.merge_base("master", branch) == base
+
+    for commit in (master, branch_tip):
+        distances = repo.ancestor_distances(commit)
+        assert distances[commit] == 0
+        for parent in repo.commit_parent_shas(commit):
+            assert parent in distances
+            assert distances[parent] <= distances[commit] + 1
+        assert repo.commit_parent_shas(commit) == [base]
+
+    branch_log = repo.log(max_count=20, branch=branch)
+    assert branch_log[0]["sha"] == branch_tip
+    for entry in branch_log:
+        assert entry["sha"] in repo.ancestor_distances(branch_tip)
+        assert entry["parents"] == repo.commit_parent_shas(str(entry["sha"]))
 
 
 @settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
