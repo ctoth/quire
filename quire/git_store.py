@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
@@ -134,6 +135,7 @@ class GitStore:
         self._root = root
         self._policy = policy or GitStorePolicy()
         self._branch_meta: dict[str, dict[str, str | int]] = {}
+        self._mutation_lock = threading.RLock()
 
     @property
     def raw_repo(self) -> BaseRepo:
@@ -251,7 +253,8 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        return self._commit(adds=changes, deletes=(), message=message, branch=branch, expected_head=expected_head)
+        with self._mutation_lock:
+            return self._commit(adds=changes, deletes=(), message=message, branch=branch, expected_head=expected_head)
 
     def commit_deletes(
         self,
@@ -261,7 +264,8 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        return self._commit(adds={}, deletes=paths, message=message, branch=branch, expected_head=expected_head)
+        with self._mutation_lock:
+            return self._commit(adds={}, deletes=paths, message=message, branch=branch, expected_head=expected_head)
 
     def commit_batch(
         self,
@@ -272,7 +276,8 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        return self._commit(adds=adds, deletes=deletes, message=message, branch=branch, expected_head=expected_head)
+        with self._mutation_lock:
+            return self._commit(adds=adds, deletes=deletes, message=message, branch=branch, expected_head=expected_head)
 
     def flat_tree_entries(self, commit: str | None = None) -> dict[str, str]:
         tree = self._get_tree(commit)
@@ -283,9 +288,10 @@ class GitStore:
         return {path: sha.decode("ascii") for path, sha in entries.items()}
 
     def store_blob(self, payload: bytes) -> str:
-        blob = Blob.from_string(payload)
-        self._repo.object_store.add_object(blob)
-        return blob.id.decode("ascii")
+        with self._mutation_lock:
+            blob = Blob.from_string(payload)
+            self._repo.object_store.add_object(blob)
+            return blob.id.decode("ascii")
 
     def commit_flat_tree(
         self,
@@ -296,50 +302,51 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        branch_name = self._resolve_write_branch_name(branch)
-        branch_ref = f"refs/heads/{branch_name}".encode()
-        current_head = _ref_get(self._repo.refs, branch_ref)
-        if expected_head is not None:
-            expected = expected_head.encode("ascii")
-            if current_head != expected:
-                actual = None if current_head is None else current_head.decode("ascii")
+        with self._mutation_lock:
+            branch_name = self._resolve_write_branch_name(branch)
+            branch_ref = f"refs/heads/{branch_name}".encode()
+            current_head = _ref_get(self._repo.refs, branch_ref)
+            if expected_head is not None:
+                expected = expected_head.encode("ascii")
+                if current_head != expected:
+                    actual = None if current_head is None else current_head.decode("ascii")
+                    raise ValueError(
+                        f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
+                    )
+
+            normalized_entries = {
+                _normalize_path(path): sha if isinstance(sha, bytes) else sha.encode("ascii")
+                for path, sha in entries.items()
+            }
+            root_tree = self._build_tree_from_flat(normalized_entries)
+
+            commit = Commit()
+            commit.tree = root_tree.id
+            commit.author = self._policy.author
+            commit.committer = self._policy.author
+            commit.encoding = b"UTF-8"
+            commit.message = message.encode("utf-8")
+            now = int(time.time())
+            commit.commit_time = now
+            commit.author_time = now
+            commit.commit_timezone = 0
+            commit.author_timezone = 0
+            commit.parents = [
+                parent if isinstance(parent, bytes) else parent.encode("ascii")
+                for parent in parents
+            ]
+            self._repo.object_store.add_object(commit)
+
+            if not _ref_set_if_equals(self._repo.refs, branch_ref, current_head, commit.id):
+                actual_head = _ref_get(self._repo.refs, branch_ref)
+                actual = None if actual_head is None else actual_head.decode("ascii")
+                expected = None if current_head is None else current_head.decode("ascii")
                 raise ValueError(
-                    f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
+                    f"Branch {branch_name!r} head mismatch: expected {expected}, got {actual}"
                 )
-
-        normalized_entries = {
-            _normalize_path(path): sha if isinstance(sha, bytes) else sha.encode("ascii")
-            for path, sha in entries.items()
-        }
-        root_tree = self._build_tree_from_flat(normalized_entries)
-
-        commit = Commit()
-        commit.tree = root_tree.id
-        commit.author = self._policy.author
-        commit.committer = self._policy.author
-        commit.encoding = b"UTF-8"
-        commit.message = message.encode("utf-8")
-        now = int(time.time())
-        commit.commit_time = now
-        commit.author_time = now
-        commit.commit_timezone = 0
-        commit.author_timezone = 0
-        commit.parents = [
-            parent if isinstance(parent, bytes) else parent.encode("ascii")
-            for parent in parents
-        ]
-        self._repo.object_store.add_object(commit)
-
-        if not _ref_set_if_equals(self._repo.refs, branch_ref, current_head, commit.id):
-            actual_head = _ref_get(self._repo.refs, branch_ref)
-            actual = None if actual_head is None else actual_head.decode("ascii")
-            expected = None if current_head is None else current_head.decode("ascii")
-            raise ValueError(
-                f"Branch {branch_name!r} head mismatch: expected {expected}, got {actual}"
-            )
-        if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
-            _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
-        return commit.id.decode("ascii")
+            if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
+                _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
+            return commit.id.decode("ascii")
 
     def head_sha(self) -> str | None:
         try:
@@ -351,49 +358,51 @@ class GitStore:
         return self.read_ref(RefName(f"refs/heads/{name}"))
 
     def create_branch(self, name: str, source_commit: str | None = None) -> str:
-        ref = RefName(f"refs/heads/{name}")
-        if self.read_ref(ref) is not None:
-            raise ValueError(f"Branch {name!r} already exists")
+        with self._mutation_lock:
+            ref = RefName(f"refs/heads/{name}")
+            if self.read_ref(ref) is not None:
+                raise ValueError(f"Branch {name!r} already exists")
 
-        parent_branch = ""
-        if source_commit is None:
-            current_branch = self.current_branch_name()
-            if current_branch is not None:
-                current_ref = self.branch_sha(current_branch)
-                if current_ref is None:
-                    raise ValueError(f"Current branch {current_branch!r} has no tip")
-                tip_sha = current_ref
-                parent_branch = current_branch
+            parent_branch = ""
+            if source_commit is None:
+                current_branch = self.current_branch_name()
+                if current_branch is not None:
+                    current_ref = self.branch_sha(current_branch)
+                    if current_ref is None:
+                        raise ValueError(f"Current branch {current_branch!r} has no tip")
+                    tip_sha = current_ref
+                    parent_branch = current_branch
+                else:
+                    tip_sha = self.head_sha()
+                    if tip_sha is None:
+                        raise ValueError("Repository has no commits")
             else:
-                tip_sha = self.head_sha()
-                if tip_sha is None:
-                    raise ValueError("Repository has no commits")
-        else:
-            tip_sha = source_commit
+                tip_sha = source_commit
 
-        if not _ref_set_if_equals(self._repo.refs, ref.as_bytes(), None, tip_sha.encode("ascii")):
-            raise ValueError(f"Branch {name!r} already exists")
-        created_at = int(time.time())
-        meta = {
-            "parent_branch": parent_branch,
-            "created_at": created_at,
-        }
-        self._branch_meta[name] = meta
-        self.write_blob_ref(
-            _branch_meta_ref(name),
-            json.dumps(meta, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-        )
-        return tip_sha
+            if not _ref_set_if_equals(self._repo.refs, ref.as_bytes(), None, tip_sha.encode("ascii")):
+                raise ValueError(f"Branch {name!r} already exists")
+            created_at = int(time.time())
+            meta = {
+                "parent_branch": parent_branch,
+                "created_at": created_at,
+            }
+            self._branch_meta[name] = meta
+            self.write_blob_ref(
+                _branch_meta_ref(name),
+                json.dumps(meta, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            )
+            return tip_sha
 
     def delete_branch(self, name: str) -> None:
-        if self.current_branch_name() == name:
-            raise ValueError("Cannot delete current HEAD branch")
-        ref = RefName(f"refs/heads/{name}")
-        if self.read_ref(ref) is None:
-            raise ValueError(f"Branch {name!r} does not exist")
-        self.delete_ref(ref)
-        self.delete_ref(_branch_meta_ref(name))
-        self._branch_meta.pop(name, None)
+        with self._mutation_lock:
+            if self.current_branch_name() == name:
+                raise ValueError("Cannot delete current HEAD branch")
+            ref = RefName(f"refs/heads/{name}")
+            if self.read_ref(ref) is None:
+                raise ValueError(f"Branch {name!r} does not exist")
+            self.delete_ref(ref)
+            self.delete_ref(_branch_meta_ref(name))
+            self._branch_meta.pop(name, None)
 
     def iter_branches(self) -> Iterator[GitBranch]:
         prefix = b"refs/heads/"
@@ -475,13 +484,14 @@ class GitStore:
                 raise TypeError(f"Expected blob for {path!r}, got {type(blob).__name__}")
             adds[path] = blob.data
 
-        return self._commit(
-            adds=adds,
-            deletes=deletes,
-            message=message or f"Revert {commit_sha}",
-            branch=branch_name,
-            expected_head=current_head.decode("ascii"),
-        )
+        with self._mutation_lock:
+            return self._commit(
+                adds=adds,
+                deletes=deletes,
+                message=message or f"Revert {commit_sha}",
+                branch=branch_name,
+                expected_head=current_head.decode("ascii"),
+            )
 
     def ancestor_distances(self, start_sha: str) -> dict[str, int]:
         distances: dict[str, int] = {start_sha: 0}
@@ -542,18 +552,21 @@ class GitStore:
         return sha.decode("ascii")
 
     def write_ref(self, ref: RefName, object_id: str | bytes) -> None:
-        sha = object_id if isinstance(object_id, bytes) else object_id.encode("ascii")
-        _ref_set(self._repo.refs, ref.as_bytes(), sha)
+        with self._mutation_lock:
+            sha = object_id if isinstance(object_id, bytes) else object_id.encode("ascii")
+            _ref_set(self._repo.refs, ref.as_bytes(), sha)
 
     def delete_ref(self, ref: RefName) -> None:
-        if self.read_ref(ref) is not None:
-            _ref_delete(self._repo.refs, ref.as_bytes())
+        with self._mutation_lock:
+            if self.read_ref(ref) is not None:
+                _ref_delete(self._repo.refs, ref.as_bytes())
 
     def write_blob_ref(self, ref: RefName, payload: bytes) -> str:
-        blob = Blob.from_string(payload)
-        self._repo.object_store.add_object(blob)
-        self.write_ref(ref, blob.id)
-        return blob.id.decode("ascii")
+        with self._mutation_lock:
+            blob = Blob.from_string(payload)
+            self._repo.object_store.add_object(blob)
+            self.write_ref(ref, blob.id)
+            return blob.id.decode("ascii")
 
     def read_blob_ref(self, ref: RefName) -> bytes | None:
         sha = self.read_ref(ref)
@@ -565,32 +578,34 @@ class GitStore:
         return obj.data
 
     def write_note(self, ref: NotesRef, object_sha: str | bytes, payload: bytes) -> str:
-        note_commit = write_git_note(
-            self._repo,
-            ref,
-            object_sha,
-            payload,
-            author=self._policy.author,
-            committer=self._policy.author,
-            message=b"Write note",
-        )
-        return note_commit.decode("ascii")
+        with self._mutation_lock:
+            note_commit = write_git_note(
+                self._repo,
+                ref,
+                object_sha,
+                payload,
+                author=self._policy.author,
+                committer=self._policy.author,
+                message=b"Write note",
+            )
+            return note_commit.decode("ascii")
 
     def read_note(self, ref: NotesRef, object_sha: str | bytes) -> bytes | None:
         return read_git_note(self._repo, ref, object_sha)
 
     def delete_note(self, ref: NotesRef, object_sha: str | bytes) -> str | None:
-        note_commit = remove_git_note(
-            self._repo,
-            ref,
-            object_sha,
-            author=self._policy.author,
-            committer=self._policy.author,
-            message=b"Delete note",
-        )
-        if note_commit is None:
-            return None
-        return note_commit.decode("ascii")
+        with self._mutation_lock:
+            note_commit = remove_git_note(
+                self._repo,
+                ref,
+                object_sha,
+                author=self._policy.author,
+                committer=self._policy.author,
+                message=b"Delete note",
+            )
+            if note_commit is None:
+                return None
+            return note_commit.decode("ascii")
 
     def log(self, max_count: int = 50, *, branch: str | None = None) -> list[dict[str, object]]:
         branch_name = self._resolve_read_branch_name(branch)
