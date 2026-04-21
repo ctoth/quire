@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
-from dulwich.objects import Blob, Commit
+from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import MemoryRepo
 
 import quire.git_store as git_store
@@ -229,6 +229,35 @@ def test_flat_tree_entries_and_commit_flat_tree_create_merge_commit():
     assert store.read_file("a.txt", commit=merge) == b"left"
     assert store.read_file("b.txt", commit=merge) == b"right"
     assert store.read_file("merged.txt", commit=merge) == b"merged"
+
+
+def test_exists_agrees_with_walk_tree_for_non_file_tree_entry():
+    store = GitStore.init_memory()
+    parent_sha = store.commit_files({"base.txt": b"base"}, "base")
+    parent = store.raw_repo[parent_sha.encode("ascii")]
+    assert isinstance(parent, Commit)
+
+    tree = Tree()
+    tree.add(b"submodule", 0o160000, parent.id)
+    store.raw_repo.object_store.add_object(tree)
+
+    commit = Commit()
+    commit.tree = tree.id
+    commit.author = b"Quire <quire@example.com>"
+    commit.committer = b"Quire <quire@example.com>"
+    commit.encoding = b"UTF-8"
+    commit.message = b"commit-backed tree entry"
+    commit.commit_time = 0
+    commit.author_time = 0
+    commit.commit_timezone = 0
+    commit.author_timezone = 0
+    commit.parents = [parent.id]
+    store.raw_repo.object_store.add_object(commit)
+    store.write_ref(RefName("refs/heads/master"), commit.id)
+
+    tree_obj = store._get_tree()
+    assert store._walk_tree(tree_obj, ("submodule",)) is None
+    assert store.exists("submodule") is None
 
 
 def test_merge_base_is_deterministic_for_criss_cross_history():
