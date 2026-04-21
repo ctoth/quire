@@ -54,11 +54,39 @@ def _ref_get(refs: Any, ref_name: bytes) -> bytes | None:
 
 
 def _ref_set(refs: Any, ref_name: bytes, object_id: bytes) -> None:
-    refs[ref_name] = object_id
+    old_ref = _ref_get(refs, ref_name)
+    if not _ref_set_if_equals(refs, ref_name, old_ref, object_id):
+        actual = _ref_get(refs, ref_name)
+        raise ValueError(
+            f"Ref {ref_name.decode('utf-8', errors='replace')!r} changed: "
+            f"expected {_format_ref_value(old_ref)}, got {_format_ref_value(actual)}"
+        )
 
 
 def _ref_delete(refs: Any, ref_name: bytes) -> None:
-    del refs[ref_name]
+    old_ref = _ref_get(refs, ref_name)
+    if old_ref is not None and not _ref_delete_if_equals(refs, ref_name, old_ref):
+        actual = _ref_get(refs, ref_name)
+        raise ValueError(
+            f"Ref {ref_name.decode('utf-8', errors='replace')!r} changed: "
+            f"expected {_format_ref_value(old_ref)}, got {_format_ref_value(actual)}"
+        )
+
+
+def _ref_set_if_equals(refs: Any, ref_name: bytes, old_ref: bytes | None, object_id: bytes) -> bool:
+    if old_ref is None:
+        return bool(refs.add_if_new(ref_name, object_id))
+    return bool(refs.set_if_equals(ref_name, old_ref, object_id))
+
+
+def _ref_delete_if_equals(refs: Any, ref_name: bytes, old_ref: bytes) -> bool:
+    return bool(refs.remove_if_equals(ref_name, old_ref))
+
+
+def _format_ref_value(value: bytes | None) -> str | None:
+    if value is None:
+        return None
+    return value.decode("ascii")
 
 
 def _symref_get(refs: Any, ref_name: bytes) -> bytes | None:
@@ -302,7 +330,13 @@ class GitStore:
         ]
         self._repo.object_store.add_object(commit)
 
-        _ref_set(self._repo.refs, branch_ref, commit.id)
+        if not _ref_set_if_equals(self._repo.refs, branch_ref, current_head, commit.id):
+            actual_head = _ref_get(self._repo.refs, branch_ref)
+            actual = None if actual_head is None else actual_head.decode("ascii")
+            expected = None if current_head is None else current_head.decode("ascii")
+            raise ValueError(
+                f"Branch {branch_name!r} head mismatch: expected {expected}, got {actual}"
+            )
         if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
             _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
         return commit.id.decode("ascii")
@@ -337,7 +371,8 @@ class GitStore:
         else:
             tip_sha = source_commit
 
-        self.write_ref(ref, tip_sha)
+        if not _ref_set_if_equals(self._repo.refs, ref.as_bytes(), None, tip_sha.encode("ascii")):
+            raise ValueError(f"Branch {name!r} already exists")
         created_at = int(time.time())
         meta = {
             "parent_branch": parent_branch,
@@ -722,7 +757,13 @@ class GitStore:
         commit.author_timezone = 0
         commit.parents = parents
         store.add_object(commit)
-        _ref_set(self._repo.refs, branch_ref, commit.id)
+        if not _ref_set_if_equals(self._repo.refs, branch_ref, tip_sha, commit.id):
+            actual_head = _ref_get(self._repo.refs, branch_ref)
+            actual = None if actual_head is None else actual_head.decode("ascii")
+            expected = None if tip_sha is None else tip_sha.decode("ascii")
+            raise ValueError(
+                f"Branch {branch_name!r} head mismatch: expected {expected}, got {actual}"
+            )
         if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
             _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
         return commit.id.decode("ascii")
