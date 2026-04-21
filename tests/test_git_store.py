@@ -6,6 +6,7 @@ import pytest
 from dulwich.objects import Blob, Commit
 from dulwich.repo import MemoryRepo
 
+import quire.git_store as git_store
 from quire.git_store import GitStore, GitStorePolicy
 from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
 from quire.refs import RefName
@@ -165,6 +166,32 @@ def test_refs_read_write_delete_round_trip():
     assert store.read_ref(ref) == sha
     store.delete_ref(ref)
     assert store.read_ref(ref) is None
+
+
+def test_expected_head_ref_update_is_compare_and_swap(monkeypatch):
+    store = GitStore.init_memory()
+    first = store.commit_files({"base.txt": b"base"}, "base")
+    racing = store.commit_files({"race.txt": b"race"}, "race", branch="race")
+    branch_ref = b"refs/heads/master"
+    observed = first.encode("ascii")
+    raced = False
+    original_ref_get = git_store._ref_get
+    original_ref_set = git_store._ref_set
+
+    def race_after_expected_head_read(refs: object, ref_name: bytes) -> bytes | None:
+        nonlocal raced
+        result = original_ref_get(refs, ref_name)
+        if not raced and ref_name == branch_ref and result == observed:
+            raced = True
+            original_ref_set(refs, ref_name, racing.encode("ascii"))
+        return result
+
+    monkeypatch.setattr(git_store, "_ref_get", race_after_expected_head_read)
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        store.commit_files({"stale.txt": b"stale"}, "stale", expected_head=first)
+
+    assert store.branch_sha("master") == racing
 
 
 def test_blob_refs_store_derived_index_payloads():
