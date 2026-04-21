@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from quire import documents
 from quire.git_store import GitStore, GitStorePolicy
 from quire.refs import RefName, single_field_ref_type, singleton_ref_type
 from quire.notes import NotesRef
@@ -34,6 +35,7 @@ __all__ = [
     "VersionId",
     "canonical_json_bytes",
     "canonical_json_sha256",
+    "documents",
     "single_field_ref_type",
     "singleton_ref_type",
 ]
