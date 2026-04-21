@@ -17,6 +17,15 @@ from quire.documents import (
 )
 
 
+def test_quire_documents_is_public() -> None:
+    import quire
+
+    from quire import documents
+
+    assert "documents" in quire.__all__
+    assert documents is quire.documents
+
+
 class ExampleDocument(DocumentStruct):
     name: str
     value: int
