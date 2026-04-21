@@ -200,6 +200,7 @@ class GitStore:
         
         parts = PurePosixPath(path).parts
         obj = tree
+        mode = 0o040000
         for part in parts:
             if not isinstance(obj, Tree):
                 return None
@@ -207,7 +208,10 @@ class GitStore:
                 mode, sha = obj[part.encode("utf-8")]
             except KeyError:
                 return None
-            obj = self._repo.get_object(sha)
+            next_obj = _repo_object(self._repo, sha)
+            if not isinstance(next_obj, (Blob, Tree)):
+                return None
+            obj = next_obj
         
         return mode, obj.id.decode("ascii")
 
