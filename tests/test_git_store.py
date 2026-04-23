@@ -431,6 +431,50 @@ def test_notes_round_trip_against_arbitrary_notes_ref():
     assert store.read_note(notes_ref, blob.id.decode("ascii")) is None
 
 
+def test_sync_worktree_refreshes_on_disk_index_to_match_head(tmp_path):
+    """sync_worktree must leave the on-disk dulwich index in sync with HEAD.
+
+    Regression for the phantom-deletion pattern: after a commit via quire's
+    backend, ``git status`` (and dulwich's ``porcelain.status``) would report
+    every file under HEAD as staged-deleted because the index was empty while
+    HEAD's tree had entries. A subsequent plain ``git commit`` would then
+    silently wipe all those files.
+    """
+    from dulwich import porcelain
+
+    root = tmp_path / "repo"
+    store = GitStore.init(root)
+    store.commit_files({"a.txt": b"hello", "b/c.txt": b"nested"}, "seed")
+
+    store.sync_worktree()
+
+    status = porcelain.status(str(root))
+    assert dict(status.staged) == {"add": [], "delete": [], "modify": []}
+    assert list(status.unstaged) == []
+    assert list(status.untracked) == []
+
+
+def test_sync_worktree_refreshes_index_after_subsequent_commits(tmp_path):
+    """Index must stay in sync across multiple commits that add and delete."""
+    from dulwich import porcelain
+
+    root = tmp_path / "repo"
+    store = GitStore.init(root)
+    store.commit_files({"keep.txt": b"keep"}, "first")
+    store.sync_worktree()
+    store.commit_batch(
+        adds={"keep.txt": b"updated", "new.txt": b"new"},
+        deletes=[],
+        message="second",
+    )
+    store.sync_worktree()
+
+    status = porcelain.status(str(root))
+    assert dict(status.staged) == {"add": [], "delete": [], "modify": []}
+    assert list(status.unstaged) == []
+    assert list(status.untracked) == []
+
+
 def test_free_note_helpers_work_with_plain_dulwich_repo():
     repo = MemoryRepo()
     blob = Blob.from_string(b"payload")

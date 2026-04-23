@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 from urllib.parse import quote
 
+from dulwich.index import build_index_from_tree
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
 
@@ -652,6 +653,34 @@ class GitStore:
 
     def sync_worktree(self) -> None:
         self.materialize_worktree(remove_extra=True)
+        self._refresh_on_disk_index()
+
+    def _refresh_on_disk_index(self) -> None:
+        """Rewrite the on-disk git index so it matches HEAD's tree.
+
+        Dulwich does not touch the index during commit-object creation;
+        without this step, ``git status`` in the worktree reports every
+        tracked file as staged-for-deletion (empty index vs populated
+        HEAD tree) and every on-disk file as untracked. A subsequent
+        ``git commit`` would then silently wipe the tree.
+
+        Skipped for in-memory repositories, which have no on-disk index.
+        """
+        if self._root is None:
+            return
+        if not isinstance(self._repo, Repo):
+            return
+        try:
+            head = self._repo.head()
+        except KeyError:
+            return
+        commit = _commit_object(self._repo, head)
+        build_index_from_tree(
+            self._repo.path,
+            self._repo.index_path(),
+            self._repo.object_store,
+            commit.tree,
+        )
 
     def diff_commits(
         self,
