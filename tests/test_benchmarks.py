@@ -17,6 +17,7 @@ SMALL_COMMIT_COUNT = 200
 TRANSACTION_SAVE_COUNT = 1000
 SEEDED_LOAD_COUNT = 1000
 LOAD_OPERATION_COUNT = 5000
+SCAN_DOC_COUNT = 1000
 
 
 class Owner:
@@ -116,3 +117,45 @@ def test_benchmark_family_loads(benchmark, backend_kind: str):
 
     loaded = benchmark(run)
     assert loaded == DemoDoc(name=f"doc-{(LOAD_OPERATION_COUNT - 1) % SEEDED_LOAD_COUNT:05d}", value=(LOAD_OPERATION_COUNT - 1) % SEEDED_LOAD_COUNT)
+
+
+@pytest.mark.benchmark(group="family_scan")
+@pytest.mark.parametrize("backend_kind", ["memory", "filesystem"], ids=["memory", "filesystem"])
+def test_benchmark_family_scan_iter_and_require(benchmark, backend_kind: str):
+    def run() -> int:
+        backend, temp_dir = _make_backend(backend_kind)
+        try:
+            family = _family()
+            store = DocumentFamilyStore(owner=Owner(), backend=backend)
+            _seed_family(store, family, SCAN_DOC_COUNT)
+            total = 0
+            for ref in store.iter(family):
+                total += store.require(family, ref).value
+            return total
+        finally:
+            if temp_dir is not None:
+                temp_dir.cleanup()
+
+    total = benchmark(run)
+    assert total == sum(range(SCAN_DOC_COUNT))
+
+
+@pytest.mark.benchmark(group="family_scan")
+@pytest.mark.parametrize("backend_kind", ["memory", "filesystem"], ids=["memory", "filesystem"])
+def test_benchmark_family_scan_iter_handles(benchmark, backend_kind: str):
+    def run() -> int:
+        backend, temp_dir = _make_backend(backend_kind)
+        try:
+            family = _family()
+            store = DocumentFamilyStore(owner=Owner(), backend=backend)
+            _seed_family(store, family, SCAN_DOC_COUNT)
+            total = 0
+            for handle in store.iter_handles(family):
+                total += handle.document.value
+            return total
+        finally:
+            if temp_dir is not None:
+                temp_dir.cleanup()
+
+    total = benchmark(run)
+    assert total == sum(range(SCAN_DOC_COUNT))
