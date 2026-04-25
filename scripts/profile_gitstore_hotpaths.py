@@ -37,6 +37,12 @@ class Stat:
     seconds: float = 0.0
 
 
+@dataclass
+class CacheStats:
+    hits: int = 0
+    misses: int = 0
+
+
 class CallStats:
     def __init__(self) -> None:
         self._stats: dict[str, Stat] = {}
@@ -103,7 +109,29 @@ def instrument_gitstore(stats: CallStats) -> Iterator[None]:
             setattr(target, name, original)
 
 
-def run_family_load_profile() -> None:
+@contextmanager
+def cache_repo_objects(stats: CacheStats) -> Iterator[None]:
+    original = git_store_module._repo_object
+    cache: dict[bytes, object] = {}
+
+    def cached(repo, object_id):
+        cached_object = cache.get(object_id)
+        if cached_object is not None:
+            stats.hits += 1
+            return cached_object
+        loaded = original(repo, object_id)
+        cache[object_id] = loaded
+        stats.misses += 1
+        return loaded
+
+    git_store_module._repo_object = cached
+    try:
+        yield
+    finally:
+        git_store_module._repo_object = original
+
+
+def run_family_load_profile(*, object_cache: bool) -> None:
     backend, temp_dir = make_filesystem_store()
     try:
         family = make_family()
@@ -111,48 +139,73 @@ def run_family_load_profile() -> None:
         seed_family(store, family, LOAD_SEED_COUNT)
 
         stats = CallStats()
+        cache_stats = CacheStats()
         started = perf_counter()
         with instrument_gitstore(stats):
-            loaded = None
-            for index in range(LOAD_OPERATION_COUNT):
-                ref = f"doc-{index % LOAD_SEED_COUNT:05d}"
-                loaded = store.load(family, ref)
+            cache_context = cache_repo_objects(cache_stats) if object_cache else null_context()
+            with cache_context:
+                loaded = None
+                for index in range(LOAD_OPERATION_COUNT):
+                    ref = f"doc-{index % LOAD_SEED_COUNT:05d}"
+                    loaded = store.load(family, ref)
         elapsed = perf_counter() - started
 
+        label = "family_loads filesystem"
+        if object_cache:
+            label += " with_object_cache"
         print(
-            f"family_loads filesystem total={elapsed:.4f}s "
+            f"{label} total={elapsed:.4f}s "
             f"ops={LOAD_OPERATION_COUNT} ms_per_load={(elapsed / LOAD_OPERATION_COUNT) * 1000.0:.4f}"
         )
         if loaded is None:
             raise RuntimeError("load profile did not load any documents")
+        if object_cache:
+            print_cache_stats(cache_stats)
         print_stats(stats, total_seconds=elapsed)
     finally:
         temp_dir.cleanup()
 
 
-def run_small_commit_profile() -> None:
+@contextmanager
+def null_context() -> Iterator[None]:
+    yield
+
+
+def run_small_commit_profile(*, object_cache: bool) -> None:
     backend, temp_dir = make_filesystem_store()
     try:
         stats = CallStats()
+        cache_stats = CacheStats()
         started = perf_counter()
         with instrument_gitstore(stats):
-            commit = ""
-            for index in range(COMMIT_COUNT):
-                commit = backend.commit_files(
-                    {f"docs/doc-{index:05d}.yaml": f"name: doc-{index}\n".encode("utf-8")},
-                    f"commit {index}",
-                )
+            cache_context = cache_repo_objects(cache_stats) if object_cache else null_context()
+            with cache_context:
+                commit = ""
+                for index in range(COMMIT_COUNT):
+                    commit = backend.commit_files(
+                        {f"docs/doc-{index:05d}.yaml": f"name: doc-{index}\n".encode("utf-8")},
+                        f"commit {index}",
+                    )
         elapsed = perf_counter() - started
 
         print(
-            f"gitstore_small_commits filesystem total={elapsed:.4f}s "
-            f"ops={COMMIT_COUNT} ms_per_commit={(elapsed / COMMIT_COUNT) * 1000.0:.4f}"
+            f"gitstore_small_commits filesystem"
+            f"{' with_object_cache' if object_cache else ''} "
+            f"total={elapsed:.4f}s ops={COMMIT_COUNT} ms_per_commit={(elapsed / COMMIT_COUNT) * 1000.0:.4f}"
         )
         if len(commit) != 40:
             raise RuntimeError("commit profile did not produce a commit sha")
+        if object_cache:
+            print_cache_stats(cache_stats)
         print_stats(stats, total_seconds=elapsed)
     finally:
         temp_dir.cleanup()
+
+
+def print_cache_stats(stats: CacheStats) -> None:
+    total = stats.hits + stats.misses
+    hit_rate = 0.0 if total == 0 else (stats.hits / total) * 100.0
+    print(f"object cache: hits={stats.hits} misses={stats.misses} hit_rate={hit_rate:.2f}%")
 
 
 def print_stats(stats: CallStats, *, total_seconds: float) -> None:
@@ -168,8 +221,10 @@ def print_stats(stats: CallStats, *, total_seconds: float) -> None:
 
 
 def main() -> None:
-    run_family_load_profile()
-    run_small_commit_profile()
+    run_family_load_profile(object_cache=False)
+    run_family_load_profile(object_cache=True)
+    run_small_commit_profile(object_cache=False)
+    run_small_commit_profile(object_cache=True)
 
 
 if __name__ == "__main__":
