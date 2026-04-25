@@ -46,6 +46,7 @@ Issues = "https://github.com/ctoth/quire/issues"
 
 [project.optional-dependencies]
 dev = [
+    "pytest-benchmark>=5.1",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
 ]
@@ -53,6 +54,7 @@ dev = [
 [dependency-groups]
 dev = [
     "hypothesis>=6.152.1",
+    "pytest-benchmark>=5.1",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
 ]
