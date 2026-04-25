@@ -19,6 +19,7 @@ from quire.versions import VersionId
 PROFILE_VERSION = VersionId("2026.04.25", allow_placeholder=False)
 LOAD_SEED_COUNT = 1000
 LOAD_OPERATION_COUNT = 5000
+UNIQUE_LOAD_COUNT = 5000
 COMMIT_COUNT = 200
 
 
@@ -166,6 +167,41 @@ def run_family_load_profile(*, object_cache: bool) -> None:
         temp_dir.cleanup()
 
 
+def run_unique_family_load_profile(*, object_cache: bool) -> None:
+    backend, temp_dir = make_filesystem_store()
+    try:
+        family = make_family()
+        store = DocumentFamilyStore(owner=Owner(), backend=backend)
+        seed_family(store, family, UNIQUE_LOAD_COUNT)
+
+        stats = CallStats()
+        cache_stats = CacheStats()
+        started = perf_counter()
+        with instrument_gitstore(stats):
+            cache_context = cache_repo_objects(cache_stats) if object_cache else null_context()
+            with cache_context:
+                loaded = None
+                for index in range(UNIQUE_LOAD_COUNT):
+                    ref = f"doc-{index:05d}"
+                    loaded = store.load(family, ref)
+        elapsed = perf_counter() - started
+
+        label = "family_loads_unique filesystem"
+        if object_cache:
+            label += " with_object_cache"
+        print(
+            f"{label} total={elapsed:.4f}s "
+            f"ops={UNIQUE_LOAD_COUNT} ms_per_load={(elapsed / UNIQUE_LOAD_COUNT) * 1000.0:.4f}"
+        )
+        if loaded is None:
+            raise RuntimeError("unique load profile did not load any documents")
+        if object_cache:
+            print_cache_stats(cache_stats)
+        print_stats(stats, total_seconds=elapsed)
+    finally:
+        temp_dir.cleanup()
+
+
 @contextmanager
 def null_context() -> Iterator[None]:
     yield
@@ -223,6 +259,8 @@ def print_stats(stats: CallStats, *, total_seconds: float) -> None:
 def main() -> None:
     run_family_load_profile(object_cache=False)
     run_family_load_profile(object_cache=True)
+    run_unique_family_load_profile(object_cache=False)
+    run_unique_family_load_profile(object_cache=True)
     run_small_commit_profile(object_cache=False)
     run_small_commit_profile(object_cache=True)
 
