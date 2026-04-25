@@ -17,6 +17,7 @@ from quire.artifacts import (
     SingletonFilePlacement,
     TemplateFilePlacement,
 )
+from quire.git_store import GitStore
 from quire.documents.loaded import LoadedDocument
 from quire.versions import VersionId
 
@@ -258,3 +259,73 @@ def test_hash_scattered_digest_loaded_recovery_requires_document_ref(tmp_path):
                 knowledge_root=tmp_path / "repo",
             )
         )
+
+
+def test_flat_yaml_iter_artifacts_scans_documents_at_pinned_commit():
+    placement = FlatYamlPlacement("claims", DemoRef, ref_field="name")
+    backend = GitStore.init_memory()
+    commit = backend.commit_files(
+        {
+            "claims/alpha.yaml": b"name: alpha\n",
+            "claims/beta.yaml": b"name: beta\n",
+            "claims/nested/gamma.yaml": b"name: gamma\n",
+        },
+        "seed claims",
+    )
+
+    scanned = list(placement.iter_artifacts(Owner(), backend, commit=commit))
+
+    assert [(item.ref.name, item.address.require_path(), item.content) for item in scanned] == [
+        ("alpha", "claims/alpha.yaml", b"name: alpha\n"),
+        ("beta", "claims/beta.yaml", b"name: beta\n"),
+    ]
+    assert all(item.address.commit == commit for item in scanned)
+
+
+def test_hash_scattered_encoded_ref_iter_artifacts_recovers_refs():
+    placement = HashScatteredYamlPlacement[Owner, DemoRef](
+        namespace="stances",
+        ref_factory=DemoRef,
+        ref_field="name",
+        codec="colon_to_double_underscore",
+        filename_mode="encoded_ref",
+    )
+    backend = GitStore.init_memory()
+    commit = backend.commit_files(
+        {
+            "stances/aa/bb/claim__a.yaml": b"name: claim:a\n",
+            "stances/cc/dd/claim__b.yaml": b"name: claim:b\n",
+        },
+        "seed stances",
+    )
+
+    scanned = list(placement.iter_artifacts(Owner(), backend, commit=commit))
+
+    assert [(item.ref.name, item.address.require_path()) for item in scanned] == [
+        ("claim:a", "stances/aa/bb/claim__a.yaml"),
+        ("claim:b", "stances/cc/dd/claim__b.yaml"),
+    ]
+
+
+def test_scan_unsupported_placements_fail_clearly():
+    owner = Owner()
+    backend = GitStore.init_memory()
+
+    fixed = FixedFilePlacement[Owner, DemoRef]("source.yaml")
+    template = TemplateFilePlacement[Owner, DemoRef]("merge/{stem}.yaml", ref_field="name")
+    singleton = SingletonFilePlacement[Owner, str]("merge/manifest.yaml", ref_factory=lambda: "manifest")
+    opaque_hash = HashScatteredYamlPlacement[Owner, DemoRef](
+        namespace="claims",
+        ref_factory=DemoRef,
+        ref_field="name",
+        filename_mode="digest",
+    )
+
+    with pytest.raises(TypeError, match="cannot scan artifacts"):
+        list(fixed.iter_artifacts(owner, backend))
+    with pytest.raises(TypeError, match="cannot scan artifacts"):
+        list(template.iter_artifacts(owner, backend))
+    with pytest.raises(TypeError, match="cannot scan artifacts"):
+        list(singleton.iter_artifacts(owner, backend))
+    with pytest.raises(TypeError, match="opaque hash-scattered placement"):
+        list(opaque_hash.iter_artifacts(owner, backend))

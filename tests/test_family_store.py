@@ -10,6 +10,7 @@ from quire.artifacts import (
     ArtifactFamily,
     BranchPlacement,
     FlatYamlPlacement,
+    HashScatteredYamlPlacement,
     ReadOnlyDocumentStoreBackend,
 )
 from quire.documents import DocumentCodec
@@ -154,6 +155,31 @@ def test_iter_handles_respects_pinned_commit_for_flat_family():
 
     assert [(handle.ref, handle.document.name) for handle in handles] == [("alpha", "alpha")]
     assert handles[0].address.commit == first
+
+
+def test_iter_handles_supports_hash_scattered_encoded_refs():
+    backend = GitStore.init_memory()
+    family = ArtifactFamily[Owner, str, DemoDocument](
+        name="hashy",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=DemoDocument,
+        placement=HashScatteredYamlPlacement(
+            "hashy",
+            str,
+            codec="colon_to_double_underscore",
+            filename_mode="encoded_ref",
+        ),
+    )
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    store.save(family, "claim:a", DemoDocument("claim:a"), message="save a")
+    store.save(family, "claim:b", DemoDocument("claim:b"), message="save b")
+
+    handles = list(store.iter_handles(family))
+
+    assert sorted((handle.ref, handle.document.name) for handle in handles) == [
+        ("claim:a", "claim:a"),
+        ("claim:b", "claim:b"),
+    ]
 
 
 def test_transaction_writes_multiple_documents_in_one_commit():
