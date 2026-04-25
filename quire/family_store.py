@@ -10,6 +10,7 @@ from quire.artifacts import (
     ArtifactContext,
     ArtifactFamily,
     ArtifactHandle,
+    BranchPlacement,
     PathArtifactLocator,
     PreparedArtifact,
     ReadOnlyDocumentStoreBackend,
@@ -67,12 +68,14 @@ class DocumentFamilyStore(Generic[TOwner]):
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
+        branch: str | None = None,
         commit: str | None = None,
     ) -> ArtifactAddress:
         address = family.address_for(self.owner, ref)
-        if commit is None:
+        target_branch = branch or address.branch
+        if commit is None and target_branch == address.branch:
             return address
-        return ArtifactAddress(branch=address.branch, locator=address.locator, commit=commit)
+        return ArtifactAddress(branch=target_branch, locator=address.locator, commit=commit)
 
     def ref_from_path(
         self,
@@ -149,10 +152,11 @@ class DocumentFamilyStore(Generic[TOwner]):
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
+        branch: str | None = None,
         commit: str | None = None,
     ) -> TDoc | None:
         backend = self._require_backend()
-        address = self.address(family, ref, commit=commit)
+        address = self.address(family, ref, branch=branch, commit=commit)
         target_commit = commit or address.commit
         if target_commit is None:
             target_commit = self.branch_head(backend, address.branch)
@@ -173,15 +177,16 @@ class DocumentFamilyStore(Generic[TOwner]):
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
+        branch: str | None = None,
         commit: str | None = None,
     ) -> ArtifactHandle[TOwner, TRef, TDoc] | None:
-        document = self.load(family, ref, commit=commit)
+        document = self.load(family, ref, branch=branch, commit=commit)
         if document is None:
             return None
         return ArtifactHandle(
             family=family,
             ref=ref,
-            address=self.address(family, ref, commit=commit),
+            address=self.address(family, ref, branch=branch, commit=commit),
             document=document,
         )
 
@@ -211,11 +216,12 @@ class DocumentFamilyStore(Generic[TOwner]):
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
+        branch: str | None = None,
         commit: str | None = None,
     ) -> ArtifactHandle[TOwner, TRef, TDoc]:
-        handle = self.handle(family, ref, commit=commit)
+        handle = self.handle(family, ref, branch=branch, commit=commit)
         if handle is None:
-            address = self.address(family, ref, commit=commit)
+            address = self.address(family, ref, branch=branch, commit=commit)
             raise FileNotFoundError(f"{family.name}: {address.branch}:{address_path(address)}")
         return handle
 
@@ -224,9 +230,10 @@ class DocumentFamilyStore(Generic[TOwner]):
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
         *,
+        branch: str | None = None,
         commit: str | None = None,
     ) -> TDoc:
-        return self.require_handle(family, ref, commit=commit).document
+        return self.require_handle(family, ref, branch=branch, commit=commit).document
 
     def save(
         self,
@@ -303,13 +310,36 @@ class DocumentFamilyStore(Generic[TOwner]):
         message: str,
         branch: str | None = None,
         expected_head: str | None = None,
-    ) -> DocumentFamilyTransaction[TOwner]:
+        ) -> DocumentFamilyTransaction[TOwner]:
         return DocumentFamilyTransaction(
             store=self,
             message=message,
             branch=branch,
             expected_head=expected_head,
         )
+
+    def pin(
+        self,
+        family: ArtifactFamily[TOwner, TRef, TDoc],
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> tuple[str, str | None]:
+        target_branch = branch
+        if target_branch is None:
+            branch_policy = getattr(family.placement, "branch", None)
+            if not isinstance(branch_policy, BranchPlacement):
+                raise TypeError(
+                    "family pinning requires a placement with a branch policy or an explicit branch"
+                )
+            try:
+                target_branch = branch_policy.branch_name(self.owner)
+            except ValueError as exc:
+                raise ValueError("family pinning requires an explicit branch for this placement") from exc
+        if commit is not None:
+            return target_branch, commit
+        backend = self._require_backend()
+        return target_branch, self.branch_head(backend, target_branch)
 
     def _require_backend(self) -> DocumentStoreBackend:
         if self.backend is None:

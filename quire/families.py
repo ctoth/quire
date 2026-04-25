@@ -249,8 +249,14 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
     store: DocumentFamilyStore[TOwner]
     family: ArtifactFamily[TOwner, TRef, TDoc]
 
-    def address(self, ref: TRef, *, commit: str | None = None) -> ArtifactAddress:
-        return self.store.address(self.family, ref, commit=commit)
+    def address(
+        self,
+        ref: TRef,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> ArtifactAddress:
+        return self.store.address(self.family, ref, branch=branch, commit=commit)
 
     def ref_from_path(self, path: str) -> TRef:
         return self.store.ref_from_path(self.family, path)
@@ -269,6 +275,20 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
 
     def iter(self, *, branch: str | None = None, commit: str | None = None) -> Iterator[TRef]:
         return self.store.iter(self.family, branch=branch, commit=commit)
+
+    def pin(
+        self,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> PinnedBoundFamily[TOwner, TRef, TDoc]:
+        target_branch, target_commit = self.store.pin(self.family, branch=branch, commit=commit)
+        return PinnedBoundFamily(
+            store=self.store,
+            family=self.family,
+            branch=target_branch,
+            commit=target_commit,
+        )
 
     def iter_handles(
         self,
@@ -352,6 +372,35 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
             branch=branch,
             expected_head=expected_head,
         )
+
+
+@dataclass(frozen=True)
+class PinnedBoundFamily(Generic[TOwner, TRef, TDoc]):
+    store: DocumentFamilyStore[TOwner]
+    family: ArtifactFamily[TOwner, TRef, TDoc]
+    branch: str
+    commit: str | None
+
+    def address(self, ref: TRef) -> ArtifactAddress:
+        return self.store.address(self.family, ref, branch=self.branch, commit=self.commit)
+
+    def iter(self) -> Iterator[TRef]:
+        return self.store.iter(self.family, branch=self.branch, commit=self.commit)
+
+    def iter_handles(self) -> Iterator[ArtifactHandle[TOwner, TRef, TDoc]]:
+        return self.store.iter_handles(self.family, branch=self.branch, commit=self.commit)
+
+    def load(self, ref: TRef) -> TDoc | None:
+        return self.store.load(self.family, ref, branch=self.branch, commit=self.commit)
+
+    def require(self, ref: TRef) -> TDoc:
+        return self.store.require(self.family, ref, branch=self.branch, commit=self.commit)
+
+    def handle(self, ref: TRef) -> ArtifactHandle[TOwner, TRef, TDoc] | None:
+        return self.store.handle(self.family, ref, branch=self.branch, commit=self.commit)
+
+    def require_handle(self, ref: TRef) -> ArtifactHandle[TOwner, TRef, TDoc]:
+        return self.store.require_handle(self.family, ref, branch=self.branch, commit=self.commit)
 
 
 @dataclass(frozen=True)

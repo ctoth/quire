@@ -182,6 +182,33 @@ def test_iter_handles_supports_hash_scattered_encoded_refs():
     ]
 
 
+def test_store_pin_resolves_branch_head_once_for_iter_and_require():
+    backend = GitStore.init_memory()
+    calls: list[str] = []
+
+    def counting_branch_head(resolved_backend: DocumentStoreBackend, branch: str) -> str | None:
+        calls.append(branch)
+        return resolved_backend.branch_sha(branch)
+
+    store = DocumentFamilyStore(
+        owner=Owner(),
+        backend=backend,
+        branch_head=counting_branch_head,
+    )
+    family = _demo_family()
+    store.save(family, "alpha", DemoDocument("alpha"), message="save alpha")
+    store.save(family, "beta", DemoDocument("beta"), message="save beta")
+
+    pinned_branch, pinned_commit = store.pin(family)
+    refs = list(store.iter(family, branch=pinned_branch, commit=pinned_commit))
+    loaded = [store.require(family, ref, branch=pinned_branch, commit=pinned_commit) for ref in refs]
+
+    assert pinned_branch == "master"
+    assert pinned_commit is not None
+    assert [document.name for document in loaded] == ["alpha", "beta"]
+    assert calls == ["master"]
+
+
 def test_transaction_writes_multiple_documents_in_one_commit():
     backend = GitStore.init_memory()
     store = DocumentFamilyStore(owner=Owner(), backend=backend)

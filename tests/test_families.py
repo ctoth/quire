@@ -200,6 +200,22 @@ def test_bound_family_iter_handles_exposes_loaded_handles() -> None:
     assert handles[0].address.require_path() == "claims/paper.yaml"
 
 
+def test_bound_family_pin_freezes_commit_for_iter_and_require() -> None:
+    registry = _registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+    bound.claims.save("paper", DemoDocument("alpha"), message="save claim")
+
+    pinned = bound.claims.pin()
+
+    bound.claims.save("other", DemoDocument("beta"), message="save another claim")
+
+    assert pinned.commit is not None
+    assert list(pinned.iter()) == ["paper"]
+    assert pinned.require("paper") == DemoDocument("alpha")
+    assert pinned.address("paper").commit == pinned.commit
+
+
 def test_bound_family_forwards_expected_head_checks() -> None:
     registry = _registry()
     backend = GitStore.init_memory()
