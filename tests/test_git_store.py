@@ -59,6 +59,20 @@ def test_single_file_update_preserves_unrelated_tree_contents():
     assert store.read_file("a/one.txt", commit=first) == b"one"
 
 
+def test_filesystem_reads_follow_new_head_after_cached_read(tmp_path):
+    root = tmp_path / "repo"
+    store = GitStore.init(root)
+    first = store.commit_files({"docs/example.yaml": b"name: first\n"}, "seed")
+
+    assert store.read_file("docs/example.yaml") == b"name: first\n"
+
+    second = store.commit_files({"docs/example.yaml": b"name: second\n"}, "update")
+
+    assert store.read_file("docs/example.yaml") == b"name: second\n"
+    assert store.read_file("docs/example.yaml", commit=first) == b"name: first\n"
+    assert store.read_file("docs/example.yaml", commit=second) == b"name: second\n"
+
+
 def test_commit_rejects_writing_child_under_existing_file():
     store = GitStore.init_memory()
     store.commit_files({"docs": b"file"}, "add file")

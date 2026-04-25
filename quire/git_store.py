@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -125,6 +125,8 @@ def _branch_meta_ref(name: str) -> RefName:
 
 
 class GitStore:
+    _OBJECT_CACHE_LIMIT = 8192
+
     def __init__(
         self,
         dulwich_repo: BaseRepo,
@@ -136,6 +138,7 @@ class GitStore:
         self._root = root
         self._policy = policy or GitStorePolicy()
         self._branch_meta: dict[str, dict[str, str | int]] = {}
+        self._object_cache: OrderedDict[bytes, Blob | Tree | Commit] = OrderedDict()
         self._mutation_lock = threading.RLock()
 
     @property
@@ -209,7 +212,7 @@ class GitStore:
                 mode, sha = obj[part.encode("utf-8")]
             except KeyError:
                 return None
-            next_obj = _repo_object(self._repo, sha)
+            next_obj = self._cached_object(sha)
             if not isinstance(next_obj, (Blob, Tree)):
                 return None
             obj = next_obj
@@ -296,6 +299,7 @@ class GitStore:
         with self._mutation_lock:
             blob = Blob.from_string(payload)
             self._repo.object_store.add_object(blob)
+            self._remember_object(blob)
             return blob.id.decode("ascii")
 
     def commit_flat_tree(
@@ -341,6 +345,8 @@ class GitStore:
                 for parent in parents
             ]
             self._repo.object_store.add_object(commit)
+            self._remember_object(root_tree)
+            self._remember_object(commit)
 
             if not _ref_set_if_equals(self._repo.refs, branch_ref, current_head, commit.id):
                 actual_head = _ref_get(self._repo.refs, branch_ref)
@@ -426,7 +432,7 @@ class GitStore:
             )
 
     def commit_parent_shas(self, commit: str) -> list[str]:
-        commit_obj = _commit_object(self._repo, commit.encode("ascii"))
+        commit_obj = self._commit_object(commit.encode("ascii"))
         return [parent.decode("ascii") for parent in commit_obj.parents]
 
     def revert_commit(
@@ -437,13 +443,13 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        target_commit = _commit_object(self._repo, commit_sha.encode("ascii"))
+        target_commit = self._commit_object(commit_sha.encode("ascii"))
         if len(target_commit.parents) != 1:
             raise ValueError("revert_commit requires a single-parent commit")
 
         parent_sha = target_commit.parents[0]
-        parent_tree = _tree_object(self._repo, _commit_object(self._repo, parent_sha).tree)
-        target_tree = _tree_object(self._repo, target_commit.tree)
+        parent_tree = self._tree_object(self._commit_object(parent_sha).tree)
+        target_tree = self._tree_object(target_commit.tree)
 
         parent_entries: dict[str, bytes] = {}
         target_entries: dict[str, bytes] = {}
@@ -462,7 +468,7 @@ class GitStore:
                 raise ValueError(
                     f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
                 )
-        current_tree = _tree_object(self._repo, _commit_object(self._repo, current_head).tree)
+        current_tree = self._tree_object(self._commit_object(current_head).tree)
         current_entries: dict[str, bytes] = {}
         self._flatten_tree(current_tree, "", current_entries)
 
@@ -484,7 +490,7 @@ class GitStore:
             if parent_blob is None:
                 deletes.append(path)
                 continue
-            blob = _repo_object(self._repo, parent_blob)
+            blob = self._cached_object(parent_blob)
             if not isinstance(blob, Blob):
                 raise TypeError(f"Expected blob for {path!r}, got {type(blob).__name__}")
             adds[path] = blob.data
@@ -577,7 +583,7 @@ class GitStore:
         sha = self.read_ref(ref)
         if sha is None:
             return None
-        obj = _repo_object(self._repo, sha.encode("ascii"))
+        obj = self._cached_object(sha.encode("ascii"))
         if not isinstance(obj, Blob):
             raise TypeError(f"Expected blob object at {ref}, got {type(obj).__name__}")
         return obj.data
@@ -638,8 +644,8 @@ class GitStore:
             head = self._repo.head()
         except KeyError:
             return
-        commit = _commit_object(self._repo, head)
-        tree = _tree_object(self._repo, commit.tree)
+        commit = self._commit_object(head)
+        tree = self._tree_object(commit.tree)
         paths: set[str] = set()
         self._collect_tree_paths(tree, "", paths)
         for rel_path in paths:
@@ -674,7 +680,7 @@ class GitStore:
             head = self._repo.head()
         except KeyError:
             return
-        commit = _commit_object(self._repo, head)
+        commit = self._commit_object(head)
         build_index_from_tree(
             self._repo.path,
             self._repo.index_path(),
@@ -694,7 +700,7 @@ class GitStore:
                 return {"added": [], "modified": [], "deleted": []}
 
         if commit2 is None:
-            commit1_obj = _commit_object(self._repo, commit1.encode("ascii"))
+            commit1_obj = self._commit_object(commit1.encode("ascii"))
             commit2 = commit1_obj.parents[0].decode("ascii") if commit1_obj.parents else None
 
         entries1: dict[str, bytes] = {}
@@ -717,7 +723,7 @@ class GitStore:
         }
 
     def show_commit(self, sha: str) -> dict[str, object]:
-        commit = _commit_object(self._repo, sha.encode("ascii"))
+        commit = self._commit_object(sha.encode("ascii"))
         parent_sha = commit.parents[0].decode("ascii") if commit.parents else None
         diff = self.diff_commits(sha, parent_sha)
         return {
@@ -772,8 +778,8 @@ class GitStore:
             base_tree = None
             parents: list[bytes] = []
         else:
-            parent_commit = _commit_object(self._repo, tip_sha)
-            base_tree = _tree_object(self._repo, parent_commit.tree)
+            parent_commit = self._commit_object(tip_sha)
+            base_tree = self._tree_object(parent_commit.tree)
             parents = [tip_sha]
 
         add_blob_ids: dict[tuple[str, ...], bytes] = {}
@@ -805,6 +811,7 @@ class GitStore:
         commit.author_timezone = 0
         commit.parents = parents
         store.add_object(commit)
+        self._remember_object(commit)
         if not _ref_set_if_equals(self._repo.refs, branch_ref, tip_sha, commit.id):
             actual_head = _ref_get(self._repo.refs, branch_ref)
             actual = None if actual_head is None else actual_head.decode("ascii")
@@ -853,12 +860,12 @@ class GitStore:
     def _get_tree(self, commit: str | None = None) -> Tree | None:
         try:
             if commit is not None:
-                commit_obj = _commit_object(self._repo, commit.encode("ascii"))
+                commit_obj = self._commit_object(commit.encode("ascii"))
             else:
-                commit_obj = _commit_object(self._repo, self._repo.head())
+                commit_obj = self._commit_object(self._repo.head())
         except KeyError:
             return None
-        return _tree_object(self._repo, commit_obj.tree)
+        return self._tree_object(commit_obj.tree)
 
     def _walk_tree(self, tree: Tree | None, parts: tuple[str, ...]) -> Blob | Tree | None:
         if tree is None:
@@ -871,7 +878,7 @@ class GitStore:
                 _mode, sha = obj[part.encode("utf-8")]
             except KeyError:
                 return None
-            next_obj = _repo_object(self._repo, sha)
+            next_obj = self._cached_object(sha)
             if not isinstance(next_obj, (Blob, Tree)):
                 return None
             obj = next_obj
@@ -884,7 +891,7 @@ class GitStore:
             for entry in reversed(list(current_tree.items())):
                 name = entry.path.decode("utf-8")
                 path = f"{current_prefix}/{name}" if current_prefix else name
-                obj = _repo_object(self._repo, entry.sha)
+                obj = self._cached_object(entry.sha)
                 if isinstance(obj, Tree):
                     stack.append((path, obj))
                 elif isinstance(obj, Blob):
@@ -962,6 +969,7 @@ class GitStore:
             for name, (mode, sha) in sorted(entries.items()):
                 _tree_add(tree, name.encode("utf-8"), mode, sha)
             self._repo.object_store.add_object(tree)
+            self._remember_object(tree)
             if not directory:
                 root_tree = tree
                 continue
@@ -993,7 +1001,7 @@ class GitStore:
                 _mode, sha = obj[part.encode("utf-8")]
             except KeyError:
                 return None
-            next_obj = _repo_object(self._repo, sha)
+            next_obj = self._cached_object(sha)
             if not isinstance(next_obj, (Blob, Tree)):
                 return None
             obj = next_obj
@@ -1029,6 +1037,7 @@ class GitStore:
                 subtree = built_trees[(*directory, dirname)]
                 _tree_add(tree, dirname.encode("utf-8"), 0o040000, subtree.id)
             self._repo.object_store.add_object(tree)
+            self._remember_object(tree)
             built_trees[directory] = tree
 
         return built_trees[()]
@@ -1040,11 +1049,41 @@ class GitStore:
             for entry in reversed(list(current_tree.items())):
                 name = entry.path.decode("utf-8")
                 path = f"{current_prefix}/{name}" if current_prefix else name
-                obj = _repo_object(self._repo, entry.sha)
+                obj = self._cached_object(entry.sha)
                 if isinstance(obj, Tree):
                     stack.append((path, obj))
                 elif isinstance(obj, Blob):
                     out.add(path)
+
+    def _cached_object(self, object_id: bytes) -> Blob | Tree | Commit:
+        with self._mutation_lock:
+            cached = self._object_cache.get(object_id)
+            if cached is not None:
+                self._object_cache.move_to_end(object_id)
+                return cached
+        obj = _repo_object(self._repo, object_id)
+        self._remember_object(obj)
+        return obj
+
+    def _remember_object(self, obj: Blob | Tree | Commit) -> None:
+        with self._mutation_lock:
+            object_id = obj.id
+            self._object_cache[object_id] = obj
+            self._object_cache.move_to_end(object_id)
+            while len(self._object_cache) > self._OBJECT_CACHE_LIMIT:
+                self._object_cache.popitem(last=False)
+
+    def _commit_object(self, object_id: bytes) -> Commit:
+        obj = self._cached_object(object_id)
+        if isinstance(obj, Commit):
+            return obj
+        raise TypeError(f"Expected commit object, got {type(obj).__name__}")
+
+    def _tree_object(self, object_id: bytes) -> Tree:
+        obj = self._cached_object(object_id)
+        if isinstance(obj, Tree):
+            return obj
+        raise TypeError(f"Expected tree object, got {type(obj).__name__}")
 
     def _remove_extra_worktree_files(self, tracked_paths: set[str]) -> None:
         if self._root is None:
