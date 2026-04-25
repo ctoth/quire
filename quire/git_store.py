@@ -153,7 +153,7 @@ class GitStore:
     def init(cls, root: Path, *, policy: GitStorePolicy | None = None) -> GitStore:
         root.mkdir(parents=True, exist_ok=True)
         resolved_policy = policy or GitStorePolicy()
-        store = cls(Repo.init(str(root)), root, policy=resolved_policy)
+        store = cls(Repo.init_bare(str(root / ".git"), mkdir=True), root, policy=resolved_policy)
         if resolved_policy.initial_files:
             initial_files = cast("dict[str | Path, bytes]", dict(resolved_policy.initial_files))
             store.commit_files(initial_files, resolved_policy.initial_commit_message)
@@ -170,11 +170,19 @@ class GitStore:
 
     @classmethod
     def open(cls, root: Path, *, policy: GitStorePolicy | None = None) -> GitStore:
+        control_dir = root / ".git"
+        if control_dir.is_dir() and (control_dir / "HEAD").is_file() and (control_dir / "objects").is_dir():
+            return cls(Repo(str(control_dir)), root, policy=policy)
         return cls(Repo(str(root)), root, policy=policy)
 
     @staticmethod
     def is_repo(root: Path) -> bool:
-        return (root / ".git").is_dir()
+        control_dir = root / ".git"
+        return (
+            control_dir.is_dir()
+            and (control_dir / "HEAD").is_file()
+            and (control_dir / "objects").is_dir()
+        )
 
     def primary_branch_name(self) -> str:
         return self._policy.primary_branch
