@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import statistics
 import tempfile
 from dataclasses import dataclass
@@ -60,22 +61,28 @@ def seed_family(
     count: int,
 ) -> str:
     backend = GitStore.init(root)
-    family = make_family()
-    store = DocumentFamilyStore(owner=Owner(), backend=backend)
-    with store.transact(message=f"seed {count} docs") as transaction:
-        for index in range(count):
-            ref = f"doc-{index:05d}"
-            transaction.save(family, ref, DemoDoc(name=ref, value=index))
-    commit = backend.branch_sha("master")
-    if commit is None:
-        raise RuntimeError("seed did not create a master head")
-    return commit
+    try:
+        family = make_family()
+        store = DocumentFamilyStore(owner=Owner(), backend=backend)
+        with store.transact(message=f"seed {count} docs") as transaction:
+            for index in range(count):
+                ref = f"doc-{index:05d}"
+                transaction.save(family, ref, DemoDoc(name=ref, value=index))
+        commit = backend.branch_sha("master")
+        if commit is None:
+            raise RuntimeError("seed did not create a master head")
+        return commit
+    finally:
+        backend.raw_repo.close()
 
 
 def count_loose_objects(root: Path) -> int:
     backend = GitStore.open(root)
-    object_store = backend.raw_repo.object_store
-    return sum(1 for _ in object_store._iter_loose_objects())
+    try:
+        object_store = backend.raw_repo.object_store
+        return sum(1 for _ in object_store._iter_loose_objects())
+    finally:
+        backend.raw_repo.close()
 
 
 def count_pack_files(root: Path) -> int:
@@ -87,9 +94,12 @@ def count_pack_files(root: Path) -> int:
 
 def pack_repo(root: Path) -> int:
     backend = GitStore.open(root)
-    packed = backend.raw_repo.object_store.pack_loose_objects()
-    backend.raw_repo.object_store._update_pack_cache()
-    return packed
+    try:
+        packed = backend.raw_repo.object_store.pack_loose_objects()
+        backend.raw_repo.object_store._update_pack_cache()
+        return packed
+    finally:
+        backend.raw_repo.close()
 
 
 def open_store(root: Path) -> tuple[DocumentFamilyStore[Owner], ArtifactFamily[Owner, str, DemoDoc]]:
@@ -100,47 +110,62 @@ def open_store(root: Path) -> tuple[DocumentFamilyStore[Owner], ArtifactFamily[O
 
 def repeated_point_loads(root: Path) -> None:
     store, family = open_store(root)
-    pinned_branch, pinned_commit = store.pin(family)
-    loaded = None
-    for index in range(REPEATED_LOAD_COUNT):
-        ref = f"doc-{index % REPEATED_SEED_COUNT:05d}"
-        loaded = store.load(family, ref, branch=pinned_branch, commit=pinned_commit)
-    expected = DemoDoc(name=f"doc-{(REPEATED_LOAD_COUNT - 1) % REPEATED_SEED_COUNT:05d}", value=(REPEATED_LOAD_COUNT - 1) % REPEATED_SEED_COUNT)
-    if loaded != expected:
-        raise RuntimeError(f"unexpected repeated-load result: {loaded!r}")
+    try:
+        pinned_branch, pinned_commit = store.pin(family)
+        loaded = None
+        for index in range(REPEATED_LOAD_COUNT):
+            ref = f"doc-{index % REPEATED_SEED_COUNT:05d}"
+            loaded = store.load(family, ref, branch=pinned_branch, commit=pinned_commit)
+        expected = DemoDoc(
+            name=f"doc-{(REPEATED_LOAD_COUNT - 1) % REPEATED_SEED_COUNT:05d}",
+            value=(REPEATED_LOAD_COUNT - 1) % REPEATED_SEED_COUNT,
+        )
+        if loaded != expected:
+            raise RuntimeError(f"unexpected repeated-load result: {loaded!r}")
+    finally:
+        store.backend.raw_repo.close()
 
 
 def unique_point_loads(root: Path) -> None:
     store, family = open_store(root)
-    pinned_branch, pinned_commit = store.pin(family)
-    loaded = None
-    for index in range(UNIQUE_LOAD_COUNT):
-        ref = f"doc-{index:05d}"
-        loaded = store.load(family, ref, branch=pinned_branch, commit=pinned_commit)
-    expected = DemoDoc(name=f"doc-{UNIQUE_LOAD_COUNT - 1:05d}", value=UNIQUE_LOAD_COUNT - 1)
-    if loaded != expected:
-        raise RuntimeError(f"unexpected unique-load result: {loaded!r}")
+    try:
+        pinned_branch, pinned_commit = store.pin(family)
+        loaded = None
+        for index in range(UNIQUE_LOAD_COUNT):
+            ref = f"doc-{index:05d}"
+            loaded = store.load(family, ref, branch=pinned_branch, commit=pinned_commit)
+        expected = DemoDoc(name=f"doc-{UNIQUE_LOAD_COUNT - 1:05d}", value=UNIQUE_LOAD_COUNT - 1)
+        if loaded != expected:
+            raise RuntimeError(f"unexpected unique-load result: {loaded!r}")
+    finally:
+        store.backend.raw_repo.close()
 
 
 def family_scan_iter_handles(root: Path) -> None:
     store, family = open_store(root)
-    total = 0
-    for handle in store.iter_handles(family):
-        total += handle.document.value
-    expected = sum(range(SCAN_DOC_COUNT))
-    if total != expected:
-        raise RuntimeError(f"unexpected iter_handles total: {total}")
+    try:
+        total = 0
+        for handle in store.iter_handles(family):
+            total += handle.document.value
+        expected = sum(range(SCAN_DOC_COUNT))
+        if total != expected:
+            raise RuntimeError(f"unexpected iter_handles total: {total}")
+    finally:
+        store.backend.raw_repo.close()
 
 
 def family_scan_pinned_iter_and_require(root: Path) -> None:
     store, family = open_store(root)
-    pinned = store.pin(family)
-    total = 0
-    for ref in store.iter(family, branch=pinned[0], commit=pinned[1]):
-        total += store.require(family, ref, branch=pinned[0], commit=pinned[1]).value
-    expected = sum(range(SCAN_DOC_COUNT))
-    if total != expected:
-        raise RuntimeError(f"unexpected pinned scan total: {total}")
+    try:
+        pinned = store.pin(family)
+        total = 0
+        for ref in store.iter(family, branch=pinned[0], commit=pinned[1]):
+            total += store.require(family, ref, branch=pinned[0], commit=pinned[1]).value
+        expected = sum(range(SCAN_DOC_COUNT))
+        if total != expected:
+            raise RuntimeError(f"unexpected pinned scan total: {total}")
+    finally:
+        store.backend.raw_repo.close()
 
 
 def measure(name: str, root: Path, workload) -> Measurement:
@@ -169,9 +194,10 @@ def main() -> None:
         ("family_scan_pinned_iter_and_require", SCAN_DOC_COUNT, family_scan_pinned_iter_and_require, SCAN_DOC_COUNT),
     )
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    temp_root = Path(tempfile.mkdtemp(prefix="quire-packed-bench-"))
+    try:
         for workload_name, ops, workload, seed_count in workloads:
-            root = Path(temp_dir) / workload_name
+            root = temp_root / workload_name
             seed_family(root, count=seed_count)
             loose_before = count_loose_objects(root)
             pack_files_before = count_pack_files(root)
@@ -195,6 +221,8 @@ def main() -> None:
                 f"{loose_measurement.median / packed_measurement.median:.2f}x"
             )
             print()
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 if __name__ == "__main__":
