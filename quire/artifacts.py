@@ -201,6 +201,13 @@ class ReadOnlyDocumentStoreBackend(Protocol):
     def read_file(self, path: str | Path, commit: str | None = None) -> bytes:
         ...
 
+    def iter_subtree_files(
+        self,
+        subdir: str | Path,
+        commit: str | None = None,
+    ) -> Iterator[tuple[str, bytes]]:
+        ...
+
     def iter_dir_entries(
         self,
         subdir: str | Path,

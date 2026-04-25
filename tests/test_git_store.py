@@ -73,6 +73,26 @@ def test_filesystem_reads_follow_new_head_after_cached_read(tmp_path):
     assert store.read_file("docs/example.yaml", commit=second) == b"name: second\n"
 
 
+def test_iter_subtree_files_walks_nested_files_once():
+    store = GitStore.init_memory()
+    commit = store.commit_files(
+        {
+            "docs/root.yaml": b"root",
+            "docs/nested/one.yaml": b"one",
+            "docs/nested/deeper/two.yaml": b"two",
+            "other/skip.yaml": b"skip",
+        },
+        "seed subtree",
+    )
+
+    assert list(store.iter_subtree_files("docs", commit=commit)) == [
+        ("nested/deeper/two.yaml", b"two"),
+        ("nested/one.yaml", b"one"),
+        ("root.yaml", b"root"),
+    ]
+    assert list(store.iter_subtree_files("missing", commit=commit)) == []
+
+
 def test_commit_rejects_writing_child_under_existing_file():
     store = GitStore.init_memory()
     store.commit_files({"docs": b"file"}, "add file")

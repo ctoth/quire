@@ -238,6 +238,30 @@ class GitStore:
         for entry in entries:
             yield entry.path.decode("utf-8")
 
+    def iter_subtree_files(
+        self,
+        subdir: str | Path,
+        commit: str | None = None,
+    ) -> Iterator[tuple[str, bytes]]:
+        subtree = self._subtree(subdir, commit=commit)
+        if subtree is None:
+            return
+        stack: list[tuple[str, Iterator[Any]]] = [("", iter(sorted(subtree.items(), key=lambda entry: entry.path)))]
+        while stack:
+            current_prefix, entries = stack[-1]
+            try:
+                entry = next(entries)
+            except StopIteration:
+                stack.pop()
+                continue
+            name = entry.path.decode("utf-8")
+            relpath = f"{current_prefix}/{name}" if current_prefix else name
+            obj = self._cached_object(entry.sha)
+            if isinstance(obj, Tree):
+                stack.append((relpath, iter(sorted(obj.items(), key=lambda child: child.path))))
+            elif isinstance(obj, Blob):
+                yield relpath, obj.data
+
     def iter_dir_entries(
         self,
         subdir: str | Path,
