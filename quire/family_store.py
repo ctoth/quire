@@ -13,6 +13,7 @@ from quire.artifacts import (
     PathArtifactLocator,
     PreparedArtifact,
     ReadOnlyDocumentStoreBackend,
+    ScannedArtifact,
     TDoc,
     TRef,
 )
@@ -184,6 +185,27 @@ class DocumentFamilyStore(Generic[TOwner]):
             document=document,
         )
 
+    def iter_handles(
+        self,
+        family: ArtifactFamily[TOwner, TRef, TDoc],
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ArtifactHandle[TOwner, TRef, TDoc]]:
+        backend = self._require_backend()
+        for scanned in family.placement.iter_artifacts(
+            self.owner,
+            backend,
+            branch=branch,
+            commit=commit,
+        ):
+            yield ArtifactHandle(
+                family=family,
+                ref=scanned.ref,
+                address=scanned.address,
+                document=self._decode_scanned_artifact(family, scanned),
+            )
+
     def require_handle(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
@@ -293,6 +315,17 @@ class DocumentFamilyStore(Generic[TOwner]):
         if self.backend is None:
             raise ValueError("document family operations require a git-backed repository")
         return self.backend
+
+    def _decode_scanned_artifact(
+        self,
+        family: ArtifactFamily[TOwner, TRef, TDoc],
+        scanned: ScannedArtifact[TRef],
+    ) -> TDoc:
+        path = address_path(scanned.address)
+        source = f"{scanned.address.branch}:{path}"
+        if family.decode_bytes is not None:
+            return family.decode_bytes(scanned.content, source)
+        return self.codec.decode(scanned.content, family.doc_type, source=source)
 
 
 @dataclass

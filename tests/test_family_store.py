@@ -126,6 +126,36 @@ def test_delete_removes_document_from_branch():
     assert store.load(family, "example") is None
 
 
+def test_iter_handles_streams_flat_family_documents():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _demo_family()
+    store.save(family, "alpha", DemoDocument("alpha"), message="save alpha")
+    store.save(family, "beta", DemoDocument("beta"), message="save beta")
+
+    handles = list(store.iter_handles(family))
+
+    assert [(handle.ref, handle.document.name) for handle in handles] == [
+        ("alpha", "alpha"),
+        ("beta", "beta"),
+    ]
+    assert [handle.address.require_path() for handle in handles] == [
+        "demo/alpha.yaml",
+        "demo/beta.yaml",
+    ]
+
+
+def test_iter_handles_respects_pinned_commit_for_flat_family():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _demo_family()
+    first = store.save(family, "alpha", DemoDocument("alpha"), message="save alpha")
+    store.save(family, "beta", DemoDocument("beta"), message="save beta")
+
+    handles = list(store.iter_handles(family, commit=first))
+
+    assert [(handle.ref, handle.document.name) for handle in handles] == [("alpha", "alpha")]
+    assert handles[0].address.commit == first
+
+
 def test_transaction_writes_multiple_documents_in_one_commit():
     backend = GitStore.init_memory()
     store = DocumentFamilyStore(owner=Owner(), backend=backend)

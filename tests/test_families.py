@@ -188,6 +188,18 @@ def test_bound_family_exposes_address_coercion_render_and_payload() -> None:
     assert "name: alpha" in bound.claims.render(document)
 
 
+def test_bound_family_iter_handles_exposes_loaded_handles() -> None:
+    registry = _registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+    bound.claims.save("paper", DemoDocument("alpha"), message="save claim")
+
+    handles = list(bound.claims.iter_handles())
+
+    assert [(handle.ref, handle.document.name) for handle in handles] == [("paper", "alpha")]
+    assert handles[0].address.require_path() == "claims/paper.yaml"
+
+
 def test_bound_family_forwards_expected_head_checks() -> None:
     registry = _registry()
     backend = GitStore.init_memory()

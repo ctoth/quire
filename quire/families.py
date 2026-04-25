@@ -270,6 +270,14 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
     def iter(self, *, branch: str | None = None, commit: str | None = None) -> Iterator[TRef]:
         return self.store.iter(self.family, branch=branch, commit=commit)
 
+    def iter_handles(
+        self,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ArtifactHandle[TOwner, TRef, TDoc]]:
+        return self.store.iter_handles(self.family, branch=branch, commit=commit)
+
     def load(self, ref: TRef, *, commit: str | None = None) -> TDoc | None:
         return self.store.load(self.family, ref, commit=commit)
 

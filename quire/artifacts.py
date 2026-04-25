@@ -59,6 +59,26 @@ def _loaded_source_path(loaded: object) -> str:
     return _render_path(source_path)
 
 
+def _resolved_scan_target(
+    owner: object,
+    branch_policy: object,
+    backend: "ReadOnlyDocumentStoreBackend | None",
+    branch: str | None,
+    commit: str | None,
+) -> tuple[str, str | None]:
+    if branch is not None:
+        branch_name = branch
+    elif isinstance(branch_policy, BranchPlacement):
+        branch_name = branch_policy.branch_name(owner)
+    else:
+        raise TypeError(f"unsupported branch policy {type(branch_policy).__name__}")
+    if commit is not None:
+        return branch_name, commit
+    if backend is None:
+        raise ValueError("listing path-backed artifacts requires a backend")
+    return branch_name, backend.branch_sha(branch_name)
+
+
 def _slug(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip().lower())
     cleaned = cleaned.strip("_-")
@@ -193,6 +213,13 @@ class ArtifactAddress:
         return self.locator.path
 
 
+@dataclass(frozen=True)
+class ScannedArtifact(Generic[TRef]):
+    ref: TRef
+    address: ArtifactAddress
+    content: bytes
+
+
 @runtime_checkable
 class ReadOnlyDocumentStoreBackend(Protocol):
     def exists(self, path: str | Path, commit: str | None = None) -> tuple[int, str] | None:
@@ -281,6 +308,16 @@ class ArtifactPlacementPolicy(Protocol[TOwner, TRef]):
     ) -> Iterator[TRef]:
         ...
 
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        ...
+
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         ...
 
@@ -330,6 +367,33 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
                 continue
             stem = name.removesuffix(self.extension)
             yield self.ref_factory(decode_ref_value(stem, self.codec))
+
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        branch_name, target_commit = _resolved_scan_target(owner, self.branch, backend, branch, commit)
+        if target_commit is None:
+            return
+        if backend is None:
+            raise ValueError("listing path-backed artifacts requires a backend")
+        for relpath, content in backend.iter_subtree_files(self.namespace, commit=target_commit):
+            if "/" in relpath or not relpath.endswith(self.extension):
+                continue
+            path = f"{self.namespace}/{relpath}"
+            yield ScannedArtifact(
+                ref=self.ref_from_locator(PathArtifactLocator(path)),
+                address=ArtifactAddress(
+                    branch=branch_name,
+                    locator=PathArtifactLocator(path),
+                    commit=target_commit,
+                ),
+                content=content,
+            )
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         if not isinstance(locator, PathArtifactLocator):
@@ -413,6 +477,35 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
             if target_commit is None:
                 return
         yield from self._iter_encoded_refs(backend, self.namespace, target_commit)
+
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        if self.filename_mode != "encoded_ref":
+            raise TypeError("opaque hash-scattered placement requires an index or loaded-document ref recovery")
+        branch_name, target_commit = _resolved_scan_target(owner, self.branch, backend, branch, commit)
+        if target_commit is None:
+            return
+        if backend is None:
+            raise ValueError("listing path-backed artifacts requires a backend")
+        for relpath, content in backend.iter_subtree_files(self.namespace, commit=target_commit):
+            if not relpath.endswith(self.extension):
+                continue
+            path = f"{self.namespace}/{relpath}"
+            yield ScannedArtifact(
+                ref=self.ref_from_locator(PathArtifactLocator(path)),
+                address=ArtifactAddress(
+                    branch=branch_name,
+                    locator=PathArtifactLocator(path),
+                    commit=target_commit,
+                ),
+                content=content,
+            )
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         if self.filename_mode != "encoded_ref":
@@ -509,6 +602,16 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
     ) -> Iterator[TRef]:
         raise TypeError("fixed-file placement cannot enumerate refs without an external source")
 
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        raise TypeError("fixed-file placement cannot scan artifacts without an external source")
+
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         raise TypeError("fixed-file placement cannot recover refs from locators")
 
@@ -550,6 +653,16 @@ class TemplateFilePlacement(Generic[TOwner, TRef]):
     ) -> Iterator[TRef]:
         raise TypeError("template-file placement cannot enumerate refs without a parser")
 
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        raise TypeError("template-file placement cannot scan artifacts without a parser")
+
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         raise TypeError("template-file placement cannot recover refs from locators")
 
@@ -587,6 +700,16 @@ class SingletonFilePlacement(Generic[TOwner, TRef]):
         commit: str | None = None,
     ) -> Iterator[TRef]:
         yield self.ref_factory()
+
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        raise TypeError("singleton placement cannot scan artifacts without an external source")
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         if not isinstance(locator, PathArtifactLocator):
