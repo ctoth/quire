@@ -357,6 +357,22 @@ def test_merge_base_is_deterministic_for_criss_cross_history():
     assert store.merge_base("left", "right") == min(left, right)
 
 
+def test_merge_base_does_not_depend_on_repeated_ancestor_distance_walk(monkeypatch):
+    store = GitStore.init_memory()
+    base = store.commit_files({"base.txt": b"base"}, "base")
+    store.create_branch("left", source_commit=base)
+    store.create_branch("right", source_commit=base)
+    store.commit_files({"left.txt": b"left"}, "left", branch="left")
+    store.commit_files({"right.txt": b"right"}, "right", branch="right")
+
+    def fail_repeated_walk(start_sha: str) -> dict[str, int]:
+        raise AssertionError(f"ancestor_distances called for {start_sha}")
+
+    monkeypatch.setattr(store, "ancestor_distances", fail_repeated_walk)
+
+    assert store.merge_base("left", "right") == base
+
+
 def test_branch_operations_track_refs_and_merge_base():
     store = GitStore.init_memory()
     base = store.commit_files({"base.txt": b"base"}, "base")
