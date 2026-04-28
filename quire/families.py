@@ -19,6 +19,7 @@ TDoc = TypeVar("TDoc")
 def _require_version(value: object, *, label: str) -> VersionId:
     if not isinstance(value, VersionId):
         raise ValueError(f"{label} requires an explicit VersionId")
+    VersionId(str(value), allow_placeholder=False)
     return value
 
 
