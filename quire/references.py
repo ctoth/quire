@@ -10,6 +10,16 @@ from quire.versions import VersionId
 TRecord = TypeVar("TRecord")
 
 
+class AmbiguousReferenceError(ValueError):
+    def __init__(self, reference: str, candidates: tuple[str, ...]) -> None:
+        super().__init__(
+            f"Ambiguous reference {reference!r}: "
+            + ", ".join(candidates)
+        )
+        self.reference = reference
+        self.candidates = candidates
+
+
 @dataclass(frozen=True)
 class ReferenceResolution:
     raw_text: str
@@ -99,12 +109,17 @@ class ReferenceIndex(Generic[TRecord]):
         candidates = self.lookup.get(reference, ())
         if len(candidates) == 1:
             return candidates[0]
+        if len(candidates) > 1:
+            raise AmbiguousReferenceError(reference, tuple(candidates))
         if reference in self.records_by_id:
             return reference
         return None
 
     def exists(self, reference: object) -> bool:
-        return self.resolve_id(reference) is not None
+        try:
+            return self.resolve_id(reference) is not None
+        except AmbiguousReferenceError:
+            return False
 
     def resolve(
         self,
