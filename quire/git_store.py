@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import json
 import threading
 import time
+from contextlib import contextmanager
 from collections import OrderedDict, deque
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -110,6 +112,30 @@ def _set_symbolic_ref(refs: Any, name: bytes, target: bytes) -> None:
     refs.set_symbolic_ref(name, target)
 
 
+@contextmanager
+def _exclusive_file_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as lock_file:
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _repo_object(repo: BaseRepo, object_id: bytes) -> Blob | Tree | Commit:
     obj = repo[object_id]
     if isinstance(obj, (Blob, Tree, Commit)):
@@ -151,6 +177,7 @@ class GitStore:
         self._branch_meta: dict[str, dict[str, str | int]] = {}
         self._object_cache: OrderedDict[bytes, Blob | Tree | Commit] = OrderedDict()
         self._mutation_lock = threading.RLock()
+        self._mutation_depth = 0
 
     @property
     def raw_repo(self) -> BaseRepo:
@@ -197,6 +224,36 @@ class GitStore:
 
     def primary_branch_name(self) -> str:
         return self._policy.primary_branch
+
+    @contextmanager
+    def _mutation_guard(self) -> Iterator[None]:
+        with self._mutation_lock:
+            if self._mutation_depth > 0:
+                self._mutation_depth += 1
+                try:
+                    yield
+                finally:
+                    self._mutation_depth -= 1
+                return
+
+            self._mutation_depth = 1
+            try:
+                lock_path = self._mutation_lock_path()
+                if lock_path is None:
+                    yield
+                else:
+                    with _exclusive_file_lock(lock_path):
+                        yield
+            finally:
+                self._mutation_depth = 0
+
+    def _mutation_lock_path(self) -> Path | None:
+        if self._root is None or not isinstance(self._repo, Repo):
+            return None
+        control_dir = self._root / ".git"
+        if control_dir.is_dir():
+            return control_dir / "quire.lock"
+        return self._root / "quire.lock"
 
     def current_branch_name(self) -> str | None:
         head_target = _symref_get(self._repo.refs, b"HEAD")
@@ -304,7 +361,7 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             return self._commit(adds=changes, deletes=(), message=message, branch=branch, expected_head=expected_head)
 
     def commit_deletes(
@@ -315,7 +372,7 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             return self._commit(adds={}, deletes=paths, message=message, branch=branch, expected_head=expected_head)
 
     def commit_batch(
@@ -327,7 +384,7 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             return self._commit(adds=adds, deletes=deletes, message=message, branch=branch, expected_head=expected_head)
 
     def flat_tree_entries(self, commit: str | None = None) -> dict[str, str]:
@@ -339,7 +396,7 @@ class GitStore:
         return {path: sha.decode("ascii") for path, sha in entries.items()}
 
     def store_blob(self, payload: bytes) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             blob = Blob.from_string(payload)
             self._repo.object_store.add_object(blob)
             self._remember_object(blob)
@@ -354,7 +411,7 @@ class GitStore:
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             branch_name = self._resolve_write_branch_name(branch)
             branch_ref = f"refs/heads/{branch_name}".encode()
             current_head = _ref_get(self._repo.refs, branch_ref)
@@ -408,7 +465,7 @@ class GitStore:
         return self.read_ref(RefName(f"refs/heads/{name}"))
 
     def create_branch(self, name: str, source_commit: str | None = None) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             ref = RefName(f"refs/heads/{name}")
             if self.read_ref(ref) is not None:
                 raise ValueError(f"Branch {name!r} already exists")
@@ -444,7 +501,7 @@ class GitStore:
             return tip_sha
 
     def delete_branch(self, name: str) -> None:
-        with self._mutation_lock:
+        with self._mutation_guard():
             if self.current_branch_name() == name:
                 raise ValueError("Cannot delete current HEAD branch")
             ref = RefName(f"refs/heads/{name}")
@@ -529,7 +586,7 @@ class GitStore:
                 raise TypeError(f"Expected blob for {path!r}, got {type(blob).__name__}")
             adds[path] = blob.data
 
-        with self._mutation_lock:
+        with self._mutation_guard():
             return self._commit(
                 adds=adds,
                 deletes=deletes,
@@ -577,17 +634,17 @@ class GitStore:
         return sha.decode("ascii")
 
     def write_ref(self, ref: RefName, object_id: str | bytes) -> None:
-        with self._mutation_lock:
+        with self._mutation_guard():
             sha = object_id if isinstance(object_id, bytes) else object_id.encode("ascii")
             _ref_set(self._repo.refs, ref.as_bytes(), sha)
 
     def delete_ref(self, ref: RefName) -> None:
-        with self._mutation_lock:
+        with self._mutation_guard():
             if self.read_ref(ref) is not None:
                 _ref_delete(self._repo.refs, ref.as_bytes())
 
     def write_blob_ref(self, ref: RefName, payload: bytes) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             blob = Blob.from_string(payload)
             self._repo.object_store.add_object(blob)
             self.write_ref(ref, blob.id)
@@ -603,7 +660,7 @@ class GitStore:
         return obj.data
 
     def write_note(self, ref: NotesRef, object_sha: str | bytes, payload: bytes) -> str:
-        with self._mutation_lock:
+        with self._mutation_guard():
             note_commit = write_git_note(
                 self._repo,
                 ref,
@@ -619,7 +676,7 @@ class GitStore:
         return read_git_note(self._repo, ref, object_sha)
 
     def delete_note(self, ref: NotesRef, object_sha: str | bytes) -> str | None:
-        with self._mutation_lock:
+        with self._mutation_guard():
             note_commit = remove_git_note(
                 self._repo,
                 ref,
