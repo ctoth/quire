@@ -11,6 +11,7 @@ from typing import Any, cast
 from urllib.parse import quote
 
 from dulwich.index import build_index_from_tree
+from dulwich.graph import find_merge_base
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
 
@@ -561,33 +562,13 @@ class GitStore:
         if sha_a == sha_b:
             return sha_a
 
-        distances_a = self.ancestor_distances(sha_a)
-        distances_b = self.ancestor_distances(sha_b)
-        common_ancestors = set(distances_a) & set(distances_b)
-        if not common_ancestors:
-            raise ValueError(f"No common ancestor between {branch_a!r} and {branch_b!r}")
-
-        ancestor_cache = {
-            ancestor_sha: self.ancestor_distances(ancestor_sha)
-            for ancestor_sha in common_ancestors
-        }
-        best_common_ancestors = {
-            candidate
-            for candidate in common_ancestors
-            if not any(
-                other != candidate and candidate in ancestor_cache[other]
-                for other in common_ancestors
-            )
-        }
-
-        return min(
-            best_common_ancestors,
-            key=lambda sha: (
-                max(distances_a[sha], distances_b[sha]),
-                distances_a[sha] + distances_b[sha],
-                sha,
-            ),
+        merge_bases = find_merge_base(
+            self._repo,
+            [sha_a.encode("ascii"), sha_b.encode("ascii")],
         )
+        if not merge_bases:
+            raise ValueError(f"No common ancestor between {branch_a!r} and {branch_b!r}")
+        return min(merge_base.decode("ascii") for merge_base in merge_bases)
 
     def read_ref(self, ref: RefName) -> str | None:
         sha = _ref_get(self._repo.refs, ref.as_bytes())
