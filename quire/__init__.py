@@ -7,8 +7,10 @@ from quire.artifacts import (
     FixedFilePlacement,
     FlatYamlPlacement,
     HashScatteredYamlPlacement,
+    IndexRequiredError,
     SingletonFilePlacement,
     TemplateFilePlacement,
+    UnscannablePlacementError,
 )
 from quire.contracts import ContractManifest, ContractManifestError, check_contract_manifest
 from quire.git_store import GitGcReport, GitStore, GitStorePolicy
@@ -18,8 +20,10 @@ from quire.references import (
     AmbiguousReferenceError,
     CrossFamilyReferenceIndex,
     ForeignKeySpec,
+    ForeignKeyValidationError,
     ReferenceIndex,
     ReferenceResolution,
+    validate_foreign_key,
 )
 from quire.tree_path import FilesystemTreePath, GitTreePath, TreePath
 from quire.versions import VersionId
@@ -51,11 +55,13 @@ __all__ = [
     "FixedFilePlacement",
     "FlatYamlPlacement",
     "ForeignKeySpec",
+    "ForeignKeyValidationError",
     "GitGcReport",
     "GitStore",
     "GitStorePolicy",
     "GitTreePath",
     "HashScatteredYamlPlacement",
+    "IndexRequiredError",
     "NotesRef",
     "RefName",
     "ReferenceIndex",
@@ -64,6 +70,7 @@ __all__ = [
     "TemplateFilePlacement",
     "TransactionalBoundFamily",
     "TreePath",
+    "UnscannablePlacementError",
     "VersionId",
     "canonical_json_bytes",
     "canonical_json_sha256",
@@ -71,4 +78,5 @@ __all__ = [
     "documents",
     "single_field_ref_type",
     "singleton_ref_type",
+    "validate_foreign_key",
 ]
