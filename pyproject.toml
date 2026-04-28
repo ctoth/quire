@@ -1,6 +1,6 @@
 [project]
 name = "quire"
-version = "0.1.1"
+version = "0.2.0"
 description = "A typed, schema-aware document store built on git plumbing — object store, refs, and notes, with no working tree required."
 readme = "README.md"
 requires-python = ">=3.11"
