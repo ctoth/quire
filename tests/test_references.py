@@ -15,8 +15,10 @@ from quire.references import (
     AmbiguousReferenceError,
     CrossFamilyReferenceIndex,
     ForeignKeySpec,
+    ForeignKeyValidationError,
     ReferenceIndex,
     build_reference_lookup,
+    validate_foreign_key,
 )
 from quire.versions import VersionId
 
@@ -119,6 +121,39 @@ def test_foreign_key_spec_contract_body_is_stable() -> None:
         "required": True,
         "many": False,
     }
+
+
+def test_foreign_key_validation_enforces_required_and_target_existence() -> None:
+    spec = ForeignKeySpec(
+        name="claim_concept",
+        contract_version=VersionId("2026.04.20"),
+        source_family="claim",
+        source_field="concept",
+        target_family="concept",
+    )
+    index = _index()
+
+    assert validate_foreign_key(spec, {"concept": "pressure"}, index) == ("concept:3",)
+
+    with pytest.raises(ForeignKeyValidationError, match="required foreign key"):
+        validate_foreign_key(spec, {}, index)
+
+    with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+        validate_foreign_key(spec, {"concept": "missing"}, index)
+
+
+def test_foreign_key_validation_enforces_many_cardinality() -> None:
+    spec = ForeignKeySpec(
+        name="claim_concept",
+        contract_version=VersionId("2026.04.20"),
+        source_family="claim",
+        source_field="concepts[]",
+        target_family="concept",
+        many=False,
+    )
+
+    with pytest.raises(ForeignKeyValidationError, match="expected one value"):
+        validate_foreign_key(spec, {"concepts": ["pressure", "concept:1"]}, _index())
 
 
 def test_cross_family_reference_index_integrates_with_bound_family_registry() -> None:
