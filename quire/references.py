@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Generic, TypeVar
@@ -18,6 +18,10 @@ class AmbiguousReferenceError(ValueError):
         )
         self.reference = reference
         self.candidates = candidates
+
+
+class ForeignKeyValidationError(ValueError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,75 @@ class ForeignKeySpec:
             "required": self.required,
             "many": self.many,
         }
+
+
+def validate_foreign_key(
+    spec: ForeignKeySpec,
+    record: object,
+    target_index: ReferenceIndex[object],
+) -> tuple[str, ...]:
+    values = _field_values(record, spec.source_field)
+    if not values:
+        if spec.required:
+            raise ForeignKeyValidationError(
+                f"required foreign key {spec.name!r} is missing {spec.source_field!r}"
+            )
+        return ()
+    if not spec.many and len(values) > 1:
+        raise ForeignKeyValidationError(
+            f"foreign key {spec.name!r} expected one value, got {len(values)}"
+        )
+
+    resolved: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise ForeignKeyValidationError(
+                f"foreign key {spec.name!r} value is not a non-empty string: {value!r}"
+            )
+        try:
+            target_id = target_index.resolve_id(value)
+        except AmbiguousReferenceError as exc:
+            raise ForeignKeyValidationError(
+                f"foreign key {spec.name!r} is ambiguous: {value!r}"
+            ) from exc
+        if target_id is None:
+            raise ForeignKeyValidationError(
+                f"foreign key {spec.name!r} value {value!r} does not resolve"
+            )
+        resolved.append(target_id)
+    return tuple(resolved)
+
+
+def _field_values(record: object, source_field: str) -> tuple[object, ...]:
+    values: tuple[object, ...] = (record,)
+    for raw_part in source_field.split("."):
+        many = raw_part.endswith("[]")
+        part = raw_part[:-2] if many else raw_part
+        next_values: list[object] = []
+        for value in values:
+            child = _field_child(value, part)
+            if child is None:
+                continue
+            if many:
+                next_values.extend(_iter_many_field(child))
+            else:
+                next_values.append(child)
+        values = tuple(next_values)
+    return tuple(value for value in values if value is not None and value != "")
+
+
+def _field_child(value: object, field_name: str) -> object | None:
+    if isinstance(value, Mapping):
+        return value.get(field_name)
+    return getattr(value, field_name, None)
+
+
+def _iter_many_field(value: object) -> Sequence[object]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, Sequence):
+        return tuple(value)
+    return (value,)
 
 
 def extend_reference_lookup(
