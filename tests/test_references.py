@@ -12,6 +12,7 @@ from quire.families import FamilyDefinition, FamilyRegistry
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore
 from quire.references import (
+    AmbiguousReferenceError,
     CrossFamilyReferenceIndex,
     ForeignKeySpec,
     ReferenceIndex,
@@ -80,6 +81,17 @@ def test_reference_index_reports_ambiguous_keys_without_guessing() -> None:
     assert resolution.ambiguous
     assert resolution.target_kind == "concept"
     assert resolution.ambiguous_candidates == ("concept:1", "concept:2")
+
+
+def test_reference_index_resolve_id_signals_ambiguous_keys() -> None:
+    index = _index()
+
+    with pytest.raises(AmbiguousReferenceError) as exc_info:
+        index.resolve_id("F0")
+
+    assert exc_info.value.reference == "F0"
+    assert exc_info.value.candidates == ("concept:1", "concept:2")
+    assert index.exists("F0") is False
 
 
 def test_cross_family_index_fails_for_unknown_family() -> None:
