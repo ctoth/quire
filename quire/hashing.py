@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any
+
+from quire.canonical import canonical_json_bytes as _canonical_json_bytes
 
 
 def canonical_json_bytes(payload: Any) -> bytes:
-    """Encode JSON-compatible payloads with stable, compact ordering."""
-    return json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    """Encode supported domain payloads with stable, compact ordering."""
+    return _canonical_json_bytes(payload)
 
 
 def canonical_json_sha256(payload: Any) -> str:
