@@ -238,6 +238,18 @@ def test_bound_family_forwards_expected_head_checks() -> None:
             transaction.claims.save("other", DemoDocument("delta"))
 
 
+def test_transaction_head_check_is_named_as_advisory() -> None:
+    registry = _registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+
+    transaction = bound.transact(message="advisory naming", expected_head="0" * 40)
+
+    assert hasattr(transaction.transaction, "_advisory_head_check")
+    assert not hasattr(transaction.transaction, "_check_preemptive_head")
+
+
 def test_bound_registry_transaction_writes_multiple_families() -> None:
     registry = _registry()
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
