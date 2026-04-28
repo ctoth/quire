@@ -395,7 +395,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
 
     def save(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
-        self._check_preemptive_head()
+        self._advisory_head_check()
         prepared = self.store.prepare(family, ref, doc, branch=self.branch)
         if self.branch is None:
             self.branch = prepared.branch
@@ -409,7 +409,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
 
     def delete(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef) -> None:
         self._ensure_open()
-        self._check_preemptive_head()
+        self._advisory_head_check()
         _, address = self._addressed_target(family, ref)
         path = address_path(address)
         self._deletes.add(path)
@@ -417,7 +417,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
 
     def move(self, family: ArtifactFamily[TOwner, TRef, TDoc], old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
-        self._check_preemptive_head()
+        self._advisory_head_check()
         self.save(family, new_ref, doc)
         old_branch, old_address = self._addressed_target(family, old_ref)
         new_branch, new_address = self._addressed_target(family, new_ref)
@@ -434,7 +434,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
     def commit(self) -> str:
         if self._commit_sha is not None:
             return self._commit_sha
-        self._check_preemptive_head()
+        self._advisory_head_check()
         backend = self.store._require_backend()
         if self.branch is None:
             raise ValueError("artifact transaction has no target branch")
@@ -447,7 +447,8 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         )
         return self._commit_sha
 
-    def _check_preemptive_head(self) -> None:
+    def _advisory_head_check(self) -> None:
+        """Fail early when the branch is already stale before commit CAS."""
         if self.expected_head is None or self.branch is None:
             return
         backend = self.store.backend
