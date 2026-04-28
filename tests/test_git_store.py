@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import multiprocessing as mp
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -10,6 +12,24 @@ import quire.git_store as git_store
 from quire.git_store import GitStore, GitStorePolicy
 from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
 from quire.refs import RefName
+
+
+def _multiprocess_commit_worker(
+    root: str,
+    worker: int,
+    count: int,
+    queue: mp.Queue,
+) -> None:
+    try:
+        store = GitStore.open(Path(root))
+        for index in range(count):
+            store.commit_files(
+                {f"workers/{worker}/{index}.txt": f"{worker}:{index}".encode("ascii")},
+                f"worker {worker} commit {index}",
+            )
+        queue.put(("ok", worker))
+    except Exception as exc:
+        queue.put(("error", worker, type(exc).__name__, str(exc)))
 
 
 def test_init_seeds_gitignore_without_materializing_worktree(tmp_path):
@@ -254,6 +274,38 @@ def test_expected_head_race_does_not_write_unreachable_objects(monkeypatch):
 
     assert store.branch_sha("master") == racing
     assert set(store.raw_repo.object_store) == objects_before
+
+
+def test_multiprocess_writers_are_serialized_by_filesystem_lock(tmp_path):
+    root = tmp_path / "repo"
+    GitStore.init(root).commit_files({"base.txt": b"base"}, "base")
+    context = mp.get_context("spawn")
+    queue: mp.Queue = context.Queue()
+    worker_count = 4
+    commits_per_worker = 12
+    processes = [
+        context.Process(
+            target=_multiprocess_commit_worker,
+            args=(str(root), worker, commits_per_worker, queue),
+        )
+        for worker in range(worker_count)
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=30)
+
+    assert [process.exitcode for process in processes] == [0] * worker_count
+    results = [queue.get(timeout=5) for _ in processes]
+    assert sorted(results) == [("ok", worker) for worker in range(worker_count)]
+
+    reopened = GitStore.open(root)
+    for worker in range(worker_count):
+        for index in range(commits_per_worker):
+            assert reopened.read_file(f"workers/{worker}/{index}.txt") == (
+                f"{worker}:{index}".encode("ascii")
+            )
 
 
 def test_blob_refs_store_derived_index_payloads():
