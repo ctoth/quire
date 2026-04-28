@@ -688,10 +688,10 @@ class GitStore:
                 abs_path.write_bytes(blob.data)
         if remove_extra:
             self._remove_extra_worktree_files(paths)
+        self._refresh_on_disk_index()
 
     def sync_worktree(self) -> None:
         self.materialize_worktree(remove_extra=True)
-        self._refresh_on_disk_index()
 
     def _refresh_on_disk_index(self) -> None:
         """Rewrite the on-disk git index so it matches HEAD's tree.
