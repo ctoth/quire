@@ -40,6 +40,14 @@ class GitBranch:
     created_at: int = 0
 
 
+@dataclass(frozen=True)
+class GitGcReport:
+    total_objects: int
+    reachable_objects: int
+    orphan_objects: int
+    orphan_shas: tuple[str, ...]
+
+
 def _normalize_path(path: str | Path) -> str:
     normalized = str(path).replace("\\", "/").strip("/")
     if normalized == ".":
@@ -401,6 +409,31 @@ class GitStore:
             self._repo.object_store.add_object(blob)
             self._remember_object(blob)
             return blob.id.decode("ascii")
+
+    def gc(self, *, dry_run: bool = True) -> GitGcReport:
+        all_objects = set(self._repo.object_store)
+        reachable: set[bytes] = set()
+        stack = list(self._repo.refs.as_dict().values())
+        while stack:
+            object_id = stack.pop()
+            if object_id in reachable:
+                continue
+            reachable.add(object_id)
+            obj = _repo_object(self._repo, object_id)
+            if isinstance(obj, Commit):
+                stack.append(obj.tree)
+                stack.extend(obj.parents)
+            elif isinstance(obj, Tree):
+                stack.extend(entry.sha for entry in obj.items())
+        orphan_ids = tuple(sorted(all_objects - reachable))
+        if orphan_ids and not dry_run:
+            raise NotImplementedError("GitStore.gc currently reports unreachable objects; deletion is not implemented")
+        return GitGcReport(
+            total_objects=len(all_objects),
+            reachable_objects=len(reachable),
+            orphan_objects=len(orphan_ids),
+            orphan_shas=tuple(object_id.decode("ascii") for object_id in orphan_ids),
+        )
 
     def commit_flat_tree(
         self,
