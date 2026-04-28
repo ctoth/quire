@@ -13,7 +13,9 @@ from quire.artifacts import (
     FixedFilePlacement,
     FlatYamlPlacement,
     HashScatteredYamlPlacement,
+    IndexRequiredError,
     PathArtifactLocator,
+    UnscannablePlacementError,
     SingletonFilePlacement,
     TemplateFilePlacement,
 )
@@ -321,11 +323,23 @@ def test_scan_unsupported_placements_fail_clearly():
         filename_mode="digest",
     )
 
-    with pytest.raises(TypeError, match="cannot scan artifacts"):
+    with pytest.raises(UnscannablePlacementError, match="cannot scan artifacts"):
         list(fixed.iter_artifacts(owner, backend))
-    with pytest.raises(TypeError, match="cannot scan artifacts"):
+    with pytest.raises(UnscannablePlacementError, match="cannot scan artifacts"):
         list(template.iter_artifacts(owner, backend))
-    with pytest.raises(TypeError, match="cannot scan artifacts"):
+    with pytest.raises(UnscannablePlacementError, match="cannot scan artifacts"):
         list(singleton.iter_artifacts(owner, backend))
-    with pytest.raises(TypeError, match="opaque hash-scattered placement"):
+    with pytest.raises(IndexRequiredError, match="requires an external index"):
         list(opaque_hash.iter_artifacts(owner, backend))
+
+
+def test_hash_scattered_digest_iteration_requires_index_error() -> None:
+    placement = HashScatteredYamlPlacement[Owner, DemoRef](
+        namespace="claims",
+        ref_factory=DemoRef,
+        ref_field="name",
+        filename_mode="digest",
+    )
+
+    with pytest.raises(IndexRequiredError, match="requires an external index"):
+        list(placement.iter_refs(Owner(), GitStore.init_memory()))
