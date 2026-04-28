@@ -488,6 +488,21 @@ def test_sync_worktree_refreshes_on_disk_index_to_match_head(tmp_path):
     assert list(status.untracked) == []
 
 
+def test_materialize_worktree_refreshes_on_disk_index_to_match_head(tmp_path):
+    from dulwich import porcelain
+
+    root = tmp_path / "repo"
+    store = GitStore.init(root)
+    store.commit_files({"a.txt": b"hello", "b/c.txt": b"nested"}, "seed")
+
+    store.materialize_worktree()
+
+    status = porcelain.status(str(root))
+    assert dict(status.staged) == {"add": [], "delete": [], "modify": []}
+    assert list(status.unstaged) == []
+    assert list(status.untracked) == []
+
+
 def test_sync_worktree_refreshes_index_after_subsequent_commits(tmp_path):
     """Index must stay in sync across multiple commits that add and delete."""
     from dulwich import porcelain
