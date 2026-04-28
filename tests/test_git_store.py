@@ -228,6 +228,34 @@ def test_expected_head_ref_update_is_compare_and_swap(monkeypatch):
     assert store.branch_sha("master") == racing
 
 
+def test_expected_head_race_does_not_write_unreachable_objects(monkeypatch):
+    store = GitStore.init_memory()
+    first = store.commit_files({"base.txt": b"base"}, "base")
+    racing = store.commit_files({"race.txt": b"race"}, "race", branch="race")
+    branch_ref = b"refs/heads/master"
+    observed = first.encode("ascii")
+    raced = False
+    original_ref_get = git_store._ref_get
+    original_ref_set = git_store._ref_set
+    objects_before = set(store.raw_repo.object_store)
+
+    def race_after_expected_head_read(refs: object, ref_name: bytes) -> bytes | None:
+        nonlocal raced
+        result = original_ref_get(refs, ref_name)
+        if not raced and ref_name == branch_ref and result == observed:
+            raced = True
+            original_ref_set(refs, ref_name, racing.encode("ascii"))
+        return result
+
+    monkeypatch.setattr(git_store, "_ref_get", race_after_expected_head_read)
+
+    with pytest.raises(ValueError, match="head mismatch"):
+        store.commit_files({"stale.txt": b"stale"}, "stale", expected_head=first)
+
+    assert store.branch_sha("master") == racing
+    assert set(store.raw_repo.object_store) == objects_before
+
+
 def test_blob_refs_store_derived_index_payloads():
     store = GitStore.init_memory()
     ref = RefName("refs/quire/indexes/example")
