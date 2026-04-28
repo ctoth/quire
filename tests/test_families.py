@@ -95,6 +95,23 @@ def test_registry_rejects_missing_versions() -> None:
         )
 
 
+def test_family_contract_slots_reject_placeholder_versions() -> None:
+    with pytest.raises(ValueError, match="Contract versions must use YYYY.MM.DD"):
+        FamilyRegistry(
+            name="demo",
+            contract_version=VersionId("draft", allow_placeholder=True),
+            families=(),
+        )
+
+    with pytest.raises(ValueError, match="Contract versions must use YYYY.MM.DD"):
+        FamilyDefinition(
+            key=DemoFamily.CLAIMS,
+            name="claims",
+            contract_version=VersionId("draft", allow_placeholder=True),
+            artifact_family=_artifact_family("claims_artifact", "claims"),
+        )
+
+
 def test_registry_rejects_duplicate_keys_names_and_accessors() -> None:
     claims = _family_definition(DemoFamily.CLAIMS, "claims", "claims")
 
