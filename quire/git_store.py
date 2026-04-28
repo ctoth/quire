@@ -91,6 +91,16 @@ def _format_ref_value(value: bytes | None) -> str | None:
     return value.decode("ascii")
 
 
+def _assert_ref_equals(refs: Any, branch_name: str, branch_ref: bytes, expected: bytes | None) -> bytes | None:
+    actual = _ref_get(refs, branch_ref)
+    if actual != expected:
+        raise ValueError(
+            f"Branch {branch_name!r} head mismatch: "
+            f"expected {_format_ref_value(expected)}, got {_format_ref_value(actual)}"
+        )
+    return actual
+
+
 def _symref_get(refs: Any, ref_name: bytes) -> bytes | None:
     return refs.get_symrefs().get(ref_name)
 
@@ -348,17 +358,13 @@ class GitStore:
             branch_ref = f"refs/heads/{branch_name}".encode()
             current_head = _ref_get(self._repo.refs, branch_ref)
             if expected_head is not None:
-                expected = expected_head.encode("ascii")
-                if current_head != expected:
-                    actual = None if current_head is None else current_head.decode("ascii")
-                    raise ValueError(
-                        f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
-                    )
+                _assert_ref_equals(self._repo.refs, branch_name, branch_ref, expected_head.encode("ascii"))
 
             normalized_entries = {
                 _normalize_path(path): sha if isinstance(sha, bytes) else sha.encode("ascii")
                 for path, sha in entries.items()
             }
+            _assert_ref_equals(self._repo.refs, branch_name, branch_ref, current_head)
             root_tree = self._build_tree_from_flat(normalized_entries)
 
             commit = Commit()
@@ -494,12 +500,7 @@ class GitStore:
         if current_head is None:
             raise ValueError(f"Branch {branch_name!r} has no commits")
         if expected_head is not None:
-            expected = expected_head.encode("ascii")
-            if current_head != expected:
-                actual = current_head.decode("ascii")
-                raise ValueError(
-                    f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
-                )
+            _assert_ref_equals(self._repo.refs, branch_name, branch_ref, expected_head.encode("ascii"))
         current_tree = self._tree_object(self._commit_object(current_head).tree)
         current_entries: dict[str, bytes] = {}
         self._flatten_tree(current_tree, "", current_entries)
@@ -800,12 +801,7 @@ class GitStore:
         store = self._repo.object_store
         tip_sha = _ref_get(self._repo.refs, branch_ref)
         if expected_head is not None:
-            expected = expected_head.encode("ascii")
-            if tip_sha != expected:
-                actual = None if tip_sha is None else tip_sha.decode("ascii")
-                raise ValueError(
-                    f"Branch {branch_name!r} head mismatch: expected {expected_head}, got {actual}"
-                )
+            _assert_ref_equals(self._repo.refs, branch_name, branch_ref, expected_head.encode("ascii"))
         if tip_sha is None:
             base_tree = None
             parents: list[bytes] = []
@@ -814,21 +810,24 @@ class GitStore:
             base_tree = self._tree_object(parent_commit.tree)
             parents = [tip_sha]
 
-        add_blob_ids: dict[tuple[str, ...], bytes] = {}
+        add_blobs: dict[tuple[str, ...], Blob] = {}
         for path, content in adds.items():
             blob = Blob.from_string(content)
-            store.add_object(blob)
             normalized = _normalize_path(path)
             parts = PurePosixPath(normalized).parts
             if not parts:
                 raise ValueError("Tree entry path must not be empty")
-            add_blob_ids[parts] = blob.id
+            add_blobs[parts] = blob
         delete_parts = [
             PurePosixPath(normalized).parts
             for path in deletes
             if (normalized := _normalize_path(path))
         ]
 
+        _assert_ref_equals(self._repo.refs, branch_name, branch_ref, tip_sha)
+        for blob in add_blobs.values():
+            store.add_object(blob)
+        add_blob_ids = {parts: blob.id for parts, blob in add_blobs.items()}
         root_tree = self._apply_tree_changes(base_tree, add_blob_ids, delete_parts)
         commit = Commit()
         commit.tree = root_tree.id
