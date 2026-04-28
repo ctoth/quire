@@ -320,6 +320,18 @@ def test_blob_refs_store_derived_index_payloads():
     assert store.read_blob_ref(ref) is None
 
 
+def test_gc_dry_run_reports_unreachable_objects() -> None:
+    store = GitStore.init_memory()
+    store.commit_files({"base.txt": b"base"}, "base")
+    orphan = store.store_blob(b"orphan")
+
+    report = store.gc(dry_run=True)
+
+    assert orphan in report.orphan_shas
+    assert report.orphan_objects == 1
+    assert report.total_objects > report.reachable_objects
+
+
 def test_flat_tree_entries_and_commit_flat_tree_create_merge_commit():
     store = GitStore.init_memory()
     left = store.commit_files({"a.txt": b"left"}, "left", branch="left")
