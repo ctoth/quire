@@ -27,6 +27,14 @@ _REF_CODECS = _REVERSIBLE_REF_CODECS | frozenset({"slug", "safe_slug"})
 _HASH_SCATTERED_FILENAME_MODES = frozenset({"digest", "encoded_ref"})
 
 
+class UnscannablePlacementError(TypeError):
+    pass
+
+
+class IndexRequiredError(UnscannablePlacementError):
+    pass
+
+
 def _normalize_path(path: str | Path) -> str:
     return str(path).replace("\\", "/").strip("/")
 
@@ -468,7 +476,10 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
         commit: str | None = None,
     ) -> Iterator[TRef]:
         if self.filename_mode != "encoded_ref":
-            raise TypeError("opaque hash-scattered placement requires an index or loaded-document ref recovery")
+            raise IndexRequiredError(
+                "opaque hash-scattered placement requires an external index "
+                "or loaded-document ref recovery"
+            )
         if backend is None:
             raise ValueError("listing path-backed artifacts requires a backend")
         target_commit = commit
@@ -487,7 +498,10 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
         commit: str | None = None,
     ) -> Iterator[ScannedArtifact[TRef]]:
         if self.filename_mode != "encoded_ref":
-            raise TypeError("opaque hash-scattered placement requires an index or loaded-document ref recovery")
+            raise IndexRequiredError(
+                "opaque hash-scattered placement requires an external index "
+                "or loaded-document ref recovery"
+            )
         branch_name, target_commit = _resolved_scan_target(owner, self.branch, backend, branch, commit)
         if target_commit is None:
             return
@@ -600,7 +614,7 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
         branch: str | None = None,
         commit: str | None = None,
     ) -> Iterator[TRef]:
-        raise TypeError("fixed-file placement cannot enumerate refs without an external source")
+        raise UnscannablePlacementError("fixed-file placement cannot enumerate refs without an external source")
 
     def iter_artifacts(
         self,
@@ -610,13 +624,13 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
         branch: str | None = None,
         commit: str | None = None,
     ) -> Iterator[ScannedArtifact[TRef]]:
-        raise TypeError("fixed-file placement cannot scan artifacts without an external source")
+        raise UnscannablePlacementError("fixed-file placement cannot scan artifacts without an external source")
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
-        raise TypeError("fixed-file placement cannot recover refs from locators")
+        raise UnscannablePlacementError("fixed-file placement cannot recover refs from locators")
 
     def ref_from_loaded(self, loaded: object) -> TRef:
-        raise TypeError("fixed-file placement cannot recover refs from loaded documents")
+        raise UnscannablePlacementError("fixed-file placement cannot recover refs from loaded documents")
 
     def contract_body(self) -> dict[str, object]:
         return {
@@ -651,7 +665,7 @@ class TemplateFilePlacement(Generic[TOwner, TRef]):
         branch: str | None = None,
         commit: str | None = None,
     ) -> Iterator[TRef]:
-        raise TypeError("template-file placement cannot enumerate refs without a parser")
+        raise UnscannablePlacementError("template-file placement cannot enumerate refs without a parser")
 
     def iter_artifacts(
         self,
@@ -661,13 +675,13 @@ class TemplateFilePlacement(Generic[TOwner, TRef]):
         branch: str | None = None,
         commit: str | None = None,
     ) -> Iterator[ScannedArtifact[TRef]]:
-        raise TypeError("template-file placement cannot scan artifacts without a parser")
+        raise UnscannablePlacementError("template-file placement cannot scan artifacts without a parser")
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
-        raise TypeError("template-file placement cannot recover refs from locators")
+        raise UnscannablePlacementError("template-file placement cannot recover refs from locators")
 
     def ref_from_loaded(self, loaded: object) -> TRef:
-        raise TypeError("template-file placement cannot recover refs from loaded documents")
+        raise UnscannablePlacementError("template-file placement cannot recover refs from loaded documents")
 
     def contract_body(self) -> dict[str, object]:
         return {
@@ -709,7 +723,7 @@ class SingletonFilePlacement(Generic[TOwner, TRef]):
         branch: str | None = None,
         commit: str | None = None,
     ) -> Iterator[ScannedArtifact[TRef]]:
-        raise TypeError("singleton placement cannot scan artifacts without an external source")
+        raise UnscannablePlacementError("singleton placement cannot scan artifacts without an external source")
 
     def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
         if not isinstance(locator, PathArtifactLocator):
