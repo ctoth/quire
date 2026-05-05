@@ -1,5 +1,19 @@
 # WorldQuery ↔ EpistemicSnapshot bridge — design 2026-05-02
 
+## Implementation status — completed 2026-05-04
+
+Phases 1, 2, and 6 are implemented. Propstore now has the read direction
+(`WorldQuery.at_journal_step(...)`), the write direction
+(`capture_journal(...)`), durable worldline journal storage, and CLI adapters:
+`pks worldline build-journal NAME` and `pks worldline at-step NAME STEP
+[--heavy]`.
+
+This completed bridge satisfies the temporal claim-membership precondition for
+fiction-curation Layer 8 and the local temporal-projection precondition for the
+distributed-layer proposal. It does not implement the conditional heavy bridge
+for historical stance/conflict re-derivation, the optional Cayrol
+`classify-step` UI, or cross-repo federation transport/signature machinery.
+
 ## 1. Motivation
 
 Propstore today has two parallel surfaces for "what claims hold":
@@ -10,15 +24,16 @@ Propstore today has two parallel surfaces for "what claims hold":
   represents AGM revision states with full belief-base contents and typed
   semantic diffs (`diff_epistemic_snapshots`, `history.py:408-424`).
 
-A reader cannot today ask "what claims hold *as of journal step k*." This blocks
+Before this bridge, a reader could not ask "what claims hold *as of journal step
+k*." That blocked
 two downstream pieces of work:
 
 1. **Federation** (per `plans/distributed-layer-proposal-2026-05-02.md`) — cross-
    repo projection over `(local atoms ∪ fetched-foreign-via-trusted-bridges)`
-   needs reader-side temporal projection that doesn't exist in the substrate.
+   needed reader-side temporal projection that did not exist in the substrate.
 2. **Fiction-curation Layer 8** (per `plans/fiction-curation-schema-2026-05-02.md`)
    — "what does Mara know as of chapter 7" is the load-bearing query for the
-   Mara-Jade demo and depends on a journal-step API that doesn't exist.
+   Mara-Jade demo and depended on a journal-step API that did not exist.
 
 This document specifies the bridge. It is small (~100 lines of code) and
 paper-backed.
