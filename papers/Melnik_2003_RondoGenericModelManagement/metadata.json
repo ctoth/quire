@@ -1,0 +1,14 @@
+{
+  "title": "Rondo: A Programming Platform for Generic Model Management",
+  "authors": [
+    "Sergey Melnik",
+    "Erhard Rahm",
+    "Philip A. Bernstein"
+  ],
+  "year": "2003",
+  "arxiv_id": null,
+  "doi": "10.1145/872757.872782",
+  "abstract": "Model management aims at reducing the amount of programming needed for the development of metadata-intensive applications. We present a first complete prototype of a generic model-management system, in which high-level operators are used to manipulate models and mappings between models. We define the key conceptual structures: models, morphisms, and selectors, and describe their use and implementation. We specify the semantics of the known model-management operators applied to these structures, suggest new ones, and develop new algorithms for implementing the individual operators. We examine the solutions for two model-management tasks that involve manipulations of relational schemas, XML schemas, and SQL views.",
+  "url": "https://doi.org/10.1145/872757.872782",
+  "pdf_url": "https://web.archive.org/web/20040418232228id_/http://research.microsoft.com:80/users/philbe/RondoSIGMOD03.pdf"
+}
