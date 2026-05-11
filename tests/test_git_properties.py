@@ -27,7 +27,14 @@ _TEST_POLICY = GitStorePolicy(
 _INITIAL_MODEL = {".gitignore": b"runtime/\n*.cache\n"}
 
 raw_bytes = st.binary(min_size=0, max_size=4096)
-segment = st.from_regex(r"[a-z][a-z0-9_]{0,12}", fullmatch=True)
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{index}" for index in range(1, 10)}
+    | {f"lpt{index}" for index in range(1, 10)}
+)
+segment = st.from_regex(r"[a-z][a-z0-9_]{0,12}", fullmatch=True).filter(
+    lambda value: value.casefold() not in _WINDOWS_RESERVED_NAMES
+)
 nested_path = st.lists(segment, min_size=1, max_size=5).map(
     lambda parts: "/".join([*parts[:-1], f"{parts[-1]}.bin"])
 )
