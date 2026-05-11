@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -17,14 +18,14 @@ TOwner = TypeVar("TOwner")
 
 BranchPolicy: TypeAlias = Literal["owner", "primary", "current", "fixed", "template"]
 CollisionSuffix: TypeAlias = Literal["none", "sha256"]
-ReversibleRefCodec: TypeAlias = Literal["identity", "stem", "colon_to_double_underscore"]
+ReversibleRefCodec: TypeAlias = Literal["identity", "stem", "colon_to_double_underscore", "base64url"]
 OneWayRefCodec: TypeAlias = Literal["slug", "safe_slug"]
 RefCodec: TypeAlias = ReversibleRefCodec | OneWayRefCodec
 HashScatteredFilenameMode: TypeAlias = Literal["digest", "encoded_ref"]
 
 _BRANCH_POLICIES = frozenset({"owner", "primary", "current", "fixed", "template"})
 _COLLISION_SUFFIXES = frozenset({"none", "sha256"})
-_REVERSIBLE_REF_CODECS = frozenset({"identity", "stem", "colon_to_double_underscore"})
+_REVERSIBLE_REF_CODECS = frozenset({"identity", "stem", "colon_to_double_underscore", "base64url"})
 _REF_CODECS = _REVERSIBLE_REF_CODECS | frozenset({"slug", "safe_slug"})
 _HASH_SCATTERED_FILENAME_MODES = frozenset({"digest", "encoded_ref"})
 
@@ -105,6 +106,16 @@ def _safe_slug(value: str) -> str:
     return cleaned
 
 
+def _base64url_encode(value: str) -> str:
+    encoded = base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _base64url_decode(value: str) -> str:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(f"{value}{padding}").decode("utf-8")
+
+
 def _ref_value(ref: object, field: str) -> str:
     if field == "self":
         value = ref
@@ -120,6 +131,8 @@ def encode_ref_value(value: str, codec: str) -> str:
         return value
     if codec == "colon_to_double_underscore":
         return value.replace(":", "__")
+    if codec == "base64url":
+        return _base64url_encode(value)
     if codec == "slug":
         return _slug(value)
     if codec == "safe_slug":
@@ -132,6 +145,8 @@ def decode_ref_value(value: str, codec: str) -> str:
         return value
     if codec == "colon_to_double_underscore":
         return value.replace("__", ":")
+    if codec == "base64url":
+        return _base64url_decode(value)
     if codec in {"slug", "safe_slug"}:
         raise ValueError("slug codec is not reversible")
     raise ValueError(f"unknown ref codec: {codec}")
