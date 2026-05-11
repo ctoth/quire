@@ -80,15 +80,15 @@ def load_document(
     path: TreePath | Path,
     document_type: type[TDocument],
     *,
-    knowledge_root: TreePath | Path | None = None,
+    store_root: TreePath | Path | None = None,
 ) -> LoadedDocument[TDocument]:
-    source_path = coerce_tree_path(path)
-    root_path = None if knowledge_root is None else coerce_tree_path(knowledge_root)
+    artifact_path = coerce_tree_path(path)
+    root_path = None if store_root is None else coerce_tree_path(store_root)
     return LoadedDocument(
-        filename=source_path.stem,
-        source_path=source_path,
-        knowledge_root=root_path,
-        document=decode_document_path(source_path, document_type),
+        filename=artifact_path.stem,
+        artifact_path=artifact_path,
+        store_root=root_path,
+        document=decode_document_path(artifact_path, document_type),
     )
 
 
@@ -121,7 +121,7 @@ def load_document_dir(
     if not documents_dir.is_dir():
         return []
 
-    knowledge_root = documents_dir.parent if documents_dir.name else documents_dir
+    store_root = documents_dir.parent if documents_dir.name else documents_dir
     entries = sorted(
         (
             entry
@@ -131,7 +131,7 @@ def load_document_dir(
         key=lambda entry: entry.as_posix(),
     )
     loaded = [
-        load_document(entry, document_type, knowledge_root=knowledge_root)
+        load_document(entry, document_type, store_root=store_root)
         for entry in entries
     ]
     if wrapper is None:

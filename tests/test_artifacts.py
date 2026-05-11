@@ -203,17 +203,17 @@ def test_hash_scattered_yaml_rejects_unknown_filename_mode_at_construction():
         )
 
 
-def test_flat_yaml_ref_from_loaded_anchors_to_knowledge_root(tmp_path):
+def test_flat_yaml_ref_from_loaded_anchors_to_store_root(tmp_path):
     placement = FlatYamlPlacement("claims", DemoRef, ref_field="name")
     root = tmp_path / "repo" / "claims" / "stuff"
-    source_path = root / "claims" / "alpha.yaml"
-    source_path.parent.mkdir(parents=True)
-    source_path.write_text("name: alpha\n")
+    artifact_path = root / "claims" / "alpha.yaml"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("name: alpha\n")
 
     loaded = LoadedDocument(
         filename="alpha.yaml",
-        source_path=source_path,
-        knowledge_root=root,
+        artifact_path=artifact_path,
+        store_root=root,
     )
 
     assert placement.ref_from_loaded(loaded) == DemoRef("alpha")
@@ -222,14 +222,14 @@ def test_flat_yaml_ref_from_loaded_anchors_to_knowledge_root(tmp_path):
 def test_flat_yaml_ref_from_loaded_rejects_nested_path_relative_to_root(tmp_path):
     placement = FlatYamlPlacement("claims", DemoRef, ref_field="name")
     root = tmp_path / "repo"
-    source_path = root / "claims" / "stuff" / "claims" / "alpha.yaml"
-    source_path.parent.mkdir(parents=True)
-    source_path.write_text("name: alpha\n")
+    artifact_path = root / "claims" / "stuff" / "claims" / "alpha.yaml"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("name: alpha\n")
 
     loaded = LoadedDocument(
         filename="alpha.yaml",
-        source_path=source_path,
-        knowledge_root=root,
+        artifact_path=artifact_path,
+        store_root=root,
     )
 
     with pytest.raises(ValueError, match="expected direct child"):
@@ -250,8 +250,8 @@ def test_hash_scattered_encoded_ref_recovers_from_loaded_path(tmp_path):
 
     loaded = LoadedDocument(
         filename="claim__a.yaml",
-        source_path=path,
-        knowledge_root=tmp_path / "repo",
+        artifact_path=path,
+        store_root=tmp_path / "repo",
     )
 
     assert placement.ref_from_loaded(loaded) == DemoRef("claim:a")
@@ -271,8 +271,8 @@ def test_hash_scattered_digest_loaded_recovery_requires_document_ref(tmp_path):
     assert placement.ref_from_loaded(
         LoadedDocument(
             filename="opaque.yaml",
-            source_path=path,
-            knowledge_root=tmp_path / "repo",
+            artifact_path=path,
+            store_root=tmp_path / "repo",
             document=DemoRef("alpha"),
         )
     ) == DemoRef("alpha")
@@ -281,8 +281,8 @@ def test_hash_scattered_digest_loaded_recovery_requires_document_ref(tmp_path):
         placement.ref_from_loaded(
             LoadedDocument(
                 filename="opaque.yaml",
-                source_path=path,
-                knowledge_root=tmp_path / "repo",
+                artifact_path=path,
+                store_root=tmp_path / "repo",
             )
         )
 

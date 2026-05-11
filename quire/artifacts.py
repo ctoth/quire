@@ -47,26 +47,26 @@ def _render_path(path: object) -> str:
     return str(path)
 
 
-def _loaded_source_path(loaded: object) -> str:
-    source_path = getattr(loaded, "source_path", None)
-    if source_path is None:
-        raise ValueError("loaded artifact does not expose source_path")
-    knowledge_root = getattr(loaded, "knowledge_root", None)
-    if knowledge_root is not None:
-        source_concrete = getattr(source_path, "concrete_path", None)
-        root_concrete = getattr(knowledge_root, "concrete_path", None)
-        if callable(source_concrete) and callable(root_concrete):
+def _loaded_artifact_path(loaded: object) -> str:
+    artifact_path = getattr(loaded, "artifact_path", None)
+    if artifact_path is None:
+        raise ValueError("loaded artifact does not expose artifact_path")
+    store_root = getattr(loaded, "store_root", None)
+    if store_root is not None:
+        artifact_concrete = getattr(artifact_path, "concrete_path", None)
+        root_concrete = getattr(store_root, "concrete_path", None)
+        if callable(artifact_concrete) and callable(root_concrete):
             try:
-                return source_concrete().resolve().relative_to(root_concrete().resolve()).as_posix()
+                return artifact_concrete().resolve().relative_to(root_concrete().resolve()).as_posix()
             except ValueError:
                 pass
-        rendered = _normalize_path(_render_path(source_path))
-        root = _normalize_path(_render_path(knowledge_root))
+        rendered = _normalize_path(_render_path(artifact_path))
+        root = _normalize_path(_render_path(store_root))
         if rendered == root:
             return ""
         if root and rendered.startswith(f"{root}/"):
             return rendered[len(root) + 1:]
-    return _render_path(source_path)
+    return _render_path(artifact_path)
 
 
 def _resolved_scan_target(
@@ -427,13 +427,13 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
         return self.ref_factory(decode_ref_value(tail.removesuffix(self.extension), self.codec))
 
     def ref_from_loaded(self, loaded: object) -> TRef:
-        rendered = _loaded_source_path(loaded)
+        rendered = _loaded_artifact_path(loaded)
         marker = f"{self.namespace}/"
         normalized = rendered.replace("\\", "/")
-        if not normalized.startswith(marker) and getattr(loaded, "knowledge_root", None) is None:
+        if not normalized.startswith(marker) and getattr(loaded, "store_root", None) is None:
             index = normalized.rfind(f"/{marker}")
             if index < 0:
-                raise ValueError(f"loaded source path is not under {self.namespace}: {rendered!r}")
+                raise ValueError(f"loaded artifact path is not under {self.namespace}: {rendered!r}")
             normalized = normalized[index + 1:]
         return self.ref_from_locator(PathArtifactLocator(normalized))
 
@@ -552,7 +552,7 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
             value = getattr(document, self.ref_field, None)
             if isinstance(value, str) and value:
                 return self.ref_factory(value)
-        return self.ref_from_locator(PathArtifactLocator(_loaded_source_path(loaded)))
+        return self.ref_from_locator(PathArtifactLocator(_loaded_artifact_path(loaded)))
 
     def contract_body(self) -> dict[str, object]:
         return {
@@ -719,7 +719,7 @@ class SubdirFixedFilePlacement(Generic[TOwner, TRef]):
         return self.ref_factory(decode_ref_value(parts[1], self.codec))
 
     def ref_from_loaded(self, loaded: object) -> TRef:
-        return self.ref_from_locator(PathArtifactLocator(_loaded_source_path(loaded)))
+        return self.ref_from_locator(PathArtifactLocator(_loaded_artifact_path(loaded)))
 
     def contract_body(self) -> dict[str, object]:
         return {
@@ -806,7 +806,7 @@ class NestedFlatYamlPlacement(Generic[TOwner, TRef]):
         return self.ref_factory(directory, stem)
 
     def ref_from_loaded(self, loaded: object) -> TRef:
-        return self.ref_from_locator(PathArtifactLocator(_loaded_source_path(loaded)))
+        return self.ref_from_locator(PathArtifactLocator(_loaded_artifact_path(loaded)))
 
     def contract_body(self) -> dict[str, object]:
         return {

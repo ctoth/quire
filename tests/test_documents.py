@@ -40,17 +40,17 @@ def test_decode_document_bytes_is_strict():
         )
 
 
-def test_load_document_captures_source_metadata(tmp_path):
+def test_load_document_captures_artifact_metadata(tmp_path):
     path = tmp_path / "demo.yaml"
     path.write_text("name: demo\nvalue: 3\n", encoding="utf-8")
 
-    loaded = load_document(path, ExampleDocument, knowledge_root=tmp_path)
+    loaded = load_document(path, ExampleDocument, store_root=tmp_path)
 
     assert loaded.filename == "demo"
     assert loaded.document == ExampleDocument(name="demo", value=3)
-    assert loaded.source_path is not None
-    assert loaded.source_path.as_posix().endswith("demo.yaml")
-    assert loaded.knowledge_root is not None
+    assert loaded.artifact_path is not None
+    assert loaded.artifact_path.as_posix().endswith("demo.yaml")
+    assert loaded.store_root is not None
 
 
 def test_load_document_dir_loads_direct_yaml_children_deterministically(tmp_path):

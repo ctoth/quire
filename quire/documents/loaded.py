@@ -12,18 +12,18 @@ TDocument = TypeVar("TDocument")
 @dataclass(init=False)
 class LoadedDocument(Generic[TDocument]):
     filename: str
-    source_path: TreePath | None
-    knowledge_root: TreePath | None
+    artifact_path: TreePath | None
+    store_root: TreePath | None
     document: TDocument
 
     def __init__(
         self,
         filename: str,
-        source_path: TreePath | Path | None = None,
+        artifact_path: TreePath | Path | None = None,
         document: TDocument | None = None,
-        knowledge_root: TreePath | Path | None = None,
+        store_root: TreePath | Path | None = None,
     ) -> None:
         self.filename = filename
-        self.source_path = None if source_path is None else coerce_tree_path(source_path)
-        self.knowledge_root = None if knowledge_root is None else coerce_tree_path(knowledge_root)
+        self.artifact_path = None if artifact_path is None else coerce_tree_path(artifact_path)
+        self.store_root = None if store_root is None else coerce_tree_path(store_root)
         self.document = cast(TDocument, document)
