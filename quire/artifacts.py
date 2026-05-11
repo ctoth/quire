@@ -16,12 +16,14 @@ TDoc = TypeVar("TDoc")
 TOwner = TypeVar("TOwner")
 
 BranchPolicy: TypeAlias = Literal["owner", "primary", "current", "fixed", "template"]
+CollisionSuffix: TypeAlias = Literal["none", "sha256"]
 ReversibleRefCodec: TypeAlias = Literal["identity", "stem", "colon_to_double_underscore"]
 OneWayRefCodec: TypeAlias = Literal["slug", "safe_slug"]
 RefCodec: TypeAlias = ReversibleRefCodec | OneWayRefCodec
 HashScatteredFilenameMode: TypeAlias = Literal["digest", "encoded_ref"]
 
 _BRANCH_POLICIES = frozenset({"owner", "primary", "current", "fixed", "template"})
+_COLLISION_SUFFIXES = frozenset({"none", "sha256"})
 _REVERSIBLE_REF_CODECS = frozenset({"identity", "stem", "colon_to_double_underscore"})
 _REF_CODECS = _REVERSIBLE_REF_CODECS | frozenset({"slug", "safe_slug"})
 _HASH_SCATTERED_FILENAME_MODES = frozenset({"digest", "encoded_ref"})
@@ -261,11 +263,14 @@ class BranchPlacement:
     template: str | None = None
     ref_field: str = "name"
     codec: RefCodec = "stem"
+    collision_suffix: CollisionSuffix = "none"
 
     def __post_init__(self) -> None:
         if self.policy not in _BRANCH_POLICIES:
             raise ValueError(f"unknown branch policy: {self.policy}")
         _require_ref_codec(self.codec)
+        if self.collision_suffix not in _COLLISION_SUFFIXES:
+            raise ValueError(f"unknown collision suffix: {self.collision_suffix}")
 
     def branch_name(self, owner: object, ref: object | None = None) -> str:
         if self.policy == "owner":
@@ -286,7 +291,11 @@ class BranchPlacement:
                 raise ValueError("template branch policy requires a ref")
             if not self.template:
                 raise ValueError("template branch policy requires template")
-            value = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
+            raw_value = _ref_value(ref, self.ref_field)
+            value = encode_ref_value(raw_value, self.codec)
+            if self.collision_suffix == "sha256" and value != raw_value:
+                digest = hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
+                value = f"{value}--{digest}"
             return self.template.format(value=value, stem=value)
         raise ValueError(f"unknown branch policy: {self.policy}")
 
@@ -298,6 +307,8 @@ class BranchPlacement:
             body["template"] = self.template
             body["ref_field"] = self.ref_field
             body["codec"] = self.codec
+        if self.collision_suffix != "none":
+            body["collision_suffix"] = self.collision_suffix
         return body
 
 
@@ -636,6 +647,176 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
         return {
             "kind": "fixed-file",
             "filename": self.filename,
+            "branch": self.branch.contract_body(),
+        }
+
+
+@dataclass(frozen=True)
+class SubdirFixedFilePlacement(Generic[TOwner, TRef]):
+    namespace: str
+    filename: str
+    ref_factory: Callable[[str], TRef]
+    ref_field: str = "self"
+    codec: ReversibleRefCodec = "identity"
+    branch: BranchPlacement = BranchPlacement()
+
+    def __post_init__(self) -> None:
+        _require_reversible_ref_codec(self.codec)
+
+    def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
+        value = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
+        return ArtifactAddress(
+            branch=self.branch.branch_name(owner, ref),
+            locator=PathArtifactLocator(f"{self.namespace}/{value}/{self.filename}"),
+        )
+
+    def iter_refs(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[TRef]:
+        for scanned in self.iter_artifacts(owner, backend, branch=branch, commit=commit):
+            yield scanned.ref
+
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        branch_name, target_commit = _resolved_scan_target(owner, self.branch, backend, branch, commit)
+        if target_commit is None:
+            return
+        if backend is None:
+            raise ValueError("listing path-backed artifacts requires a backend")
+        for relpath, content in backend.iter_subtree_files(self.namespace, commit=target_commit):
+            parts = relpath.replace("\\", "/").split("/")
+            if len(parts) != 2 or parts[1] != self.filename:
+                continue
+            path = f"{self.namespace}/{relpath}"
+            yield ScannedArtifact(
+                ref=self.ref_from_locator(PathArtifactLocator(path)),
+                address=ArtifactAddress(
+                    branch=branch_name,
+                    locator=PathArtifactLocator(path),
+                    commit=target_commit,
+                ),
+                content=content,
+            )
+
+    def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
+        if not isinstance(locator, PathArtifactLocator):
+            raise TypeError("subdir fixed-file placement only supports path locators")
+        path = _normalize_path(locator.path)
+        parts = path.split("/")
+        if len(parts) != 3 or parts[0] != self.namespace or parts[2] != self.filename:
+            raise ValueError(f"expected {self.namespace}/<ref>/{self.filename}, got {path!r}")
+        return self.ref_factory(decode_ref_value(parts[1], self.codec))
+
+    def ref_from_loaded(self, loaded: object) -> TRef:
+        return self.ref_from_locator(PathArtifactLocator(_loaded_source_path(loaded)))
+
+    def contract_body(self) -> dict[str, object]:
+        return {
+            "kind": "subdir-fixed-file",
+            "namespace": self.namespace,
+            "filename": self.filename,
+            "ref_field": self.ref_field,
+            "codec": self.codec,
+            "branch": self.branch.contract_body(),
+        }
+
+
+@dataclass(frozen=True)
+class NestedFlatYamlPlacement(Generic[TOwner, TRef]):
+    namespace: str
+    ref_factory: Callable[[str, str], TRef]
+    dir_ref_field: str
+    stem_ref_field: str
+    extension: str = ".yaml"
+    dir_codec: ReversibleRefCodec = "identity"
+    stem_codec: ReversibleRefCodec = "stem"
+    branch: BranchPlacement = BranchPlacement()
+
+    def __post_init__(self) -> None:
+        _require_reversible_ref_codec(self.dir_codec)
+        _require_reversible_ref_codec(self.stem_codec)
+
+    def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
+        directory = encode_ref_value(_ref_value(ref, self.dir_ref_field), self.dir_codec)
+        stem = encode_ref_value(_ref_value(ref, self.stem_ref_field), self.stem_codec)
+        return ArtifactAddress(
+            branch=self.branch.branch_name(owner, ref),
+            locator=PathArtifactLocator(f"{self.namespace}/{directory}/{stem}{self.extension}"),
+        )
+
+    def iter_refs(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[TRef]:
+        for scanned in self.iter_artifacts(owner, backend, branch=branch, commit=commit):
+            yield scanned.ref
+
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        branch_name, target_commit = _resolved_scan_target(owner, self.branch, backend, branch, commit)
+        if target_commit is None:
+            return
+        if backend is None:
+            raise ValueError("listing path-backed artifacts requires a backend")
+        for relpath, content in backend.iter_subtree_files(self.namespace, commit=target_commit):
+            parts = relpath.replace("\\", "/").split("/")
+            if len(parts) != 2 or not parts[1].endswith(self.extension):
+                continue
+            path = f"{self.namespace}/{relpath}"
+            yield ScannedArtifact(
+                ref=self.ref_from_locator(PathArtifactLocator(path)),
+                address=ArtifactAddress(
+                    branch=branch_name,
+                    locator=PathArtifactLocator(path),
+                    commit=target_commit,
+                ),
+                content=content,
+            )
+
+    def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
+        if not isinstance(locator, PathArtifactLocator):
+            raise TypeError("nested flat YAML placement only supports path locators")
+        path = _normalize_path(locator.path)
+        parts = path.split("/")
+        if len(parts) != 3 or parts[0] != self.namespace or not parts[2].endswith(self.extension):
+            raise ValueError(f"expected {self.namespace}/<dir>/*{self.extension}, got {path!r}")
+        directory = decode_ref_value(parts[1], self.dir_codec)
+        stem = decode_ref_value(parts[2].removesuffix(self.extension), self.stem_codec)
+        return self.ref_factory(directory, stem)
+
+    def ref_from_loaded(self, loaded: object) -> TRef:
+        return self.ref_from_locator(PathArtifactLocator(_loaded_source_path(loaded)))
+
+    def contract_body(self) -> dict[str, object]:
+        return {
+            "kind": "nested-flat-yaml",
+            "namespace": self.namespace,
+            "extension": self.extension,
+            "dir_ref_field": self.dir_ref_field,
+            "stem_ref_field": self.stem_ref_field,
+            "dir_codec": self.dir_codec,
+            "stem_codec": self.stem_codec,
             "branch": self.branch.contract_body(),
         }
 

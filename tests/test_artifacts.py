@@ -14,9 +14,11 @@ from quire.artifacts import (
     FlatYamlPlacement,
     HashScatteredYamlPlacement,
     IndexRequiredError,
+    NestedFlatYamlPlacement,
     PathArtifactLocator,
     UnscannablePlacementError,
     SingletonFilePlacement,
+    SubdirFixedFilePlacement,
     TemplateFilePlacement,
 )
 from quire.git_store import GitStore
@@ -43,6 +45,12 @@ class MethodOwner:
 
 @dataclass(frozen=True)
 class DemoRef:
+    name: str
+
+
+@dataclass(frozen=True)
+class NestedRef:
+    group: str
     name: str
 
 
@@ -140,6 +148,22 @@ def test_branch_template_can_preserve_case_for_safe_source_slugs():
     )
 
     assert placement.branch_name(Owner(), DemoRef("Smith 2024.TestPaper")) == "source/Smith_2024.TestPaper"
+
+
+def test_branch_template_can_append_sha256_collision_suffix_for_lossy_codecs():
+    placement = BranchPlacement(
+        policy="template",
+        template="items/{stem}",
+        ref_field="name",
+        codec="safe_slug",
+        collision_suffix="sha256",
+    )
+
+    branch = placement.branch_name(Owner(), DemoRef("Smith 2024"))
+
+    assert branch.startswith("items/Smith_2024--")
+    assert len(branch.removeprefix("items/Smith_2024--")) == 64
+    assert placement.contract_body()["collision_suffix"] == "sha256"
 
 
 def test_branch_placement_accepts_owner_protocol_methods():
@@ -282,6 +306,64 @@ def test_flat_yaml_iter_artifacts_scans_documents_at_pinned_commit():
         ("beta", "claims/beta.yaml", b"name: beta\n"),
     ]
     assert all(item.address.commit == commit for item in scanned)
+
+
+def test_subdir_fixed_file_placement_scans_direct_child_files():
+    placement = SubdirFixedFilePlacement[Owner, DemoRef](
+        namespace="bundles",
+        filename="document.yaml",
+        ref_factory=DemoRef,
+        ref_field="name",
+    )
+    backend = GitStore.init_memory()
+    commit = backend.commit_files(
+        {
+            "bundles/alpha/document.yaml": b"name: alpha\n",
+            "bundles/beta/document.yaml": b"name: beta\n",
+            "bundles/beta/other.yaml": b"name: ignored\n",
+            "bundles/deep/nested/document.yaml": b"name: ignored\n",
+        },
+        "seed bundles",
+    )
+
+    scanned = list(placement.iter_artifacts(Owner(), backend, commit=commit))
+
+    assert placement.address_for(Owner(), DemoRef("alpha")).require_path() == "bundles/alpha/document.yaml"
+    assert placement.ref_from_locator(PathArtifactLocator("bundles/beta/document.yaml")) == DemoRef("beta")
+    assert [(item.ref.name, item.address.require_path(), item.content) for item in scanned] == [
+        ("alpha", "bundles/alpha/document.yaml", b"name: alpha\n"),
+        ("beta", "bundles/beta/document.yaml", b"name: beta\n"),
+    ]
+    assert placement.contract_body()["kind"] == "subdir-fixed-file"
+
+
+def test_nested_flat_yaml_placement_scans_two_component_refs():
+    placement = NestedFlatYamlPlacement[Owner, NestedRef](
+        namespace="items",
+        ref_factory=NestedRef,
+        dir_ref_field="group",
+        stem_ref_field="name",
+        stem_codec="colon_to_double_underscore",
+    )
+    backend = GitStore.init_memory()
+    commit = backend.commit_files(
+        {
+            "items/alpha/item__one.yaml": b"name: one\n",
+            "items/beta/item__two.yaml": b"name: two\n",
+            "items/beta/nested.yaml/ignored.yaml": b"name: ignored\n",
+        },
+        "seed nested items",
+    )
+
+    scanned = list(placement.iter_artifacts(Owner(), backend, commit=commit))
+
+    assert placement.address_for(Owner(), NestedRef("alpha", "item:one")).require_path() == "items/alpha/item__one.yaml"
+    assert placement.ref_from_locator(PathArtifactLocator("items/beta/item__two.yaml")) == NestedRef("beta", "item:two")
+    assert [(item.ref, item.address.require_path()) for item in scanned] == [
+        (NestedRef("alpha", "item:one"), "items/alpha/item__one.yaml"),
+        (NestedRef("beta", "item:two"), "items/beta/item__two.yaml"),
+    ]
+    assert placement.contract_body()["kind"] == "nested-flat-yaml"
 
 
 def test_hash_scattered_encoded_ref_iter_artifacts_recovers_refs():
