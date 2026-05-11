@@ -61,6 +61,40 @@ def test_family_store_saves_and_loads_typed_document():
     assert store.require(family, "example") == DemoDocument("alpha")
 
 
+def test_family_store_exists_checks_address_without_decoding():
+    def decode_bytes(_raw: bytes, _source: str) -> DemoDocument:
+        raise AssertionError("exists must not decode documents")
+
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = ArtifactFamily[Owner, str, DemoDocument](
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=DemoDocument,
+        placement=FlatYamlPlacement("demo", str),
+        decode_bytes=decode_bytes,
+    )
+    store.save(family, "example", DemoDocument("alpha"), message="save demo")
+
+    assert store.exists(family, "example") is True
+    assert store.exists(family, "missing") is False
+    with pytest.raises(AssertionError, match="must not decode"):
+        store.load(family, "example")
+
+
+def test_family_store_exists_respects_branch_and_commit():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _demo_family()
+
+    first = store.save(family, "alpha", DemoDocument("alpha"), message="save alpha")
+    store.save(family, "beta", DemoDocument("beta"), message="save beta")
+    store.save(family, "branch-only", DemoDocument("gamma"), message="save branch", branch="other")
+
+    assert store.exists(family, "alpha", commit=first) is True
+    assert store.exists(family, "beta", commit=first) is False
+    assert store.exists(family, "branch-only") is False
+    assert store.exists(family, "branch-only", branch="other") is True
+
+
 def test_prepare_runs_normalize_validate_then_encode():
     events: list[str] = []
 

@@ -173,6 +173,23 @@ class DocumentFamilyStore(Generic[TOwner]):
             return family.decode_bytes(raw, source)
         return self.codec.decode(raw, family.doc_type, source=source)
 
+    def exists(
+        self,
+        family: ArtifactFamily[TOwner, TRef, TDoc],
+        ref: TRef,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> bool:
+        backend = self._require_backend()
+        address = self.address(family, ref, branch=branch, commit=commit)
+        target_commit = commit or address.commit
+        if target_commit is None:
+            target_commit = self.branch_head(backend, address.branch)
+            if target_commit is None:
+                return False
+        return backend.exists(address_path(address), commit=target_commit) is not None
+
     def handle(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],

@@ -302,6 +302,15 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
     def load(self, ref: TRef, *, commit: str | None = None) -> TDoc | None:
         return self.store.load(self.family, ref, commit=commit)
 
+    def exists(
+        self,
+        ref: TRef,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> bool:
+        return self.store.exists(self.family, ref, branch=branch, commit=commit)
+
     def require(self, ref: TRef, *, commit: str | None = None) -> TDoc:
         return self.store.require(self.family, ref, commit=commit)
 
@@ -393,6 +402,9 @@ class PinnedBoundFamily(Generic[TOwner, TRef, TDoc]):
 
     def load(self, ref: TRef) -> TDoc | None:
         return self.store.load(self.family, ref, branch=self.branch, commit=self.commit)
+
+    def exists(self, ref: TRef) -> bool:
+        return self.store.exists(self.family, ref, branch=self.branch, commit=self.commit)
 
     def require(self, ref: TRef) -> TDoc:
         return self.store.require(self.family, ref, branch=self.branch, commit=self.commit)
