@@ -48,6 +48,23 @@ class GitGcReport:
     orphan_shas: tuple[str, ...]
 
 
+class HeadMismatchError(ValueError):
+    def __init__(
+        self,
+        *,
+        branch: str,
+        expected_head: str | None,
+        actual_head: str | None,
+    ) -> None:
+        super().__init__(
+            f"Branch {branch!r} head mismatch: "
+            f"expected {expected_head}, got {actual_head}"
+        )
+        self.branch = branch
+        self.expected_head = expected_head
+        self.actual_head = actual_head
+
+
 def _normalize_path(path: str | Path) -> str:
     normalized = str(path).replace("\\", "/").strip("/")
     if normalized == ".":
@@ -105,9 +122,10 @@ def _format_ref_value(value: bytes | None) -> str | None:
 def _assert_ref_equals(refs: Any, branch_name: str, branch_ref: bytes, expected: bytes | None) -> bytes | None:
     actual = _ref_get(refs, branch_ref)
     if actual != expected:
-        raise ValueError(
-            f"Branch {branch_name!r} head mismatch: "
-            f"expected {_format_ref_value(expected)}, got {_format_ref_value(actual)}"
+        raise HeadMismatchError(
+            branch=branch_name,
+            expected_head=_format_ref_value(expected),
+            actual_head=_format_ref_value(actual),
         )
     return actual
 
@@ -479,10 +497,10 @@ class GitStore:
 
             if not _ref_set_if_equals(self._repo.refs, branch_ref, current_head, commit.id):
                 actual_head = _ref_get(self._repo.refs, branch_ref)
-                actual = None if actual_head is None else actual_head.decode("ascii")
-                expected = None if current_head is None else current_head.decode("ascii")
-                raise ValueError(
-                    f"Branch {branch_name!r} head mismatch: expected {expected}, got {actual}"
+                raise HeadMismatchError(
+                    branch=branch_name,
+                    expected_head=_format_ref_value(current_head),
+                    actual_head=_format_ref_value(actual_head),
                 )
             if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
                 _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
@@ -916,10 +934,10 @@ class GitStore:
         self._remember_object(commit)
         if not _ref_set_if_equals(self._repo.refs, branch_ref, tip_sha, commit.id):
             actual_head = _ref_get(self._repo.refs, branch_ref)
-            actual = None if actual_head is None else actual_head.decode("ascii")
-            expected = None if tip_sha is None else tip_sha.decode("ascii")
-            raise ValueError(
-                f"Branch {branch_name!r} head mismatch: expected {expected}, got {actual}"
+            raise HeadMismatchError(
+                branch=branch_name,
+                expected_head=_format_ref_value(tip_sha),
+                actual_head=_format_ref_value(actual_head),
             )
         if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
             _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)

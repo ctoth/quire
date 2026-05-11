@@ -18,6 +18,7 @@ from quire.artifacts import (
     TDoc,
     TRef,
 )
+from quire.git_store import HeadMismatchError
 from quire.documents.codecs import (
     DEFAULT_DOCUMENT_CODEC,
     DocumentCodec,
@@ -456,9 +457,10 @@ class DocumentFamilyTransaction(Generic[TOwner]):
             return
         current = self.store.branch_head(backend, self.branch)
         if current is not None and current != self.expected_head:
-            raise ValueError(
-                f"Transaction branch {self.branch!r} head mismatch (preemptive): "
-                f"expected {self.expected_head}, got {current}"
+            raise HeadMismatchError(
+                branch=self.branch,
+                expected_head=self.expected_head,
+                actual_head=current,
             )
 
     def _addressed_target(

@@ -16,7 +16,7 @@ from quire.artifacts import (
 )
 from quire.contracts import ContractEntry, ContractManifest, ContractManifestError, check_contract_manifest
 from quire.family_store import DocumentFamilyStore
-from quire.git_store import GitGcReport, GitStore, GitStorePolicy
+from quire.git_store import GitGcReport, GitStore, GitStorePolicy, HeadMismatchError
 from quire.refs import RefName, single_field_ref_type, singleton_ref_type
 from quire.notes import NotesRef, read_git_note, write_git_note
 from quire.references import (
@@ -70,6 +70,7 @@ __all__ = [
     "GitStorePolicy",
     "GitTreePath",
     "HashScatteredYamlPlacement",
+    "HeadMismatchError",
     "IndexRequiredError",
     "NotesRef",
     "RefName",

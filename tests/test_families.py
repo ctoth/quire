@@ -10,7 +10,7 @@ from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.contracts import check_contract_manifest
 from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry, _duplicates
 from quire.family_store import DocumentFamilyStore
-from quire.git_store import GitStore
+from quire.git_store import GitStore, HeadMismatchError
 from quire.references import ForeignKeySpec
 from quire.versions import VersionId
 
@@ -242,7 +242,7 @@ def test_bound_family_forwards_expected_head_checks() -> None:
     first = bound.claims.save("paper", DemoDocument("alpha"), message="first")
     bound.claims.save("paper", DemoDocument("beta"), message="second")
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         bound.claims.save(
             "paper",
             DemoDocument("gamma"),
@@ -250,7 +250,7 @@ def test_bound_family_forwards_expected_head_checks() -> None:
             expected_head=first,
         )
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         with bound.transact(message="stale transaction", expected_head=first) as transaction:
             transaction.claims.save("other", DemoDocument("delta"))
 

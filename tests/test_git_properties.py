@@ -13,7 +13,7 @@ from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 
-from quire.git_store import GitStore, GitStorePolicy
+from quire.git_store import GitStore, GitStorePolicy, HeadMismatchError
 from quire.notes import NotesRef
 from quire.refs import RefName
 from quire.tree_path import FilesystemTreePath, GitTreePath
@@ -492,7 +492,7 @@ def _assert_stale_head_rejected(
     else:
         raise AssertionError(f"unknown operation: {operation}")
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         call()
 
     assert repo.head_sha() == before_tip
@@ -539,7 +539,7 @@ def test_expected_head_uses_explicit_branch_not_current_branch(branch: str) -> N
     branch_tip = repo.commit_files({"branch.bin": b"branch"}, "branch", branch=branch)
     master_tip = repo.commit_files({"master.bin": b"master"}, "master")
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         repo.commit_files({"bad.bin": b"bad"}, "bad", branch=branch, expected_head=master_tip)
 
     accepted = repo.commit_files({"ok.bin": b"ok"}, "ok", branch=branch, expected_head=branch_tip)
@@ -555,13 +555,13 @@ def test_expected_head_rejects_wrong_sha_and_missing_branch(branch: str, content
     before_snapshot = _snapshot(repo, base)
     wrong_sha = "0" * 40
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         repo.commit_files({"wrong.bin": content}, "wrong", expected_head=wrong_sha)
 
     assert repo.head_sha() == base
     assert _snapshot(repo) == before_snapshot
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         repo.commit_files({"missing.bin": content}, "missing", branch=branch, expected_head=base)
 
     assert repo.branch_sha(branch) is None

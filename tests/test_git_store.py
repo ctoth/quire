@@ -9,7 +9,7 @@ from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import MemoryRepo
 
 import quire.git_store as git_store
-from quire.git_store import GitStore, GitStorePolicy
+from quire.git_store import GitStore, GitStorePolicy, HeadMismatchError
 from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
 from quire.refs import RefName
 
@@ -242,9 +242,12 @@ def test_expected_head_ref_update_is_compare_and_swap(monkeypatch):
 
     monkeypatch.setattr(git_store, "_ref_get", race_after_expected_head_read)
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError) as excinfo:
         store.commit_files({"stale.txt": b"stale"}, "stale", expected_head=first)
 
+    assert excinfo.value.branch == "master"
+    assert excinfo.value.expected_head == first
+    assert excinfo.value.actual_head == racing
     assert store.branch_sha("master") == racing
 
 
@@ -269,7 +272,7 @@ def test_expected_head_race_does_not_write_unreachable_objects(monkeypatch):
 
     monkeypatch.setattr(git_store, "_ref_get", race_after_expected_head_read)
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         store.commit_files({"stale.txt": b"stale"}, "stale", expected_head=first)
 
     assert store.branch_sha("master") == racing
@@ -481,7 +484,7 @@ def test_commit_batch_rejects_moved_branch_head():
     first = store.commit_files({"a.txt": b"one"}, "first")
     store.commit_files({"a.txt": b"two"}, "second")
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         store.commit_batch(
             {"b.txt": b"three"},
             [],
@@ -496,7 +499,7 @@ def test_commit_flat_tree_rejects_moved_branch_head():
     second = store.commit_files({"a.txt": b"two"}, "second")
     blob_sha = store.store_blob(b"flat")
 
-    with pytest.raises(ValueError, match="head mismatch"):
+    with pytest.raises(HeadMismatchError):
         store.commit_flat_tree(
             {"b.txt": blob_sha},
             "stale flat tree",
