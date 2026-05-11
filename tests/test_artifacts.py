@@ -110,6 +110,25 @@ def test_hash_scattered_yaml_can_use_reversible_encoded_filename():
     assert placement.ref_from_locator(address.locator) == DemoRef("claim:a")
 
 
+def test_hash_scattered_yaml_can_encode_uri_refs_as_single_path_components():
+    placement = HashScatteredYamlPlacement[Owner, DemoRef](
+        namespace="micropubs",
+        ref_factory=DemoRef,
+        ref_field="name",
+        codec="base64url",
+        filename_mode="encoded_ref",
+    )
+    ref = DemoRef("ni:///sha-256;abcdef0123456789")
+
+    address = placement.address_for(Owner(), ref)
+    encoded_stem = Path(address.require_path()).stem
+
+    assert "/" not in encoded_stem
+    assert ":" not in encoded_stem
+    assert ";" not in encoded_stem
+    assert placement.ref_from_locator(address.locator) == ref
+
+
 def test_fixed_template_and_singleton_placements_have_contract_bodies():
     source_branch = BranchPlacement(
         policy="template",
