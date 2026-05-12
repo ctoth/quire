@@ -6,6 +6,7 @@ from types import MappingProxyType
 
 import msgspec
 import pytest
+from hypothesis import given, strategies as st
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.families import FamilyDefinition, FamilyRegistry
@@ -14,8 +15,11 @@ from quire.git_store import GitStore
 from quire.references import (
     AmbiguousReferenceError,
     CrossFamilyReferenceIndex,
+    FamilyReferenceIndex,
     ForeignKeySpec,
     ForeignKeyValidationError,
+    MissingReferenceError,
+    ReferenceKey,
     ReferenceIndex,
     build_reference_lookup,
     validate_foreign_key,
@@ -26,6 +30,19 @@ from quire.versions import VersionId
 @dataclass(frozen=True)
 class Record:
     artifact_id: str
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class LogicalId:
+    namespace: str
+    value: str
+
+
+@dataclass(frozen=True)
+class RichRecord:
+    artifact_id: str
+    logical_ids: tuple[LogicalId, ...] = ()
     aliases: tuple[str, ...] = ()
 
 
@@ -94,6 +111,139 @@ def test_reference_index_resolve_id_signals_ambiguous_keys() -> None:
     assert exc_info.value.reference == "F0"
     assert exc_info.value.candidates == ("concept:1", "concept:2")
     assert index.exists("F0") is False
+
+
+def test_family_reference_index_resolves_declarative_field_and_format_keys() -> None:
+    records = (
+        RichRecord(
+            artifact_id="claim:1",
+            logical_ids=(
+                LogicalId(namespace="paper", value="c1"),
+                LogicalId(namespace="paper", value="main"),
+            ),
+            aliases=("alpha",),
+        ),
+        RichRecord(
+            artifact_id="claim:2",
+            logical_ids=(LogicalId(namespace="paper", value="c2"),),
+        ),
+    )
+
+    index = FamilyReferenceIndex.from_records(
+        records,
+        artifact_id=lambda record: record.artifact_id,
+        keys=(
+            ReferenceKey.field("artifact_id"),
+            ReferenceKey.field("logical_ids[].value"),
+            ReferenceKey.format("{namespace}:{value}", from_field="logical_ids[]"),
+            lambda record: record.aliases,
+        ),
+    )
+
+    assert index.require_id("claim:1") == "claim:1"
+    assert index.require_id("c1") == "claim:1"
+    assert index.require_id("paper:main") == "claim:1"
+    assert index.resolve_id("alpha") == "claim:1"
+    assert index.resolve_id("missing") is None
+    with pytest.raises(MissingReferenceError) as exc_info:
+        index.require_id("missing")
+    assert exc_info.value.reference == "missing"
+
+
+def test_reference_key_rejects_malformed_field_paths_at_declaration_time() -> None:
+    with pytest.raises(ValueError, match="field path"):
+        ReferenceKey.field("logical_ids[].")
+
+
+def test_family_reference_index_reports_duplicate_key_ambiguity_at_build_time() -> None:
+    records = (
+        RichRecord("claim:1", aliases=("shared",)),
+        RichRecord("claim:2", aliases=("shared",)),
+    )
+
+    with pytest.raises(AmbiguousReferenceError) as exc_info:
+        FamilyReferenceIndex.from_records(
+            records,
+            artifact_id=lambda record: record.artifact_id,
+            keys=(lambda record: record.aliases,),
+        )
+
+    assert exc_info.value.reference == "shared"
+    assert exc_info.value.candidates == ("claim:1", "claim:2")
+
+
+def test_family_reference_index_deduplicates_repeated_keys_for_same_artifact() -> None:
+    index = FamilyReferenceIndex.from_records(
+        (RichRecord("claim:1", aliases=("same", "same")),),
+        artifact_id=lambda record: record.artifact_id,
+        keys=(ReferenceKey.field("artifact_id"), lambda record: record.aliases),
+    )
+
+    assert index.require_id("same") == "claim:1"
+
+
+@given(
+    st.dictionaries(
+        keys=st.text(
+            alphabet=st.characters(min_codepoint=33, max_codepoint=126),
+            min_size=1,
+            max_size=12,
+        ),
+        values=st.lists(
+            st.text(
+                alphabet=st.characters(min_codepoint=33, max_codepoint=126),
+                min_size=1,
+                max_size=12,
+            ),
+            min_size=1,
+            max_size=3,
+            unique=True,
+        ),
+        min_size=1,
+        max_size=20,
+    ).filter(lambda mapping: len({alias for aliases in mapping.values() for alias in aliases}) == sum(len(aliases) for aliases in mapping.values())),
+)
+def test_family_reference_index_resolves_generated_unique_aliases(alias_map: dict[str, list[str]]) -> None:
+    records = tuple(RichRecord(artifact_id, aliases=tuple(aliases)) for artifact_id, aliases in alias_map.items())
+
+    index = FamilyReferenceIndex.from_records(
+        records,
+        artifact_id=lambda record: record.artifact_id,
+        keys=(lambda record: record.aliases,),
+    )
+
+    for artifact_id, aliases in alias_map.items():
+        assert index.require_id(artifact_id) == artifact_id
+        for alias in aliases:
+            assert index.require_id(alias) == artifact_id
+
+
+@given(
+    first_id=st.text(
+        alphabet=st.characters(min_codepoint=33, max_codepoint=126),
+        min_size=1,
+        max_size=12,
+    ).filter(lambda value: value != "shared"),
+    second_id=st.text(
+        alphabet=st.characters(min_codepoint=33, max_codepoint=126),
+        min_size=1,
+        max_size=12,
+    ).filter(lambda value: value != "shared"),
+)
+def test_family_reference_index_rejects_generated_duplicate_aliases(first_id: str, second_id: str) -> None:
+    if first_id == second_id:
+        return
+    records = (
+        RichRecord(first_id, aliases=("shared",)),
+        RichRecord(second_id, aliases=("shared",)),
+    )
+
+    with pytest.raises(AmbiguousReferenceError):
+        FamilyReferenceIndex.from_records(
+            records,
+            artifact_id=lambda record: record.artifact_id,
+            keys=(lambda record: record.aliases,),
+        )
 
 
 def test_cross_family_index_fails_for_unknown_family() -> None:
