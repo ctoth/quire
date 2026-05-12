@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, cast
 
@@ -86,6 +86,11 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
     @property
     def accessor_name(self) -> str:
         return self.accessor or self.name
+
+    def metadata_value(self, key: str, default: object = None) -> object:
+        if self.metadata is None:
+            return default
+        return self.metadata.get(key, default)
 
     def reference_index_from_records(
         self,
@@ -188,6 +193,32 @@ class FamilyRegistry(Generic[TOwner, TKey]):
 
     def keys(self) -> tuple[TKey, ...]:
         return tuple(family.key for family in self.families)
+
+    def select(
+        self,
+        predicate: Callable[[FamilyDefinition[TOwner, TKey, Any, Any]], bool],
+    ) -> tuple[FamilyDefinition[TOwner, TKey, Any, Any], ...]:
+        return tuple(family for family in self.families if predicate(family))
+
+    def select_by_metadata(
+        self,
+        key: str,
+        value: object,
+    ) -> tuple[FamilyDefinition[TOwner, TKey, Any, Any], ...]:
+        return self.select(lambda family: family.metadata_value(key) == value)
+
+    def by_metadata(
+        self,
+        key: str,
+        value: object,
+    ) -> FamilyDefinition[TOwner, TKey, Any, Any]:
+        matches = self.select_by_metadata(key, value)
+        if not matches:
+            raise KeyError(f"no family metadata {key!r}={value!r}")
+        if len(matches) > 1:
+            names = ", ".join(family.name for family in matches)
+            raise ValueError(f"multiple families match metadata {key!r}={value!r}: {names}")
+        return matches[0]
 
     def bind(self, owner: TOwner, store: DocumentFamilyStore[TOwner]) -> BoundFamilyRegistry[TOwner, TKey]:
         return BoundFamilyRegistry(owner=owner, store=store, registry=self)
