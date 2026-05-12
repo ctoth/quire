@@ -447,6 +447,31 @@ def test_registry_root_lookup_rejects_non_namespace_placements() -> None:
         registry.by_storage_root("notes")
 
 
+def test_registry_can_skip_foreign_key_closure_for_query_views() -> None:
+    foreign_key = ForeignKeySpec(
+        name="claim_concept",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        source_family="claims",
+        source_field="concept",
+        target_family="concepts",
+    )
+    registry = FamilyRegistry(
+        name="query-view",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(
+            _family_definition(
+                DemoFamily.CLAIMS,
+                "claims",
+                "books",
+                foreign_keys=(foreign_key,),
+            ),
+        ),
+        validate_foreign_keys=False,
+    )
+
+    assert registry.family_for_path("books/example.yaml").name == "claims"
+
+
 def test_duplicate_detection_does_not_rescan_collected_duplicates() -> None:
     class CountingKey:
         comparisons = 0
