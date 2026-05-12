@@ -12,7 +12,7 @@ from quire.contracts import check_contract_manifest
 from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry, _duplicates
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore, HeadMismatchError
-from quire.references import AmbiguousReferenceError, ForeignKeySpec, ReferenceKey
+from quire.references import AmbiguousReferenceError, ForeignKeySpec, ForeignKeyValidationError, ReferenceKey
 from quire.versions import VersionId
 
 
@@ -23,6 +23,11 @@ class DemoDocument(msgspec.Struct):
 class IdentifiedDocument(msgspec.Struct):
     artifact_id: str
     aliases: tuple[str, ...] = ()
+
+
+class ClaimWithConceptDocument(msgspec.Struct):
+    artifact_id: str
+    concept: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,48 @@ def _identified_artifact_family(name: str, namespace: str) -> ArtifactFamily[Own
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
         doc_type=IdentifiedDocument,
         placement=FlatYamlPlacement(namespace, str),
+    )
+
+
+def _claim_with_concept_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, ClaimWithConceptDocument]:
+    return ArtifactFamily(
+        name=name,
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=ClaimWithConceptDocument,
+        placement=FlatYamlPlacement(namespace, str),
+    )
+
+
+def _reference_registry(*, required: bool = True) -> FamilyRegistry[Owner, DemoFamily]:
+    concepts = FamilyDefinition(
+        key=DemoFamily.CONCEPTS,
+        name="concepts",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
+        identity_field="artifact_id",
+        reference_keys=(ReferenceKey.field("aliases[]"),),
+    )
+    claims = FamilyDefinition(
+        key=DemoFamily.CLAIMS,
+        name="claims",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=_claim_with_concept_family("claims_artifact", "claims"),
+        identity_field="artifact_id",
+        foreign_keys=(
+            ForeignKeySpec(
+                name="claim_concept",
+                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                source_family="claims",
+                source_field="concept",
+                target_family="concepts",
+                required=required,
+            ),
+        ),
+    )
+    return FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(claims, concepts),
     )
 
 
@@ -410,6 +457,91 @@ def test_bound_registry_transaction_writes_multiple_families() -> None:
     assert transaction.commit_sha is not None
     assert bound.claims.require("claim-one") == DemoDocument("alpha")
     assert bound.concepts.require("concept-one") == DemoDocument("beta")
+
+
+def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save(
+        "concept:mass",
+        IdentifiedDocument("concept:mass", ("mass",)),
+        message="save concept",
+    )
+
+    bound.claims.save(
+        "claim:1",
+        ClaimWithConceptDocument("claim:1", "mass"),
+        message="save valid claim",
+    )
+
+    assert bound.claims.require("claim:1").concept == "mass"
+    head = backend.branch_sha("master")
+    with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+        bound.claims.save(
+            "claim:2",
+            ClaimWithConceptDocument("claim:2", "missing"),
+            message="save invalid claim",
+        )
+    assert backend.branch_sha("master") == head
+
+
+def test_optional_foreign_key_allows_omission_but_rejects_present_missing_value() -> None:
+    registry = _reference_registry(required=False)
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+
+    bound.claims.save(
+        "claim:1",
+        ClaimWithConceptDocument("claim:1", None),
+        message="save omitted optional fk",
+    )
+
+    with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+        bound.claims.save(
+            "claim:2",
+            ClaimWithConceptDocument("claim:2", "missing"),
+            message="save invalid optional fk",
+        )
+
+
+def test_bound_transaction_validates_foreign_keys_against_post_transaction_state() -> None:
+    registry = _reference_registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+
+    with bound.transact(message="save graph") as transaction:
+        transaction.claims.save(
+            "claim:1",
+            ClaimWithConceptDocument("claim:1", "mass"),
+        )
+        transaction.concepts.save(
+            "concept:mass",
+            IdentifiedDocument("concept:mass", ("mass",)),
+        )
+
+    assert bound.claims.require("claim:1").concept == "mass"
+
+
+def test_bound_family_delete_rejects_dangling_dependents() -> None:
+    registry = _reference_registry()
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+    with bound.transact(message="save graph") as transaction:
+        transaction.concepts.save(
+            "concept:mass",
+            IdentifiedDocument("concept:mass", ("mass",)),
+        )
+        transaction.claims.save(
+            "claim:1",
+            ClaimWithConceptDocument("claim:1", "mass"),
+        )
+
+    with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+        bound.concepts.delete("concept:mass", message="delete referenced concept")
+
+    assert bound.concepts.exists("concept:mass")
 
 
 def test_bound_registry_resolves_by_artifact_family_and_recovers_ref_from_path() -> None:
