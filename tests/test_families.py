@@ -111,6 +111,7 @@ def _family_definition(
     identity_policy: FamilyIdentityPolicy | None = None,
     identity_field: str | None = None,
     reference_keys: tuple[ReferenceKey, ...] = (),
+    metadata: dict[str, object] | None = None,
 ) -> FamilyDefinition[Owner, DemoFamily, str, DemoDocument]:
     return FamilyDefinition(
         key=key,
@@ -122,6 +123,7 @@ def _family_definition(
         identity_policy=identity_policy,
         identity_field=identity_field,
         reference_keys=reference_keys,
+        metadata=metadata,
     )
 
 
@@ -319,6 +321,86 @@ def test_registry_rejects_duplicate_keys_names_and_accessors() -> None:
                 _family_definition(DemoFamily.CONCEPTS, "concepts", "concepts", accessor="rows"),
             ),
         )
+
+
+def test_family_definition_metadata_value_reads_missing_metadata_as_empty() -> None:
+    family = _family_definition(
+        DemoFamily.CLAIMS,
+        "claims",
+        "claims",
+        metadata={"category": "records", "rank": 20},
+    )
+    without_metadata = _family_definition(DemoFamily.NOTES, "notes", "notes")
+
+    assert family.metadata_value("category") == "records"
+    assert family.metadata_value("rank", default=100) == 20
+    assert family.metadata_value("missing", default=100) == 100
+    assert without_metadata.metadata_value("category") is None
+    assert without_metadata.metadata_value("category", default="unknown") == "unknown"
+
+
+def test_registry_selects_families_by_predicate_and_metadata() -> None:
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(
+            _family_definition(
+                DemoFamily.CLAIMS,
+                "claims",
+                "claims",
+                metadata={"category": "records", "rank": 20},
+            ),
+            _family_definition(
+                DemoFamily.CONCEPTS,
+                "concepts",
+                "concepts",
+                metadata={"category": "records", "rank": 10},
+            ),
+            _family_definition(
+                DemoFamily.NOTES,
+                "notes",
+                "notes",
+                metadata={"category": "support", "rank": 30},
+            ),
+        ),
+    )
+
+    assert tuple(family.name for family in registry.select(lambda family: family.metadata_value("rank", default=100) < 30)) == (
+        "claims",
+        "concepts",
+    )
+    assert tuple(family.name for family in registry.select_by_metadata("category", "records")) == (
+        "claims",
+        "concepts",
+    )
+    assert tuple(registry.select_by_metadata("category", "missing")) == ()
+
+
+def test_registry_by_metadata_requires_exactly_one_family() -> None:
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(
+            _family_definition(
+                DemoFamily.CLAIMS,
+                "claims",
+                "claims",
+                metadata={"category": "records", "root": "claims"},
+            ),
+            _family_definition(
+                DemoFamily.CONCEPTS,
+                "concepts",
+                "concepts",
+                metadata={"category": "records", "root": "concepts"},
+            ),
+        ),
+    )
+
+    assert registry.by_metadata("root", "claims").name == "claims"
+    with pytest.raises(KeyError, match="no family metadata"):
+        registry.by_metadata("root", "missing")
+    with pytest.raises(ValueError, match="multiple families"):
+        registry.by_metadata("category", "records")
 
 
 def test_duplicate_detection_does_not_rescan_collected_duplicates() -> None:
