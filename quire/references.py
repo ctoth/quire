@@ -291,12 +291,17 @@ class FamilyReferenceIndex(Generic[TRecord]):
     def ids(self) -> tuple[str, ...]:
         return tuple(self.records_by_id)
 
-    def resolve(self, reference: object) -> ReferenceResolution | None:
+    def resolve(
+        self,
+        reference: object,
+        *,
+        match_kind: Callable[[str, str, TRecord | None], tuple[str | None, str | None]] | None = None,
+    ) -> ReferenceResolution | None:
         return ReferenceIndex(
             family=self.family,
             records_by_id=self.records_by_id,
             lookup=self.lookup,
-        ).resolve(reference)
+        ).resolve(reference, match_kind=match_kind)
 
 
 @dataclass(frozen=True)
