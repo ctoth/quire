@@ -150,6 +150,32 @@ def test_family_reference_index_resolves_declarative_field_and_format_keys() -> 
     assert exc_info.value.reference == "missing"
 
 
+def test_family_reference_index_resolve_accepts_match_kind() -> None:
+    record = RichRecord(
+        artifact_id="claim:1",
+        logical_ids=(LogicalId(namespace="paper", value="c1"),),
+    )
+    index = FamilyReferenceIndex.from_records(
+        (record,),
+        artifact_id=lambda item: item.artifact_id,
+        keys=(ReferenceKey.format("{namespace}:{value}", from_field="logical_ids[]"),),
+        family="claim",
+    )
+
+    resolution = index.resolve(
+        "paper:c1",
+        match_kind=lambda requested, resolved_id, resolved_record: (
+            "logical_id",
+            f"{requested}->{resolved_id}:{resolved_record.artifact_id if resolved_record else ''}",
+        ),
+    )
+
+    assert resolution is not None
+    assert resolution.resolved_id == "claim:1"
+    assert resolution.matched_by == "logical_id"
+    assert resolution.matched_text == "paper:c1->claim:1:claim:1"
+
+
 def test_reference_key_rejects_malformed_field_paths_at_declaration_time() -> None:
     with pytest.raises(ValueError, match="field path"):
         ReferenceKey.field("logical_ids[].")
