@@ -374,6 +374,9 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
     def __post_init__(self) -> None:
         _require_reversible_ref_codec(self.codec)
 
+    def storage_root(self) -> str:
+        return self.namespace
+
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         stem = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
         return ArtifactAddress(
@@ -481,6 +484,9 @@ class HashScatteredYamlPlacement(Generic[TOwner, TRef]):
             raise ValueError(f"unknown hash-scattered filename_mode: {self.filename_mode}")
         if self.filename_mode == "encoded_ref":
             _require_reversible_ref_codec(self.codec)
+
+    def storage_root(self) -> str:
+        return self.namespace
 
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         encoded = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
@@ -626,6 +632,9 @@ class FixedFilePlacement(Generic[TOwner, TRef]):
     filename: str
     branch: BranchPlacement = BranchPlacement()
 
+    def storage_root(self) -> str:
+        raise ValueError("fixed-file placement does not expose a storage root")
+
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         return ArtifactAddress(
             branch=self.branch.branch_name(owner, ref),
@@ -677,6 +686,9 @@ class SubdirFixedFilePlacement(Generic[TOwner, TRef]):
 
     def __post_init__(self) -> None:
         _require_reversible_ref_codec(self.codec)
+
+    def storage_root(self) -> str:
+        return self.namespace
 
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         value = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
@@ -762,6 +774,9 @@ class NestedFlatYamlPlacement(Generic[TOwner, TRef]):
         _require_reversible_ref_codec(self.dir_codec)
         _require_reversible_ref_codec(self.stem_codec)
 
+    def storage_root(self) -> str:
+        return self.namespace
+
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         directory = encode_ref_value(_ref_value(ref, self.dir_ref_field), self.dir_codec)
         stem = encode_ref_value(_ref_value(ref, self.stem_ref_field), self.stem_codec)
@@ -846,6 +861,9 @@ class TemplateFilePlacement(Generic[TOwner, TRef]):
     def __post_init__(self) -> None:
         _require_ref_codec(self.codec)
 
+    def storage_root(self) -> str:
+        raise ValueError("template-file placement does not expose a storage root")
+
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         value = encode_ref_value(_ref_value(ref, self.ref_field), self.codec)
         return ArtifactAddress(
@@ -894,6 +912,9 @@ class SingletonFilePlacement(Generic[TOwner, TRef]):
     filename: str
     ref_factory: Callable[[], TRef]
     branch: BranchPlacement = BranchPlacement()
+
+    def storage_root(self) -> str:
+        raise ValueError("singleton-file placement does not expose a storage root")
 
     def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
         return ArtifactAddress(
