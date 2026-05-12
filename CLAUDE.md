@@ -17,5 +17,7 @@ The short version:
 - Generic revert support belongs in quire only at the Git/tree/ref level.
 - Application command policy, undo policy, command journals, and semantic
   workflows belong in consumers such as propstore.
+- Storage artifact identity and cross-family references belong in Quire family
+  declarations and FK validation, not ad hoc consumer maps.
 - Replace interfaces directly; do not keep compatibility aliases or bridge
   wrappers.
