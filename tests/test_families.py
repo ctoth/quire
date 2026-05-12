@@ -38,6 +38,7 @@ class Owner:
 class DemoFamily(str, Enum):
     CLAIMS = "claims"
     CONCEPTS = "concepts"
+    NOTES = "notes"
 
 
 def _artifact_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, DemoDocument]:
@@ -542,6 +543,50 @@ def test_bound_family_delete_rejects_dangling_dependents() -> None:
         bound.concepts.delete("concept:mass", message="delete referenced concept")
 
     assert bound.concepts.exists("concept:mass")
+
+
+def test_unrelated_family_save_does_not_validate_separate_foreign_key_graph() -> None:
+    claims = FamilyDefinition(
+        key=DemoFamily.CLAIMS,
+        name="claims",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=_claim_with_concept_family("claims_artifact", "claims"),
+        identity_field="artifact_id",
+        foreign_keys=(
+            ForeignKeySpec(
+                name="claim_concept",
+                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                source_family="claims",
+                source_field="concept",
+                target_family="concepts",
+            ),
+        ),
+    )
+    concepts = FamilyDefinition(
+        key=DemoFamily.CONCEPTS,
+        name="concepts",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
+        identity_field="artifact_id",
+    )
+    notes = _family_definition(DemoFamily.NOTES, "notes", "notes")
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(claims, concepts, notes),
+    )
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+    store.save(
+        claims.artifact_family,
+        "claim:bad",
+        ClaimWithConceptDocument("claim:bad", "missing"),
+        message="seed invalid graph outside registry validation",
+    )
+
+    bound.notes.save("note", DemoDocument("unrelated"), message="save unrelated")
+
+    assert bound.notes.require("note") == DemoDocument("unrelated")
 
 
 def test_bound_registry_resolves_by_artifact_family_and_recovers_ref_from_path() -> None:

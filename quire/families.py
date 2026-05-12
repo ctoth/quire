@@ -605,14 +605,17 @@ def _validate_registry_post_state(
     saves: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object, object]] = (),
     deletes: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object]] = (),
 ) -> None:
-    relevant_names = {
-        definition.name
-        for definition in registry.families
-        if definition.foreign_keys
-    }
+    changed_names: set[str] = set()
+    for definition, _ref, _document in saves:
+        changed_names.add(definition.name)
+    for definition, _ref in deletes:
+        changed_names.add(definition.name)
+    relevant_names: set[str] = set()
     for definition in registry.families:
         for spec in definition.foreign_keys:
-            relevant_names.add(spec.target_family)
+            if spec.source_family in changed_names or spec.target_family in changed_names:
+                relevant_names.add(spec.source_family)
+                relevant_names.add(spec.target_family)
     if not relevant_names:
         return
 
@@ -639,7 +642,11 @@ def _validate_registry_post_state(
         if definition.name in records_by_family and definition.identity_field is not None
     }
     for definition in registry.families:
+        if definition.name not in records_by_family:
+            continue
         for spec in definition.foreign_keys:
+            if spec.target_family not in indexes:
+                continue
             target_index = indexes[spec.target_family]
             for record in records_by_family[definition.name].values():
                 validate_foreign_key(spec, record, target_index)  # type: ignore[arg-type]
