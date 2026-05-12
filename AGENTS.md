@@ -12,6 +12,8 @@ propstore-specific semantics.
   source promotion, sidecars, command names, or undo policy semantics.
 - Propstore and other consumers own their application commands, domain schemas,
   semantic families, workflows, and user-facing policies.
+- Storage artifact identity and cross-family references belong in Quire family
+  declarations and FK validation, not ad hoc consumer maps.
 
 ## Iterator-First APIs
 
