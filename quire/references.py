@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Generic, TypeVar
+from typing import Generic, Protocol, TypeAlias, TypeVar
 
 from quire.versions import VersionId
 
@@ -18,6 +18,12 @@ class AmbiguousReferenceError(ValueError):
         )
         self.reference = reference
         self.candidates = candidates
+
+
+class MissingReferenceError(ValueError):
+    def __init__(self, reference: str) -> None:
+        super().__init__(f"Missing reference {reference!r}")
+        self.reference = reference
 
 
 class ForeignKeyValidationError(ValueError):
@@ -170,6 +176,129 @@ def build_reference_lookup(
     return finalize_reference_lookup(lookup)
 
 
+class ReferenceKeyExtractor(Protocol[TRecord]):
+    def __call__(self, record: TRecord) -> Iterable[str | None] | str | None:
+        ...
+
+
+ReferenceKeySpec: TypeAlias = "ReferenceKey | ReferenceKeyExtractor[TRecord]"
+
+
+@dataclass(frozen=True)
+class ReferenceKey:
+    field_path: str | None = None
+    template: str | None = None
+    from_field: str | None = None
+
+    @classmethod
+    def field(cls, field_path: str) -> ReferenceKey:
+        _validate_field_path(field_path)
+        return cls(field_path=field_path)
+
+    @classmethod
+    def format(cls, template: str, *, from_field: str) -> ReferenceKey:
+        if not template:
+            raise ValueError("reference key format template cannot be empty")
+        _validate_field_path(from_field)
+        return cls(template=template, from_field=from_field)
+
+    def __call__(self, record: object) -> tuple[str, ...]:
+        if self.field_path is not None:
+            return _string_values(_field_values(record, self.field_path))
+        if self.template is not None and self.from_field is not None:
+            return tuple(
+                value
+                for item in _field_values(record, self.from_field)
+                if (value := self._format_item(item)) is not None
+            )
+        raise ValueError("invalid reference key declaration")
+
+    def contract_body(self) -> dict[str, str]:
+        if self.field_path is not None:
+            return {"kind": "field", "field": self.field_path}
+        if self.template is not None and self.from_field is not None:
+            return {
+                "kind": "format",
+                "template": self.template,
+                "from_field": self.from_field,
+            }
+        raise ValueError("invalid reference key declaration")
+
+    def _format_item(self, item: object) -> str | None:
+        assert self.template is not None
+        values = _format_mapping(item)
+        try:
+            formatted = self.template.format_map(values)
+        except KeyError as exc:
+            raise ValueError(f"reference key format field is missing: {exc.args[0]!r}") from exc
+        if not formatted:
+            return None
+        return formatted
+
+
+@dataclass(frozen=True)
+class FamilyReferenceIndex(Generic[TRecord]):
+    family: str
+    records_by_id: Mapping[str, TRecord]
+    lookup: Mapping[str, tuple[str, ...]]
+
+    @classmethod
+    def from_records(
+        cls,
+        records: Iterable[TRecord],
+        *,
+        artifact_id: Callable[[TRecord], str | None],
+        keys: Iterable[ReferenceKeySpec[TRecord]] = (),
+        family: str = "",
+    ) -> FamilyReferenceIndex[TRecord]:
+        records_by_id: dict[str, TRecord] = {}
+        lookup: dict[str, list[str]] = {}
+        for record in records:
+            resolved_id = artifact_id(record)
+            if not isinstance(resolved_id, str) or not resolved_id:
+                continue
+            records_by_id.setdefault(resolved_id, record)
+            extend_reference_lookup(lookup, resolved_id, resolved_id)
+            for key in keys:
+                for value in _key_values(key, record):
+                    extend_reference_lookup(lookup, value, resolved_id)
+        finalized = finalize_reference_lookup(lookup)
+        for reference, candidates in finalized.items():
+            if len(candidates) > 1:
+                raise AmbiguousReferenceError(reference, candidates)
+        return cls(
+            family=family,
+            records_by_id=MappingProxyType(records_by_id),
+            lookup=finalized,
+        )
+
+    def resolve_id(self, reference: object) -> str | None:
+        return ReferenceIndex(
+            family=self.family,
+            records_by_id=self.records_by_id,
+            lookup=self.lookup,
+        ).resolve_id(reference)
+
+    def require_id(self, reference: str) -> str:
+        resolved = self.resolve_id(reference)
+        if resolved is None:
+            raise MissingReferenceError(reference)
+        return resolved
+
+    def exists(self, reference: object) -> bool:
+        return self.resolve_id(reference) is not None
+
+    def ids(self) -> tuple[str, ...]:
+        return tuple(self.records_by_id)
+
+    def resolve(self, reference: object) -> ReferenceResolution | None:
+        return ReferenceIndex(
+            family=self.family,
+            records_by_id=self.records_by_id,
+            lookup=self.lookup,
+        ).resolve(reference)
+
+
 @dataclass(frozen=True)
 class ReferenceIndex(Generic[TRecord]):
     family: str
@@ -244,3 +373,38 @@ class CrossFamilyReferenceIndex:
 
     def exists(self, target_family: str, reference: object) -> bool:
         return self.family(target_family).exists(reference)
+
+
+def _validate_field_path(field_path: str) -> None:
+    if not field_path:
+        raise ValueError("reference key field path cannot be empty")
+    for raw_part in field_path.split("."):
+        if not raw_part:
+            raise ValueError(f"invalid reference key field path: {field_path!r}")
+        part = raw_part[:-2] if raw_part.endswith("[]") else raw_part
+        if not part or "[]" in part:
+            raise ValueError(f"invalid reference key field path: {field_path!r}")
+
+
+def _string_values(values: Iterable[object]) -> tuple[str, ...]:
+    return tuple(value for value in values if isinstance(value, str) and value)
+
+
+def _format_mapping(item: object) -> Mapping[str, object]:
+    if isinstance(item, Mapping):
+        return item
+    names = tuple(
+        name
+        for name in dir(item)
+        if not name.startswith("_") and not callable(getattr(item, name))
+    )
+    return MappingProxyType({name: getattr(item, name) for name in names})
+
+
+def _key_values(key: ReferenceKeySpec[TRecord], record: TRecord) -> tuple[str, ...]:
+    raw_values = key(record)
+    if raw_values is None:
+        return ()
+    if isinstance(raw_values, str):
+        return (raw_values,) if raw_values else ()
+    return _string_values(raw_values)
