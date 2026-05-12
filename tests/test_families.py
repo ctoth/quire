@@ -403,6 +403,26 @@ def test_registry_by_metadata_requires_exactly_one_family() -> None:
         registry.by_metadata("category", "records")
 
 
+def test_family_definition_and_registry_resolve_storage_roots_from_placements() -> None:
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(
+            _family_definition(DemoFamily.CLAIMS, "claims", "books"),
+            _family_definition(DemoFamily.CONCEPTS, "concepts", "concepts"),
+        ),
+    )
+
+    assert registry.by_name("claims").storage_root() == "books"
+    assert registry.by_storage_root("books").name == "claims"
+    assert registry.family_for_path("books/example.yaml").name == "claims"
+    assert registry.family_for_path("concepts\\mass.yaml").name == "concepts"
+    with pytest.raises(KeyError, match="unknown storage root"):
+        registry.by_storage_root("missing")
+    with pytest.raises(KeyError, match="unknown storage root"):
+        registry.family_for_path("missing/example.yaml")
+
+
 def test_duplicate_detection_does_not_rescan_collected_duplicates() -> None:
     class CountingKey:
         comparisons = 0

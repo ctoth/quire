@@ -158,6 +158,41 @@ def test_fixed_template_and_singleton_placements_have_contract_bodies():
     assert singleton.contract_body()["kind"] == "singleton-file"
 
 
+def test_namespace_backed_placements_expose_storage_roots() -> None:
+    flat = FlatYamlPlacement("books", DemoRef, ref_field="name")
+    scattered = HashScatteredYamlPlacement("papers", DemoRef, ref_field="name")
+    subdir = SubdirFixedFilePlacement(
+        namespace="bundles",
+        filename="document.yaml",
+        ref_factory=DemoRef,
+        ref_field="name",
+    )
+    nested = NestedFlatYamlPlacement(
+        namespace="events",
+        ref_factory=NestedRef,
+        dir_ref_field="group",
+        stem_ref_field="name",
+    )
+
+    assert flat.storage_root() == "books"
+    assert scattered.storage_root() == "papers"
+    assert subdir.storage_root() == "bundles"
+    assert nested.storage_root() == "events"
+
+
+def test_non_namespace_placements_reject_storage_root_lookup() -> None:
+    fixed = FixedFilePlacement[Owner, DemoRef]("source.yaml")
+    template = TemplateFilePlacement[Owner, DemoRef]("merge/{stem}.yaml", ref_field="name")
+    singleton = SingletonFilePlacement[Owner, str]("merge/manifest.yaml", ref_factory=lambda: "manifest")
+
+    with pytest.raises(ValueError, match="storage root"):
+        fixed.storage_root()
+    with pytest.raises(ValueError, match="storage root"):
+        template.storage_root()
+    with pytest.raises(ValueError, match="storage root"):
+        singleton.storage_root()
+
+
 def test_branch_template_can_preserve_case_for_safe_source_slugs():
     placement = BranchPlacement(
         policy="template",
