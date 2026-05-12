@@ -92,6 +92,12 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
             return default
         return self.metadata.get(key, default)
 
+    def storage_root(self) -> str:
+        storage_root = getattr(self.artifact_family.placement, "storage_root", None)
+        if not callable(storage_root):
+            raise ValueError(f"family {self.name!r} placement does not expose a storage root")
+        return str(storage_root())
+
     def reference_index_from_records(
         self,
         records: Sequence[TDoc],
@@ -219,6 +225,29 @@ class FamilyRegistry(Generic[TOwner, TKey]):
             names = ", ".join(family.name for family in matches)
             raise ValueError(f"multiple families match metadata {key!r}={value!r}: {names}")
         return matches[0]
+
+    def by_storage_root(self, root: str) -> FamilyDefinition[TOwner, TKey, Any, Any]:
+        matches: list[FamilyDefinition[TOwner, TKey, Any, Any]] = []
+        unavailable: list[ValueError] = []
+        for family in self.families:
+            try:
+                if family.storage_root() == root:
+                    matches.append(family)
+            except ValueError as error:
+                unavailable.append(error)
+        if not matches:
+            if len(self.families) == 1 and unavailable:
+                raise unavailable[0]
+            raise KeyError(f"unknown storage root: {root!r}")
+        if len(matches) > 1:
+            names = ", ".join(family.name for family in matches)
+            raise ValueError(f"multiple families use storage root {root!r}: {names}")
+        return matches[0]
+
+    def family_for_path(self, path: str) -> FamilyDefinition[TOwner, TKey, Any, Any]:
+        normalized = path.replace("\\", "/").strip("/")
+        root = normalized.split("/", 1)[0]
+        return self.by_storage_root(root)
 
     def bind(self, owner: TOwner, store: DocumentFamilyStore[TOwner]) -> BoundFamilyRegistry[TOwner, TKey]:
         return BoundFamilyRegistry(owner=owner, store=store, registry=self)
