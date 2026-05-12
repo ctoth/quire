@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from dataclasses import dataclass, field
+from typing import Any, Generic, TypeVar, cast
 
 from quire.artifacts import ArtifactAddress, ArtifactFamily, ArtifactHandle, PreparedArtifact
 from quire.contracts import CompatibilityMarker, ContractEntry, ContractManifest
-from quire.family_store import DocumentFamilyStore, DocumentFamilyTransaction
-from quire.references import FamilyReferenceIndex, ForeignKeySpec, ReferenceKey
+from quire.family_store import DocumentFamilyStore, DocumentFamilyTransaction, address_path
+from quire.references import FamilyReferenceIndex, ForeignKeySpec, ReferenceKey, validate_foreign_key
 from quire.versions import VersionId
 
 TOwner = TypeVar("TOwner")
@@ -143,6 +143,18 @@ class FamilyRegistry(Generic[TOwner, TKey]):
             raise ValueError(f"duplicate family names: {', '.join(map(str, duplicate_names))}")
         if duplicate_accessors:
             raise ValueError(f"duplicate family accessors: {', '.join(map(str, duplicate_accessors))}")
+        name_set = set(names)
+        for family in self.families:
+            for spec in family.foreign_keys:
+                if spec.source_family != family.name:
+                    raise ValueError(
+                        f"foreign key {spec.name!r} source family {spec.source_family!r} "
+                        f"does not match family {family.name!r}"
+                    )
+                if spec.target_family not in name_set:
+                    raise ValueError(
+                        f"foreign key {spec.name!r} target family is unknown: {spec.target_family!r}"
+                    )
 
     def by_key(self, key: TKey) -> FamilyDefinition[TOwner, TKey, Any, Any]:
         for family in self.families:
@@ -239,18 +251,18 @@ class BoundFamilyRegistry(Generic[TOwner, TKey]):
 
     def by_key(self, key: TKey) -> BoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_key(key)
-        return BoundFamily(self.store, definition.artifact_family, definition)
+        return BoundFamily(self.store, definition.artifact_family, definition, self.registry)
 
     def by_name(self, name: str) -> BoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_name(name)
-        return BoundFamily(self.store, definition.artifact_family, definition)
+        return BoundFamily(self.store, definition.artifact_family, definition, self.registry)
 
     def by_artifact_family(
         self,
         artifact_family: ArtifactFamily[TOwner, Any, Any],
     ) -> BoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_artifact_family(artifact_family)
-        return BoundFamily(self.store, definition.artifact_family, definition)
+        return BoundFamily(self.store, definition.artifact_family, definition, self.registry)
 
     def transact(
         self,
@@ -270,7 +282,7 @@ class BoundFamilyRegistry(Generic[TOwner, TKey]):
 
     def __getattr__(self, name: str) -> BoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_accessor(name)
-        return BoundFamily(self.store, definition.artifact_family, definition)
+        return BoundFamily(self.store, definition.artifact_family, definition, self.registry)
 
 
 @dataclass(frozen=True)
@@ -278,6 +290,7 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
     store: DocumentFamilyStore[TOwner]
     family: ArtifactFamily[TOwner, TRef, TDoc]
     definition: FamilyDefinition[TOwner, Any, TRef, TDoc] | None = None
+    registry: FamilyRegistry[TOwner, Any] | None = None
 
     def address(
         self,
@@ -379,12 +392,20 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        return self.store.save(
-            self.family,
-            ref,
-            doc,
+        prepared = self.store.prepare(self.family, ref, doc, branch=branch)
+        if self.definition is not None and self.registry is not None:
+            _validate_registry_post_state(
+                self.store,
+                self.registry,
+                branch=prepared.branch,
+                saves=((self.definition, ref, prepared.document),),
+            )
+        backend = self.store._require_backend()
+        return backend.commit_batch(
+            adds={address_path(prepared.address): prepared.content},
+            deletes=[],
             message=message,
-            branch=branch,
+            branch=prepared.branch,
             expected_head=expected_head,
         )
 
@@ -396,11 +417,21 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        return self.store.delete(
-            self.family,
-            ref,
+        address = self.store.address(self.family, ref, branch=branch)
+        target_branch = branch or address.branch
+        if self.definition is not None and self.registry is not None:
+            _validate_registry_post_state(
+                self.store,
+                self.registry,
+                branch=target_branch,
+                deletes=((self.definition, ref),),
+            )
+        backend = self.store._require_backend()
+        return backend.commit_batch(
+            adds={},
+            deletes=[address_path(address)],
             message=message,
-            branch=branch,
+            branch=target_branch,
             expected_head=expected_head,
         )
 
@@ -414,15 +445,9 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
-        return self.store.move(
-            self.family,
-            old_ref,
-            new_ref,
-            doc,
-            message=message,
-            branch=branch,
-            expected_head=expected_head,
-        )
+        with self.store.transact(message=message, branch=branch, expected_head=expected_head) as transaction:
+            transaction.move(self.family, old_ref, new_ref, doc)
+        return cast(str, transaction.commit_sha)
 
 
 @dataclass(frozen=True)
@@ -461,6 +486,8 @@ class PinnedBoundFamily(Generic[TOwner, TRef, TDoc]):
 class BoundFamilyTransaction(Generic[TOwner, TKey]):
     transaction: DocumentFamilyTransaction[TOwner]
     registry: FamilyRegistry[TOwner, TKey]
+    _saves: list[tuple[FamilyDefinition[TOwner, TKey, Any, Any], object, object]] = field(default_factory=list)
+    _deletes: list[tuple[FamilyDefinition[TOwner, TKey, Any, Any], object]] = field(default_factory=list)
 
     @property
     def commit_sha(self) -> str | None:
@@ -472,20 +499,29 @@ class BoundFamilyTransaction(Generic[TOwner, TKey]):
 
     def by_key(self, key: TKey) -> TransactionalBoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_key(key)
-        return TransactionalBoundFamily(self.transaction, definition.artifact_family)
+        return TransactionalBoundFamily(self, definition)
 
     def by_name(self, name: str) -> TransactionalBoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_name(name)
-        return TransactionalBoundFamily(self.transaction, definition.artifact_family)
+        return TransactionalBoundFamily(self, definition)
 
     def by_artifact_family(
         self,
         artifact_family: ArtifactFamily[TOwner, Any, Any],
     ) -> TransactionalBoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_artifact_family(artifact_family)
-        return TransactionalBoundFamily(self.transaction, definition.artifact_family)
+        return TransactionalBoundFamily(self, definition)
 
     def commit(self) -> str:
+        target_branch = self.transaction.branch
+        if target_branch is not None:
+            _validate_registry_post_state(
+                self.transaction.store,
+                self.registry,
+                branch=target_branch,
+                saves=tuple(self._saves),
+                deletes=tuple(self._deletes),
+            )
         return self.transaction.commit()
 
     def __enter__(self) -> BoundFamilyTransaction[TOwner, TKey]:
@@ -493,17 +529,28 @@ class BoundFamilyTransaction(Generic[TOwner, TKey]):
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is None and self.transaction.commit_sha is None and (self._saves or self._deletes):
+            self.commit()
+            return None
         return self.transaction.__exit__(exc_type, exc, tb)
 
     def __getattr__(self, name: str) -> TransactionalBoundFamily[TOwner, Any, Any]:
         definition = self.registry.by_accessor(name)
-        return TransactionalBoundFamily(self.transaction, definition.artifact_family)
+        return TransactionalBoundFamily(self, definition)
 
 
 @dataclass(frozen=True)
 class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
-    transaction: DocumentFamilyTransaction[TOwner]
-    family: ArtifactFamily[TOwner, TRef, TDoc]
+    bound_transaction: BoundFamilyTransaction[TOwner, Any]
+    definition: FamilyDefinition[TOwner, Any, TRef, TDoc]
+
+    @property
+    def transaction(self) -> DocumentFamilyTransaction[TOwner]:
+        return self.bound_transaction.transaction
+
+    @property
+    def family(self) -> ArtifactFamily[TOwner, TRef, TDoc]:
+        return self.definition.artifact_family
 
     def coerce(self, payload: object, *, source: str) -> TDoc:
         return self.transaction.coerce(self.family, payload, source=source)
@@ -516,12 +563,26 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
 
     def save(self, ref: TRef, doc: TDoc) -> None:
         self.transaction.save(self.family, ref, doc)
+        self.bound_transaction._saves.append((self.definition, ref, doc))
+        self.bound_transaction._deletes[:] = [
+            item
+            for item in self.bound_transaction._deletes
+            if item != (self.definition, ref)
+        ]
 
     def delete(self, ref: TRef) -> None:
         self.transaction.delete(self.family, ref)
+        self.bound_transaction._deletes.append((self.definition, ref))
+        self.bound_transaction._saves[:] = [
+            item
+            for item in self.bound_transaction._saves
+            if item[0] != self.definition or item[1] != ref
+        ]
 
     def move(self, old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
         self.transaction.move(self.family, old_ref, new_ref, doc)
+        self.bound_transaction._deletes.append((self.definition, old_ref))
+        self.bound_transaction._saves.append((self.definition, new_ref, doc))
 
 
 def _duplicates(values: Sequence[object]) -> list[object]:
@@ -534,3 +595,34 @@ def _duplicates(values: Sequence[object]) -> list[object]:
             duplicate_values.add(value)
         seen.add(value)
     return duplicates
+
+
+def _validate_registry_post_state(
+    store: DocumentFamilyStore[TOwner],
+    registry: FamilyRegistry[TOwner, Any],
+    *,
+    branch: str,
+    saves: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object, object]] = (),
+    deletes: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object]] = (),
+) -> None:
+    records_by_family: dict[str, dict[object, object]] = {}
+    for definition in registry.families:
+        records_by_family[definition.name] = {
+            handle.ref: handle.document
+            for handle in store.iter_handles(definition.artifact_family, branch=branch)
+        }
+    for definition, ref in deletes:
+        records_by_family[definition.name].pop(ref, None)
+    for definition, ref, document in saves:
+        records_by_family[definition.name][ref] = document
+
+    indexes = {
+        definition.name: definition.reference_index_from_records(tuple(records_by_family[definition.name].values()))
+        for definition in registry.families
+        if definition.identity_field is not None
+    }
+    for definition in registry.families:
+        for spec in definition.foreign_keys:
+            target_index = indexes[spec.target_family]
+            for record in records_by_family[definition.name].values():
+                validate_foreign_key(spec, record, target_index)  # type: ignore[arg-type]
