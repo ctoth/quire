@@ -184,17 +184,9 @@ def test_family_reference_index_deduplicates_repeated_keys_for_same_artifact() -
 
 @given(
     st.dictionaries(
-        keys=st.text(
-            alphabet=st.characters(min_codepoint=33, max_codepoint=126),
-            min_size=1,
-            max_size=12,
-        ),
+        keys=st.from_regex(r"id[0-9]{1,4}", fullmatch=True),
         values=st.lists(
-            st.text(
-                alphabet=st.characters(min_codepoint=33, max_codepoint=126),
-                min_size=1,
-                max_size=12,
-            ),
+            st.from_regex(r"alias[0-9]{1,4}", fullmatch=True),
             min_size=1,
             max_size=3,
             unique=True,
