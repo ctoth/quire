@@ -605,21 +605,38 @@ def _validate_registry_post_state(
     saves: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object, object]] = (),
     deletes: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object]] = (),
 ) -> None:
+    relevant_names = {
+        definition.name
+        for definition in registry.families
+        if definition.foreign_keys
+    }
+    for definition in registry.families:
+        for spec in definition.foreign_keys:
+            relevant_names.add(spec.target_family)
+    if not relevant_names:
+        return
+
     records_by_family: dict[str, dict[object, object]] = {}
     for definition in registry.families:
+        if definition.name not in relevant_names:
+            continue
         records_by_family[definition.name] = {
             handle.ref: handle.document
             for handle in store.iter_handles(definition.artifact_family, branch=branch)
         }
     for definition, ref in deletes:
+        if definition.name not in records_by_family:
+            continue
         records_by_family[definition.name].pop(ref, None)
     for definition, ref, document in saves:
+        if definition.name not in records_by_family:
+            continue
         records_by_family[definition.name][ref] = document
 
     indexes = {
         definition.name: definition.reference_index_from_records(tuple(records_by_family[definition.name].values()))
         for definition in registry.families
-        if definition.identity_field is not None
+        if definition.name in records_by_family and definition.identity_field is not None
     }
     for definition in registry.families:
         for spec in definition.foreign_keys:
