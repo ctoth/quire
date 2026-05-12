@@ -114,7 +114,53 @@ real commit against the object store with a real tree and a real SHA.
 | `FamilyRegistry` → `BoundFamilyRegistry` → `BoundFamily` | Grouped families with duplicate-key/name/accessor checks; `bound.<accessor>.save(...)` attribute access. |
 | `DocumentFamilyStore` + `DocumentFamilyTransaction` | Load/save/move/delete, prepare-then-commit, batched transactions. |
 | `ContractManifest` + `check_contract_manifest` | Persisted ABI. Body drift without a version bump or compatibility marker raises. |
-| `ReferenceIndex`, `CrossFamilyReferenceIndex`, `ForeignKeySpec` | Cross-family lookup with ambiguity reporting. |
+| `ReferenceKey`, `FamilyReferenceIndex`, `ForeignKeySpec` | Declarative family references and mandatory cross-family FK validation. |
+
+## References and foreign keys
+
+Families can declare the artifact identity field and any additional reference
+keys that should resolve to that identity. Quire builds `FamilyReferenceIndex`
+values from loaded family records and raises typed errors for missing or
+ambiguous references.
+
+```python
+from quire.references import ForeignKeySpec, ReferenceKey
+
+concepts = FamilyDefinition(
+    key="concepts",
+    name="concepts",
+    contract_version=V,
+    artifact_family=concept_family,
+    identity_field="artifact_id",
+    reference_keys=(
+        ReferenceKey.field("artifact_id"),
+        ReferenceKey.field("aliases[]"),
+    ),
+)
+
+claims = FamilyDefinition(
+    key="claims",
+    name="claims",
+    contract_version=V,
+    artifact_family=claim_family,
+    identity_field="artifact_id",
+    foreign_keys=(
+        ForeignKeySpec(
+            name="claim_concept",
+            contract_version=V,
+            source_family="claims",
+            source_field="concept",
+            target_family="concepts",
+        ),
+    ),
+)
+```
+
+Bound family writes and transactions validate declared foreign keys before
+committing. Validation uses the post-transaction state, so a transaction can add
+a target record and a dependent record together. Deleting or replacing a target
+that would leave existing dependents dangling fails before the commit is
+written.
 
 ## Contracts, briefly
 
