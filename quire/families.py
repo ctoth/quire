@@ -4,7 +4,14 @@ from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, cast
 
-from quire.artifacts import ArtifactAddress, ArtifactFamily, ArtifactHandle, PreparedArtifact
+from quire.artifacts import (
+    ArtifactAddress,
+    ArtifactContext,
+    ArtifactFamily,
+    ArtifactHandle,
+    ArtifactPlacementPolicy,
+    PreparedArtifact,
+)
 from quire.contracts import CompatibilityMarker, ContractEntry, ContractManifest
 from quire.family_store import DocumentFamilyStore, DocumentFamilyTransaction, address_path
 from quire.references import FamilyReferenceIndex, ForeignKeySpec, ReferenceKey, validate_foreign_key
@@ -53,6 +60,61 @@ class FamilyIdentityPolicy:
             "version_excluded_fields": self.version_excluded_fields,
             "source_local_fields": self.source_local_fields,
         }
+
+
+@dataclass(frozen=True)
+class FamilyDeclaration(Generic[TOwner, TKey, TRef, TDoc]):
+    key: TKey
+    name: str
+    contract_version: VersionId
+    artifact_name: str
+    doc_type: type[TDoc]
+    placement: ArtifactPlacementPolicy[TOwner, TRef]
+    artifact_contract_version: VersionId | None = None
+    accessor: str | None = None
+    coerce_payload: Callable[[object, str], TDoc] | None = None
+    decode_bytes: Callable[[bytes, str], TDoc] | None = None
+    encode_document: Callable[[TDoc], bytes] | None = None
+    render_document: Callable[[TDoc], str] | None = None
+    document_payload: Callable[[TDoc], object] | None = None
+    normalize_for_write: Callable[[ArtifactContext[TOwner, TRef], TDoc, Any], TDoc] | None = None
+    validate_for_write: Callable[[ArtifactContext[TOwner, TRef], TDoc, Any], None] | None = None
+    scan_type: type[Any] | None = None
+    foreign_keys: tuple[ForeignKeySpec, ...] = ()
+    identity_policy: FamilyIdentityPolicy | None = None
+    identity_field: str | None = None
+    reference_keys: tuple[ReferenceKey, ...] = ()
+    metadata: Mapping[str, object] | None = None
+
+    def to_artifact_family(self) -> ArtifactFamily[TOwner, TRef, TDoc]:
+        return ArtifactFamily(
+            name=self.artifact_name,
+            contract_version=self.artifact_contract_version or self.contract_version,
+            doc_type=self.doc_type,
+            placement=self.placement,
+            coerce_payload=self.coerce_payload,
+            decode_bytes=self.decode_bytes,
+            encode_document=self.encode_document,
+            render_document=self.render_document,
+            document_payload=self.document_payload,
+            normalize_for_write=self.normalize_for_write,
+            validate_for_write=self.validate_for_write,
+            scan_type=self.scan_type,
+        )
+
+    def to_definition(self) -> FamilyDefinition[TOwner, TKey, TRef, TDoc]:
+        return FamilyDefinition(
+            key=self.key,
+            name=self.name,
+            contract_version=self.contract_version,
+            artifact_family=self.to_artifact_family(),
+            accessor=self.accessor,
+            foreign_keys=self.foreign_keys,
+            identity_policy=self.identity_policy,
+            identity_field=self.identity_field,
+            reference_keys=self.reference_keys,
+            metadata=self.metadata,
+        )
 
 
 @dataclass(frozen=True)
