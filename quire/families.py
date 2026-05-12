@@ -137,6 +137,7 @@ class FamilyRegistry(Generic[TOwner, TKey]):
     name: str
     contract_version: VersionId
     families: tuple[FamilyDefinition[TOwner, TKey, Any, Any], ...]
+    validate_foreign_keys: bool = field(default=True, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -154,18 +155,19 @@ class FamilyRegistry(Generic[TOwner, TKey]):
             raise ValueError(f"duplicate family names: {', '.join(map(str, duplicate_names))}")
         if duplicate_accessors:
             raise ValueError(f"duplicate family accessors: {', '.join(map(str, duplicate_accessors))}")
-        name_set = set(names)
-        for family in self.families:
-            for spec in family.foreign_keys:
-                if spec.source_family != family.name:
-                    raise ValueError(
-                        f"foreign key {spec.name!r} source family {spec.source_family!r} "
-                        f"does not match family {family.name!r}"
-                    )
-                if spec.target_family not in name_set:
-                    raise ValueError(
-                        f"foreign key {spec.name!r} target family is unknown: {spec.target_family!r}"
-                    )
+        if self.validate_foreign_keys:
+            name_set = set(names)
+            for family in self.families:
+                for spec in family.foreign_keys:
+                    if spec.source_family != family.name:
+                        raise ValueError(
+                            f"foreign key {spec.name!r} source family {spec.source_family!r} "
+                            f"does not match family {family.name!r}"
+                        )
+                    if spec.target_family not in name_set:
+                        raise ValueError(
+                            f"foreign key {spec.name!r} target family is unknown: {spec.target_family!r}"
+                        )
 
     def by_key(self, key: TKey) -> FamilyDefinition[TOwner, TKey, Any, Any]:
         for family in self.families:
