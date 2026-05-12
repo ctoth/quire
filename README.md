@@ -116,6 +116,31 @@ real commit against the object store with a real tree and a real SHA.
 | `ContractManifest` + `check_contract_manifest` | Persisted ABI. Body drift without a version bump or compatibility marker raises. |
 | `ReferenceKey`, `FamilyReferenceIndex`, `ForeignKeySpec` | Declarative family references and mandatory cross-family FK validation. |
 
+## Registry queries
+
+`FamilyRegistry` has generic lookup helpers for storage applications that need
+to select families without hard-coding their catalog. Metadata stays
+application-owned, but Quire provides the mechanics:
+
+```python
+semantic = registry.select_by_metadata("semantic", True)
+rules = registry.by_metadata("root", "rules")
+ordered = registry.select(lambda family: family.metadata_value("rank", 100) < 50)
+```
+
+Placement-backed roots are also queryable without inspecting
+`placement.contract_body()`:
+
+```python
+assert registry.by_storage_root("claims").name == "claims"
+assert registry.family_for_path("claims/example.yaml").name == "claims"
+assert registry.by_name("claims").storage_root() == "claims"
+```
+
+Query-only views can pass `validate_foreign_keys=False` when they intentionally
+contain only a subset of a larger registry. Duplicate keys, names, and
+accessors are still rejected.
+
 ## References and foreign keys
 
 Families can declare the artifact identity field and any additional reference
