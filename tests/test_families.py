@@ -5,18 +5,24 @@ from enum import Enum
 
 import msgspec
 import pytest
+from hypothesis import given, strategies as st
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.contracts import check_contract_manifest
 from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry, _duplicates
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore, HeadMismatchError
-from quire.references import ForeignKeySpec
+from quire.references import AmbiguousReferenceError, ForeignKeySpec, ReferenceKey
 from quire.versions import VersionId
 
 
 class DemoDocument(msgspec.Struct):
     name: str
+
+
+class IdentifiedDocument(msgspec.Struct):
+    artifact_id: str
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,15 @@ def _artifact_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, De
     )
 
 
+def _identified_artifact_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, IdentifiedDocument]:
+    return ArtifactFamily(
+        name=name,
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=IdentifiedDocument,
+        placement=FlatYamlPlacement(namespace, str),
+    )
+
+
 def _family_definition(
     key: DemoFamily,
     name: str,
@@ -46,6 +61,8 @@ def _family_definition(
     accessor: str | None = None,
     foreign_keys: tuple[ForeignKeySpec, ...] = (),
     identity_policy: FamilyIdentityPolicy | None = None,
+    identity_field: str | None = None,
+    reference_keys: tuple[ReferenceKey, ...] = (),
 ) -> FamilyDefinition[Owner, DemoFamily, str, DemoDocument]:
     return FamilyDefinition(
         key=key,
@@ -55,6 +72,8 @@ def _family_definition(
         artifact_family=_artifact_family(f"{name}_artifact", namespace),
         foreign_keys=foreign_keys,
         identity_policy=identity_policy,
+        identity_field=identity_field,
+        reference_keys=reference_keys,
     )
 
 
@@ -110,6 +129,114 @@ def test_family_contract_slots_reject_placeholder_versions() -> None:
             contract_version=VersionId("draft", allow_placeholder=True),
             artifact_family=_artifact_family("claims_artifact", "claims"),
         )
+
+
+def test_family_definition_contract_includes_reference_metadata() -> None:
+    definition = _family_definition(
+        DemoFamily.CLAIMS,
+        "claims",
+        "claims",
+        identity_field="artifact_id",
+        reference_keys=(
+            ReferenceKey.field("artifact_id"),
+            ReferenceKey.field("aliases[]"),
+        ),
+    )
+
+    assert definition.contract_body()["identity_field"] == "artifact_id"
+    assert definition.contract_body()["reference_keys"] == (
+        {"kind": "field", "field": "artifact_id"},
+        {"kind": "field", "field": "aliases[]"},
+    )
+
+
+def test_family_definition_rejects_invalid_reference_metadata() -> None:
+    with pytest.raises(ValueError, match="identity field"):
+        _family_definition(
+            DemoFamily.CLAIMS,
+            "claims",
+            "claims",
+            identity_field="",
+        )
+
+    with pytest.raises(ValueError, match="reference keys require an identity field"):
+        _family_definition(
+            DemoFamily.CLAIMS,
+            "claims",
+            "claims",
+            reference_keys=(ReferenceKey.field("aliases[]"),),
+        )
+
+
+def test_bound_family_builds_reference_index_from_declared_keys() -> None:
+    family = FamilyDefinition(
+        key=DemoFamily.CONCEPTS,
+        name="concepts",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
+        identity_field="artifact_id",
+        reference_keys=(
+            ReferenceKey.field("artifact_id"),
+            ReferenceKey.field("aliases[]"),
+        ),
+    )
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(family,),
+    )
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save(
+        "concept:mass",
+        IdentifiedDocument("concept:mass", ("mass", "m")),
+        message="save concept",
+    )
+
+    index = bound.concepts.reference_index()
+
+    assert index.require_id("concept:mass") == "concept:mass"
+    assert index.require_id("mass") == "concept:mass"
+
+
+@given(st.dictionaries(keys=st.from_regex(r"id[0-9]{1,4}", fullmatch=True), values=st.just(()), min_size=1))
+def test_family_reference_index_resolves_generated_identity_fields(generated: dict[str, tuple[str, ...]]) -> None:
+    family = FamilyDefinition(
+        key=DemoFamily.CONCEPTS,
+        name="concepts",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
+        identity_field="artifact_id",
+    )
+
+    index = family.reference_index_from_records(
+        IdentifiedDocument(artifact_id, aliases)
+        for artifact_id, aliases in generated.items()
+    )
+
+    for artifact_id in generated:
+        assert index.require_id(artifact_id) == artifact_id
+
+
+def test_family_reference_index_reports_extra_key_ambiguity_without_changing_identity_resolution() -> None:
+    family = FamilyDefinition(
+        key=DemoFamily.CONCEPTS,
+        name="concepts",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
+        identity_field="artifact_id",
+        reference_keys=(ReferenceKey.field("aliases[]"),),
+    )
+
+    with pytest.raises(AmbiguousReferenceError) as exc_info:
+        family.reference_index_from_records(
+            (
+                IdentifiedDocument("concept:1", ("shared",)),
+                IdentifiedDocument("concept:2", ("shared",)),
+            )
+        )
+
+    assert exc_info.value.reference == "shared"
 
 
 def test_registry_rejects_duplicate_keys_names_and_accessors() -> None:
