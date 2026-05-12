@@ -7,9 +7,19 @@ import msgspec
 import pytest
 from hypothesis import given, strategies as st
 
-from quire.artifacts import ArtifactFamily, FixedFilePlacement, FlatYamlPlacement
+from quire.artifacts import (
+    ArtifactContext,
+    ArtifactFamily,
+    BranchPlacement,
+    FixedFilePlacement,
+    FlatYamlPlacement,
+    HashScatteredYamlPlacement,
+    NestedFlatYamlPlacement,
+    SingletonFilePlacement,
+    SubdirFixedFilePlacement,
+)
 from quire.contracts import check_contract_manifest
-from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry, _duplicates
+from quire.families import FamilyDeclaration, FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry, _duplicates
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore, HeadMismatchError
 from quire.references import AmbiguousReferenceError, ForeignKeySpec, ForeignKeyValidationError, ReferenceKey
@@ -17,6 +27,10 @@ from quire.versions import VersionId
 
 
 class DemoDocument(msgspec.Struct):
+    name: str
+
+
+class SerializedDemoDocument(msgspec.Struct):
     name: str
 
 
@@ -33,6 +47,17 @@ class ClaimWithConceptDocument(msgspec.Struct):
 @dataclass(frozen=True)
 class Owner:
     branch: str = "master"
+
+
+@dataclass(frozen=True)
+class DemoRef:
+    name: str
+
+
+@dataclass(frozen=True)
+class NestedDemoRef:
+    group: str
+    name: str
 
 
 class DemoFamily(str, Enum):
@@ -145,6 +170,154 @@ def _registry(
             _family_definition(DemoFamily.CONCEPTS, "concepts", "concepts"),
         ),
     )
+
+
+def test_family_declaration_builds_common_placement_shapes_like_explicit_definitions() -> None:
+    version = VersionId("2026.04.18", allow_placeholder=False)
+    branch = BranchPlacement(policy="fixed", fixed_branch="archive")
+    placements = (
+        FlatYamlPlacement("books", DemoRef, ref_field="name", branch=branch),
+        FlatYamlPlacement(
+            "aliases",
+            DemoRef,
+            ref_field="name",
+            codec="colon_to_double_underscore",
+        ),
+        HashScatteredYamlPlacement(
+            "articles",
+            DemoRef,
+            ref_field="name",
+            codec="base64url",
+            filename_mode="encoded_ref",
+        ),
+        FixedFilePlacement[Owner, str]("catalog.yaml", branch=branch),
+        SubdirFixedFilePlacement(
+            namespace="bundles",
+            filename="document.yaml",
+            ref_factory=DemoRef,
+            ref_field="name",
+        ),
+        NestedFlatYamlPlacement(
+            namespace="events",
+            ref_factory=NestedDemoRef,
+            dir_ref_field="group",
+            stem_ref_field="name",
+        ),
+        SingletonFilePlacement[Owner, str](
+            "manifests/catalog.yaml",
+            ref_factory=lambda: "catalog",
+            branch=branch,
+        ),
+    )
+
+    for index, placement in enumerate(placements):
+        declaration = FamilyDeclaration(
+            key=f"family-{index}",
+            name=f"family_{index}",
+            contract_version=version,
+            artifact_name=f"artifact_{index}",
+            doc_type=DemoDocument,
+            placement=placement,
+        )
+        explicit = FamilyDefinition(
+            key=f"family-{index}",
+            name=f"family_{index}",
+            contract_version=version,
+            artifact_family=ArtifactFamily(
+                name=f"artifact_{index}",
+                contract_version=version,
+                doc_type=DemoDocument,
+                placement=placement,
+            ),
+        )
+
+        assert declaration.to_definition().contract_body() == explicit.contract_body()
+
+
+def test_family_declaration_passes_callbacks_and_definition_metadata_through() -> None:
+    version = VersionId("2026.04.18", allow_placeholder=False)
+
+    def coerce_payload(payload: object, source: str) -> SerializedDemoDocument:
+        return SerializedDemoDocument(f"{source}:{payload}")
+
+    def decode_bytes(content: bytes, source: str) -> SerializedDemoDocument:
+        return SerializedDemoDocument(f"{source}:{content.decode()}")
+
+    def encode_document(document: SerializedDemoDocument) -> bytes:
+        return document.name.encode()
+
+    def render_document(document: SerializedDemoDocument) -> str:
+        return document.name
+
+    def document_payload(document: SerializedDemoDocument) -> object:
+        return {"name": document.name}
+
+    def normalize_for_write(
+        context: ArtifactContext[Owner, DemoRef],
+        document: SerializedDemoDocument,
+        existing: object,
+    ) -> SerializedDemoDocument:
+        del context, existing
+        return document
+
+    def validate_for_write(
+        context: ArtifactContext[Owner, DemoRef],
+        document: SerializedDemoDocument,
+        existing: object,
+    ) -> None:
+        del context, document, existing
+
+    foreign_key = ForeignKeySpec(
+        name="book_author",
+        contract_version=version,
+        source_family="books",
+        source_field="author",
+        target_family="authors",
+    )
+    reference_key = ReferenceKey.field("aliases[]")
+    identity_policy = FamilyIdentityPolicy(
+        artifact_id_function="demo.book_id",
+        version_id_function="demo.book_version",
+        canonical_payload_function="demo.book_payload",
+    )
+
+    definition = FamilyDeclaration(
+        key="books",
+        name="books",
+        contract_version=version,
+        artifact_name="book_artifact",
+        doc_type=SerializedDemoDocument,
+        placement=FlatYamlPlacement("books", DemoRef, ref_field="name"),
+        accessor="library_books",
+        coerce_payload=coerce_payload,
+        decode_bytes=decode_bytes,
+        encode_document=encode_document,
+        render_document=render_document,
+        document_payload=document_payload,
+        normalize_for_write=normalize_for_write,
+        validate_for_write=validate_for_write,
+        scan_type=SerializedDemoDocument,
+        foreign_keys=(foreign_key,),
+        identity_policy=identity_policy,
+        identity_field="artifact_id",
+        reference_keys=(reference_key,),
+        metadata={"category": "catalog"},
+    ).to_definition()
+
+    assert definition.accessor_name == "library_books"
+    assert definition.foreign_keys == (foreign_key,)
+    assert definition.identity_policy == identity_policy
+    assert definition.identity_field == "artifact_id"
+    assert definition.reference_keys == (reference_key,)
+    assert definition.metadata == {"category": "catalog"}
+    assert definition.artifact_family.coerce_payload is coerce_payload
+    assert definition.artifact_family.decode_bytes is decode_bytes
+    assert definition.artifact_family.encode_document is encode_document
+    assert definition.artifact_family.render_document is render_document
+    assert definition.artifact_family.document_payload is document_payload
+    assert definition.artifact_family.normalize_for_write is normalize_for_write
+    assert definition.artifact_family.validate_for_write is validate_for_write
+    assert definition.artifact_family.scan_type is SerializedDemoDocument
 
 
 def test_registry_rejects_missing_versions() -> None:
