@@ -7,7 +7,7 @@ import msgspec
 import pytest
 from hypothesis import given, strategies as st
 
-from quire.artifacts import ArtifactFamily, FlatYamlPlacement
+from quire.artifacts import ArtifactFamily, FixedFilePlacement, FlatYamlPlacement
 from quire.contracts import check_contract_manifest
 from quire.families import FamilyDefinition, FamilyIdentityPolicy, FamilyRegistry, _duplicates
 from quire.family_store import DocumentFamilyStore
@@ -421,6 +421,30 @@ def test_family_definition_and_registry_resolve_storage_roots_from_placements() 
         registry.by_storage_root("missing")
     with pytest.raises(KeyError, match="unknown storage root"):
         registry.family_for_path("missing/example.yaml")
+
+
+def test_registry_root_lookup_rejects_non_namespace_placements() -> None:
+    fixed_family: ArtifactFamily[Owner, str, DemoDocument] = ArtifactFamily(
+        name="notes_artifact",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=DemoDocument,
+        placement=FixedFilePlacement(filename="notes.yaml"),
+    )
+    fixed_definition = FamilyDefinition(
+        key=DemoFamily.NOTES,
+        name="notes",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=fixed_family,
+    )
+
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(fixed_definition,),
+    )
+
+    with pytest.raises(ValueError, match="fixed-file placement"):
+        registry.by_storage_root("notes")
 
 
 def test_duplicate_detection_does_not_rescan_collected_duplicates() -> None:
