@@ -182,6 +182,23 @@ def test_family_reference_index_deduplicates_repeated_keys_for_same_artifact() -
     assert index.require_id("same") == "claim:1"
 
 
+def test_family_reference_index_rejects_alias_colliding_with_another_artifact_id() -> None:
+    records = (
+        RichRecord("claim:1"),
+        RichRecord("claim:2", aliases=("claim:1",)),
+    )
+
+    with pytest.raises(AmbiguousReferenceError) as exc_info:
+        FamilyReferenceIndex.from_records(
+            records,
+            artifact_id=lambda record: record.artifact_id,
+            keys=(lambda record: record.aliases,),
+        )
+
+    assert exc_info.value.reference == "claim:1"
+    assert exc_info.value.candidates == ("claim:1", "claim:2")
+
+
 @given(
     st.dictionaries(
         keys=st.from_regex(r"id[0-9]{1,4}", fullmatch=True),
@@ -228,6 +245,27 @@ def test_family_reference_index_rejects_generated_duplicate_aliases(first_id: st
     records = (
         RichRecord(first_id, aliases=("shared",)),
         RichRecord(second_id, aliases=("shared",)),
+    )
+
+    with pytest.raises(AmbiguousReferenceError):
+        FamilyReferenceIndex.from_records(
+            records,
+            artifact_id=lambda record: record.artifact_id,
+            keys=(lambda record: record.aliases,),
+        )
+
+
+@given(
+    owner_id=st.from_regex(r"id[0-9]{1,4}", fullmatch=True),
+    alias_owner_id=st.from_regex(r"other[0-9]{1,4}", fullmatch=True),
+)
+def test_family_reference_index_rejects_generated_alias_artifact_id_collisions(
+    owner_id: str,
+    alias_owner_id: str,
+) -> None:
+    records = (
+        RichRecord(owner_id),
+        RichRecord(alias_owner_id, aliases=(owner_id,)),
     )
 
     with pytest.raises(AmbiguousReferenceError):
