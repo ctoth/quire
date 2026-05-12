@@ -358,12 +358,15 @@ def test_cross_family_reference_index_integrates_with_bound_family_registry() ->
                 name="concepts",
                 contract_version=VersionId("2026.04.18", allow_placeholder=False),
                 artifact_family=concepts,
+                identity_field="artifact_id",
+                reference_keys=(ReferenceKey.field("aliases[]"),),
             ),
             FamilyDefinition(
                 key=DemoFamily.CLAIMS,
                 name="claims",
                 contract_version=VersionId("2026.04.18", allow_placeholder=False),
                 artifact_family=claims,
+                identity_field="artifact_id",
                 foreign_keys=(
                     ForeignKeySpec(
                         name="claim_concept",
