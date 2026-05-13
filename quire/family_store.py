@@ -328,14 +328,12 @@ class DocumentFamilyStore(Generic[TOwner]):
         message: str,
         branch: str | None = None,
         expected_head: str | None = None,
-        strict_branch: bool = False,
     ) -> DocumentFamilyTransaction[TOwner]:
         return DocumentFamilyTransaction(
             store=self,
             message=message,
             branch=branch,
             expected_head=expected_head,
-            strict_branch=strict_branch,
         )
 
     def pin(
@@ -384,7 +382,6 @@ class DocumentFamilyTransaction(Generic[TOwner]):
     message: str
     branch: str | None = None
     expected_head: str | None = None
-    strict_branch: bool = False
     _adds: dict[str, bytes] = field(default_factory=dict)
     _deletes: set[str] = field(default_factory=set)
     _commit_sha: str | None = None
@@ -417,12 +414,6 @@ class DocumentFamilyTransaction(Generic[TOwner]):
     def save(self, family: ArtifactFamily[TOwner, TRef, TDoc], ref: TRef, doc: TDoc) -> None:
         self._ensure_open()
         self._advisory_head_check()
-        if self.strict_branch and self.branch is not None:
-            natural_address = family.address_for(self.owner, ref)
-            if natural_address.branch != self.branch:
-                raise ValueError(
-                    f"Transaction branch mismatch: expected {self.branch!r}, got {natural_address.branch!r}"
-                )
         prepared = self.store.prepare(family, ref, doc, branch=self.branch)
         if self.branch is None:
             self.branch = prepared.branch
@@ -495,8 +486,6 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         ref: TRef,
     ) -> tuple[str, ArtifactAddress]:
         address = family.address_for(self.owner, ref)
-        if self.strict_branch and self.branch is not None and address.branch != self.branch:
-            raise ValueError(f"Transaction branch mismatch: expected {self.branch!r}, got {address.branch!r}")
         branch = self.branch or address.branch
         if self.branch is None:
             self.branch = branch

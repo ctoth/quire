@@ -302,7 +302,6 @@ class _HeadBoundFamilyTransaction:
             message=self.message,
             branch=self.transaction.branch,
             expected_head=self.transaction.expected_head,
-            strict_branch=True,
         )
         return self._family_transaction.__enter__()
 

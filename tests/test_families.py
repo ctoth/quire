@@ -822,7 +822,7 @@ def test_head_bound_transaction_families_transact_uses_captured_head(monkeypatch
     assert bound.concepts.require("concept-one") == DemoDocument("gamma")
 
 
-def test_head_bound_transaction_family_binding_rejects_second_branch() -> None:
+def test_head_bound_transaction_family_binding_pins_writes_to_captured_branch() -> None:
     family = ArtifactFamily[Owner, str, DemoDocument](
         name="other",
         contract_version=VersionId("2026.04.18", allow_placeholder=False),
@@ -849,10 +849,12 @@ def test_head_bound_transaction_family_binding_rejects_second_branch() -> None:
     bound = registry.bind(store.owner, store)
     backend.commit_files({"seed.txt": b"seed"}, "seed", branch="master")
 
-    with pytest.raises(ValueError, match="Transaction branch mismatch"):
-        with backend.head_bound_transaction("master") as transaction:
-            with transaction.families_transact(bound, message="wrong branch") as families:
-                families.other.save("paper", DemoDocument("alpha"))
+    with backend.head_bound_transaction("master") as transaction:
+        with transaction.families_transact(bound, message="captured branch") as families:
+            families.other.save("paper", DemoDocument("alpha"))
+
+    assert backend.branch_sha("other") is None
+    assert store.require(family, "paper", branch="master") == DemoDocument("alpha")
 
 
 def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> None:
