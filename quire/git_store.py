@@ -48,6 +48,20 @@ class GitGcReport:
     orphan_shas: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class TreeFile:
+    relpath: str
+    content: bytes
+
+
+@dataclass(frozen=True)
+class MaterializeReport:
+    written_paths: tuple[str, ...] = ()
+    deleted_paths: tuple[str, ...] = ()
+    skipped_paths: tuple[str, ...] = ()
+    conflict_paths: tuple[str, ...] = ()
+
+
 class HeadMismatchError(ValueError):
     def __init__(
         self,
@@ -63,6 +77,13 @@ class HeadMismatchError(ValueError):
         self.branch = branch
         self.expected_head = expected_head
         self.actual_head = actual_head
+
+
+class MaterializeConflictError(ValueError):
+    def __init__(self, conflict_paths: Sequence[str]) -> None:
+        paths = tuple(sorted(conflict_paths))
+        super().__init__(f"Materialize would overwrite local edits: {', '.join(paths)}")
+        self.conflict_paths = paths
 
 
 def _normalize_path(path: str | Path) -> str:
@@ -494,6 +515,20 @@ class GitStore:
             elif isinstance(obj, Blob):
                 yield relpath, obj.data
 
+    def iter_tree_files(
+        self,
+        *,
+        commit: str | None = None,
+        roots: Sequence[str | Path] = (),
+    ) -> Iterator[TreeFile]:
+        selected_roots = tuple(_normalize_path(root) for root in roots)
+        if not selected_roots:
+            selected_roots = ("",)
+        for root in selected_roots:
+            for relpath, content in self.iter_subtree_files(root, commit=commit):
+                full_path = f"{root}/{relpath}" if root else relpath
+                yield TreeFile(full_path, content)
+
     def iter_dir_entries(
         self,
         subdir: str | Path,
@@ -893,25 +928,84 @@ class GitStore:
         if self._root is None:
             return
         try:
-            head = self._repo.head()
+            head = self._repo.head().decode("ascii")
         except KeyError:
             return
-        commit = self._commit_object(head)
-        tree = self._tree_object(commit.tree)
-        paths: set[str] = set()
-        self._collect_tree_paths(tree, "", paths)
-        for rel_path in paths:
-            abs_path = self._root / rel_path
-            abs_path.parent.mkdir(parents=True, exist_ok=True)
-            blob = self._walk_tree(tree, PurePosixPath(rel_path).parts)
-            if isinstance(blob, Blob):
-                abs_path.write_bytes(blob.data)
-        if remove_extra:
-            self._remove_extra_worktree_files(paths)
+        self.materialize(
+            commit=head,
+            root=self._root,
+            clean=remove_extra,
+            ignored_path=self._is_ignored_runtime_path,
+            force=True,
+        )
         self._refresh_on_disk_index()
 
     def sync_worktree(self) -> None:
         self.materialize_worktree(remove_extra=True)
+
+    def materialize(
+        self,
+        *,
+        root: str | Path,
+        commit: str | None = None,
+        branch: str | None = None,
+        clean: bool = False,
+        clean_roots: Sequence[str | Path] = (),
+        ignored_path: Callable[[str], bool] | None = None,
+        force: bool = False,
+    ) -> MaterializeReport:
+        if commit is not None and branch is not None:
+            raise ValueError("materialize accepts either commit or branch, not both")
+        target_commit = commit
+        if branch is not None:
+            target_commit = self.branch_sha(branch)
+            if target_commit is None:
+                raise ValueError(f"Branch {branch!r} has no commit")
+        if target_commit is None:
+            target_commit = self.head_sha()
+        if target_commit is None:
+            return MaterializeReport()
+
+        target_root = Path(root)
+        tree_files = tuple(self.iter_tree_files(commit=target_commit))
+        conflicts: list[str] = []
+        skipped: list[str] = []
+        for tree_file in tree_files:
+            destination = target_root / PurePosixPath(tree_file.relpath)
+            if destination.exists() and destination.is_dir():
+                conflicts.append(tree_file.relpath)
+                continue
+            if destination.exists() and destination.read_bytes() == tree_file.content:
+                skipped.append(tree_file.relpath)
+                continue
+            if destination.exists() and not force:
+                conflicts.append(tree_file.relpath)
+        if conflicts:
+            raise MaterializeConflictError(conflicts)
+
+        written: list[str] = []
+        for tree_file in tree_files:
+            destination = target_root / PurePosixPath(tree_file.relpath)
+            if tree_file.relpath in skipped:
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(tree_file.content)
+            written.append(tree_file.relpath)
+
+        deleted: tuple[str, ...] = ()
+        if clean:
+            deleted = self._delete_stale_materialized_files(
+                target_root,
+                tracked_paths={tree_file.relpath for tree_file in tree_files},
+                clean_roots=clean_roots,
+                ignored_path=ignored_path,
+            )
+
+        return MaterializeReport(
+            written_paths=tuple(sorted(written)),
+            deleted_paths=deleted,
+            skipped_paths=tuple(sorted(skipped)),
+        )
 
     def _refresh_on_disk_index(self) -> None:
         """Rewrite the on-disk git index so it matches HEAD's tree.
@@ -1338,35 +1432,59 @@ class GitStore:
     def _remove_extra_worktree_files(self, tracked_paths: set[str]) -> None:
         if self._root is None:
             return
+        self._delete_stale_materialized_files(
+            self._root,
+            tracked_paths=tracked_paths,
+            clean_roots=(),
+            ignored_path=self._is_ignored_runtime_path,
+        )
+
+    def _delete_stale_materialized_files(
+        self,
+        root: Path,
+        *,
+        tracked_paths: set[str],
+        clean_roots: Sequence[str | Path],
+        ignored_path: Callable[[str], bool] | None,
+    ) -> tuple[str, ...]:
         prune_candidates: set[Path] = set()
-        for disk_file in self._root.rglob("*"):
-            if not disk_file.is_file():
+        deleted: list[str] = []
+        roots = tuple(_normalize_path(clean_root) for clean_root in clean_roots)
+        search_roots = tuple(root / PurePosixPath(clean_root) for clean_root in roots) if roots else (root,)
+        for search_root in search_roots:
+            if not search_root.exists():
                 continue
-            rel = disk_file.relative_to(self._root).as_posix()
-            if rel.startswith(".git/") or rel == ".git":
-                continue
-            if self._is_ignored_runtime_path(rel):
-                continue
-            if rel not in tracked_paths:
-                disk_file.unlink()
-                parent = disk_file.parent
-                while parent != self._root:
-                    prune_candidates.add(parent)
-                    parent = parent.parent
+            candidates = search_root.rglob("*") if search_root.is_dir() else (search_root,)
+            for disk_file in candidates:
+                if not disk_file.is_file():
+                    continue
+                rel = disk_file.relative_to(root).as_posix()
+                if rel.startswith(".git/") or rel == ".git":
+                    continue
+                if ignored_path is not None and ignored_path(rel):
+                    continue
+                if rel not in tracked_paths:
+                    disk_file.unlink()
+                    deleted.append(rel)
+                    parent = disk_file.parent
+                    while parent != root:
+                        prune_candidates.add(parent)
+                        parent = parent.parent
         for directory in sorted(
             prune_candidates,
-            key=lambda path: len(path.relative_to(self._root).parts),
+            key=lambda path: len(path.relative_to(root).parts),
             reverse=True,
         ):
-            rel = directory.relative_to(self._root).as_posix()
+            rel = directory.relative_to(root).as_posix()
             if rel.startswith(".git/") or rel == ".git":
                 continue
-            if self._is_ignored_runtime_path(rel):
+            if ignored_path is not None and ignored_path(rel):
                 continue
             try:
                 directory.rmdir()
             except OSError:
                 continue
+        return tuple(sorted(deleted))
 
     def _is_ignored_runtime_path(self, relpath: str) -> bool:
         normalized = relpath.replace("\\", "/")
