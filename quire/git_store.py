@@ -4,7 +4,7 @@ import os
 import json
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -962,56 +962,59 @@ class GitStore:
     ) -> MaterializeReport:
         if commit is not None and branch is not None:
             raise ValueError("materialize accepts either commit or branch, not both")
-        target_commit = commit
-        if branch is not None:
-            target_commit = self.branch_sha(branch)
+        with self.head_bound_transaction(branch) if branch is not None else nullcontext() as head_txn:
+            target_commit = commit
+            if branch is not None:
+                target_commit = head_txn.expected_head
+                if target_commit is None:
+                    raise ValueError(f"Branch {branch!r} has no commit")
             if target_commit is None:
-                raise ValueError(f"Branch {branch!r} has no commit")
-        if target_commit is None:
-            target_commit = self.head_sha()
-        if target_commit is None:
-            return MaterializeReport()
+                target_commit = self.head_sha()
+            if target_commit is None:
+                return MaterializeReport()
 
-        target_root = Path(root)
-        tree_files = tuple(self.iter_tree_files(commit=target_commit))
-        conflicts: list[str] = []
-        skipped: list[str] = []
-        for tree_file in tree_files:
-            destination = target_root / PurePosixPath(tree_file.relpath)
-            if destination.exists() and destination.is_dir():
-                conflicts.append(tree_file.relpath)
-                continue
-            if destination.exists() and destination.read_bytes() == tree_file.content:
-                skipped.append(tree_file.relpath)
-                continue
-            if destination.exists() and not force:
-                conflicts.append(tree_file.relpath)
-        if conflicts:
-            raise MaterializeConflictError(conflicts)
+            target_root = Path(root)
+            tree_files = tuple(self.iter_tree_files(commit=target_commit))
+            if head_txn is not None:
+                head_txn.assert_current()
+            conflicts: list[str] = []
+            skipped: list[str] = []
+            for tree_file in tree_files:
+                destination = target_root / PurePosixPath(tree_file.relpath)
+                if destination.exists() and destination.is_dir():
+                    conflicts.append(tree_file.relpath)
+                    continue
+                if destination.exists() and destination.read_bytes() == tree_file.content:
+                    skipped.append(tree_file.relpath)
+                    continue
+                if destination.exists() and not force:
+                    conflicts.append(tree_file.relpath)
+            if conflicts:
+                raise MaterializeConflictError(conflicts)
 
-        written: list[str] = []
-        for tree_file in tree_files:
-            destination = target_root / PurePosixPath(tree_file.relpath)
-            if tree_file.relpath in skipped:
-                continue
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(tree_file.content)
-            written.append(tree_file.relpath)
+            written: list[str] = []
+            for tree_file in tree_files:
+                destination = target_root / PurePosixPath(tree_file.relpath)
+                if tree_file.relpath in skipped:
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(tree_file.content)
+                written.append(tree_file.relpath)
 
-        deleted: tuple[str, ...] = ()
-        if clean:
-            deleted = self._delete_stale_materialized_files(
-                target_root,
-                tracked_paths={tree_file.relpath for tree_file in tree_files},
-                clean_roots=clean_roots,
-                ignored_path=ignored_path,
+            deleted: tuple[str, ...] = ()
+            if clean:
+                deleted = self._delete_stale_materialized_files(
+                    target_root,
+                    tracked_paths={tree_file.relpath for tree_file in tree_files},
+                    clean_roots=clean_roots,
+                    ignored_path=ignored_path,
+                )
+
+            return MaterializeReport(
+                written_paths=tuple(sorted(written)),
+                deleted_paths=deleted,
+                skipped_paths=tuple(sorted(skipped)),
             )
-
-        return MaterializeReport(
-            written_paths=tuple(sorted(written)),
-            deleted_paths=deleted,
-            skipped_paths=tuple(sorted(skipped)),
-        )
 
     def _refresh_on_disk_index(self) -> None:
         """Rewrite the on-disk git index so it matches HEAD's tree.
