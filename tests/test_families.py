@@ -852,7 +852,7 @@ def test_head_bound_transaction_family_binding_rejects_second_branch() -> None:
     with pytest.raises(ValueError, match="Transaction branch mismatch"):
         with backend.head_bound_transaction("master") as transaction:
             with transaction.families_transact(bound, message="wrong branch") as families:
-                families.notes.save("paper", DemoDocument("alpha"))
+                families.other.save("paper", DemoDocument("alpha"))
 
 
 def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> None:

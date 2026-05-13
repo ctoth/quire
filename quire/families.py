@@ -394,12 +394,14 @@ class BoundFamilyRegistry(Generic[TOwner, TKey]):
         message: str,
         branch: str | None = None,
         expected_head: str | None = None,
+        strict_branch: bool = False,
     ) -> BoundFamilyTransaction[TOwner, TKey]:
         return BoundFamilyTransaction(
             transaction=self.store.transact(
                 message=message,
                 branch=branch,
                 expected_head=expected_head,
+                strict_branch=strict_branch,
             ),
             registry=self.registry,
         )

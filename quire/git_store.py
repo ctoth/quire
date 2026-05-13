@@ -6,7 +6,7 @@ import threading
 import time
 from contextlib import contextmanager
 from collections import OrderedDict, deque
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -187,6 +187,116 @@ def _branch_meta_ref(name: str) -> RefName:
     return RefName(f"refs/quire/branch-meta/{quote(name, safe='')}")
 
 
+class HeadBoundTransaction:
+    def __init__(self, store: GitStore, branch: str | None = None) -> None:
+        self.store = store
+        self.branch = store._resolve_write_branch_name(branch)
+        self.expected_head: str | None = None
+        self._commit_sha: str | None = None
+        self._after_commit: list[Callable[[str], None]] = []
+        self._entered = False
+        self._closed = False
+
+    @property
+    def commit_sha(self) -> str | None:
+        return self._commit_sha
+
+    def __enter__(self) -> HeadBoundTransaction:
+        if self._entered:
+            raise ValueError("head-bound transaction is already entered")
+        self.expected_head = self.store.branch_sha(self.branch)
+        self._entered = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if exc_type is None and self._commit_sha is not None:
+                for callback in tuple(self._after_commit):
+                    callback(self._commit_sha)
+        finally:
+            self._after_commit.clear()
+            self._closed = True
+
+    def after_commit(self, callback: Callable[[str], None]) -> None:
+        self._ensure_open()
+        self._after_commit.append(callback)
+
+    def commit_files(
+        self,
+        changes: Mapping[str | Path, bytes],
+        message: str,
+    ) -> str:
+        return self.commit_batch(changes, [], message)
+
+    def commit_deletes(
+        self,
+        paths: Sequence[str | Path],
+        message: str,
+    ) -> str:
+        return self.commit_batch({}, paths, message)
+
+    def commit_batch(
+        self,
+        adds: Mapping[str | Path, bytes],
+        deletes: Sequence[str | Path],
+        message: str,
+    ) -> str:
+        self._ensure_open()
+        if self._commit_sha is not None:
+            raise ValueError("head-bound transaction is already committed")
+        commit_sha = self.store.commit_batch(
+            adds,
+            deletes,
+            message,
+            branch=self.branch,
+            expected_head=self.expected_head,
+        )
+        self._commit_sha = commit_sha
+        return commit_sha
+
+    def families_transact(self, families: Any, *, message: str) -> _HeadBoundFamilyTransaction:
+        self._ensure_open()
+        return _HeadBoundFamilyTransaction(self, families, message)
+
+    def _record_commit(self, commit_sha: str | None) -> None:
+        if commit_sha is None:
+            return
+        if self._commit_sha is not None and self._commit_sha != commit_sha:
+            raise ValueError("head-bound transaction is already committed")
+        self._commit_sha = commit_sha
+
+    def _ensure_open(self) -> None:
+        if not self._entered:
+            raise ValueError("head-bound transaction has not been entered")
+        if self._closed:
+            raise ValueError("head-bound transaction is closed")
+
+
+class _HeadBoundFamilyTransaction:
+    def __init__(self, transaction: HeadBoundTransaction, families: Any, message: str) -> None:
+        self.transaction = transaction
+        self.families = families
+        self.message = message
+        self._family_transaction: Any = None
+
+    def __enter__(self) -> Any:
+        self._family_transaction = self.families.transact(
+            message=self.message,
+            branch=self.transaction.branch,
+            expected_head=self.transaction.expected_head,
+            strict_branch=True,
+        )
+        return self._family_transaction.__enter__()
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._family_transaction is None:
+            return None
+        result = self._family_transaction.__exit__(exc_type, exc, tb)
+        if exc_type is None:
+            self.transaction._record_commit(self._family_transaction.commit_sha)
+        return result
+
+
 class GitStore:
     _OBJECT_CACHE_LIMIT = 8192
 
@@ -250,6 +360,9 @@ class GitStore:
 
     def primary_branch_name(self) -> str:
         return self._policy.primary_branch
+
+    def head_bound_transaction(self, branch: str | None = None) -> HeadBoundTransaction:
+        return HeadBoundTransaction(self, branch)
 
     @contextmanager
     def _mutation_guard(self) -> Iterator[None]:
