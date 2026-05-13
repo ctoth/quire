@@ -194,6 +194,7 @@ class HeadBoundTransaction:
         self.expected_head: str | None = None
         self._commit_sha: str | None = None
         self._after_commit: list[Callable[[str], None]] = []
+        self._mutation_guard: Any | None = None
         self._entered = False
         self._closed = False
 
@@ -204,6 +205,9 @@ class HeadBoundTransaction:
     def __enter__(self) -> HeadBoundTransaction:
         if self._entered:
             raise ValueError("head-bound transaction is already entered")
+        guard = self.store._mutation_guard()
+        guard.__enter__()
+        self._mutation_guard = guard
         self.expected_head = self.store.branch_sha(self.branch)
         self._entered = True
         return self
@@ -216,6 +220,10 @@ class HeadBoundTransaction:
         finally:
             self._after_commit.clear()
             self._closed = True
+            guard = self._mutation_guard
+            self._mutation_guard = None
+            if guard is not None:
+                guard.__exit__(exc_type, exc, tb)
 
     def after_commit(self, callback: Callable[[str], None]) -> None:
         self._ensure_open()
