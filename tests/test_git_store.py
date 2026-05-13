@@ -52,6 +52,89 @@ def test_commit_and_read_are_object_store_operations(tmp_path):
     assert not (root / "docs" / "example.yaml").exists()
 
 
+def test_head_bound_transaction_captures_head_and_passes_expected_head(monkeypatch):
+    store = GitStore.init_memory()
+    first = store.commit_files({"seed.txt": b"seed"}, "seed")
+    calls: list[tuple[str | None, str | None]] = []
+    original_commit_batch = store.commit_batch
+
+    def recording_commit_batch(
+        adds,
+        deletes,
+        message,
+        *,
+        branch=None,
+        expected_head=None,
+    ):
+        calls.append((branch, expected_head))
+        return original_commit_batch(
+            adds,
+            deletes,
+            message,
+            branch=branch,
+            expected_head=expected_head,
+        )
+
+    monkeypatch.setattr(store, "commit_batch", recording_commit_batch)
+
+    with store.head_bound_transaction("master") as transaction:
+        commit = transaction.commit_batch({"next.txt": b"next"}, [], "next")
+
+    assert len(commit) == 40
+    assert calls == [("master", first)]
+
+
+def test_head_bound_transaction_rejects_stale_head_with_typed_error():
+    store = GitStore.init_memory()
+    first = store.commit_files({"seed.txt": b"seed"}, "seed")
+
+    with store.head_bound_transaction("master") as transaction:
+        store.commit_files({"raced.txt": b"raced"}, "raced")
+        with pytest.raises(HeadMismatchError) as excinfo:
+            transaction.commit_batch({"next.txt": b"next"}, [], "next")
+
+    assert excinfo.value.branch == "master"
+    assert excinfo.value.expected_head == first
+    assert excinfo.value.actual_head == store.branch_sha("master")
+
+
+def test_head_bound_transaction_post_commit_hooks_run_after_successful_commit():
+    store = GitStore.init_memory()
+    store.commit_files({"seed.txt": b"seed"}, "seed")
+    calls: list[str] = []
+
+    with store.head_bound_transaction("master") as transaction:
+        transaction.after_commit(calls.append)
+        commit = transaction.commit_batch({"next.txt": b"next"}, [], "next")
+        assert calls == []
+
+    assert calls == [commit]
+
+
+def test_head_bound_transaction_without_commit_does_not_run_hooks():
+    store = GitStore.init_memory()
+    store.commit_files({"seed.txt": b"seed"}, "seed")
+    calls: list[str] = []
+
+    with store.head_bound_transaction("master") as transaction:
+        transaction.after_commit(calls.append)
+
+    assert calls == []
+
+
+def test_head_bound_transaction_exception_clears_pending_hooks():
+    store = GitStore.init_memory()
+    store.commit_files({"seed.txt": b"seed"}, "seed")
+    calls: list[str] = []
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with store.head_bound_transaction("master") as transaction:
+            transaction.after_commit(calls.append)
+            raise RuntimeError("boom")
+
+    assert calls == []
+
+
 def test_deep_tree_paths_do_not_depend_on_python_recursion_limit():
     store = GitStore.init_memory()
     deep_path = "/".join(f"d{index}" for index in range(1100)) + "/leaf.txt"

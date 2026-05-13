@@ -784,6 +784,77 @@ def test_bound_registry_transaction_writes_multiple_families() -> None:
     assert bound.concepts.require("concept-one") == DemoDocument("beta")
 
 
+def test_head_bound_transaction_families_transact_uses_captured_head(monkeypatch) -> None:
+    registry = _registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    first = bound.claims.save("paper", DemoDocument("alpha"), message="seed")
+    calls: list[tuple[str | None, str | None]] = []
+    original_commit_batch = backend.commit_batch
+
+    def recording_commit_batch(
+        adds,
+        deletes,
+        message,
+        *,
+        branch=None,
+        expected_head=None,
+    ):
+        calls.append((branch, expected_head))
+        return original_commit_batch(
+            adds,
+            deletes,
+            message,
+            branch=branch,
+            expected_head=expected_head,
+        )
+
+    monkeypatch.setattr(backend, "commit_batch", recording_commit_batch)
+
+    with backend.head_bound_transaction("master") as transaction:
+        with transaction.families_transact(bound, message="save rows") as families:
+            families.claims.save("claim-one", DemoDocument("beta"))
+            families.concepts.save("concept-one", DemoDocument("gamma"))
+
+    assert calls == [("master", first)]
+    assert bound.claims.require("claim-one") == DemoDocument("beta")
+    assert bound.concepts.require("concept-one") == DemoDocument("gamma")
+
+
+def test_head_bound_transaction_family_binding_rejects_second_branch() -> None:
+    family = ArtifactFamily[Owner, str, DemoDocument](
+        name="other",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        doc_type=DemoDocument,
+        placement=FlatYamlPlacement(
+            "other",
+            str,
+            branch=BranchPlacement(policy="fixed", fixed_branch="other"),
+        ),
+    )
+    definition = FamilyDefinition(
+        key=DemoFamily.NOTES,
+        name="other",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        artifact_family=family,
+    )
+    registry = FamilyRegistry(
+        name="demo",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        families=(definition,),
+    )
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    backend.commit_files({"seed.txt": b"seed"}, "seed", branch="master")
+
+    with pytest.raises(ValueError, match="Transaction branch mismatch"):
+        with backend.head_bound_transaction("master") as transaction:
+            with transaction.families_transact(bound, message="wrong branch") as families:
+                families.notes.save("paper", DemoDocument("alpha"))
+
+
 def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> None:
     registry = _reference_registry()
     backend = GitStore.init_memory()
