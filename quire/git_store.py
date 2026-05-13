@@ -31,6 +31,12 @@ class GitStorePolicy:
     ignored_path_prefixes: tuple[str, ...] = ()
     ignored_path_suffixes: tuple[str, ...] = ()
 
+    def ignores_path(self, relpath: str) -> bool:
+        normalized = relpath.replace("\\", "/")
+        return normalized.startswith(self.ignored_path_prefixes) or normalized.endswith(
+            self.ignored_path_suffixes
+        )
+
 
 @dataclass(frozen=True)
 class GitBranch:
@@ -1487,7 +1493,4 @@ class GitStore:
         return tuple(sorted(deleted))
 
     def _is_ignored_runtime_path(self, relpath: str) -> bool:
-        normalized = relpath.replace("\\", "/")
-        return normalized.startswith(self._policy.ignored_path_prefixes) or normalized.endswith(
-            self._policy.ignored_path_suffixes
-        )
+        return self._policy.ignores_path(relpath)
