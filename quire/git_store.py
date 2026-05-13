@@ -229,6 +229,16 @@ class HeadBoundTransaction:
         self._ensure_open()
         self._after_commit.append(callback)
 
+    def assert_current(self) -> None:
+        self._ensure_open()
+        actual_head = self.store.branch_sha(self.branch)
+        if actual_head != self.expected_head:
+            raise HeadMismatchError(
+                branch=self.branch,
+                expected_head=self.expected_head,
+                actual_head=actual_head,
+            )
+
     def commit_files(
         self,
         changes: Mapping[str | Path, bytes],

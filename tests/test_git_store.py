@@ -98,6 +98,21 @@ def test_head_bound_transaction_rejects_stale_head_with_typed_error():
     assert excinfo.value.actual_head == store.branch_sha("master")
 
 
+def test_head_bound_transaction_assert_current_rejects_moved_head():
+    store = GitStore.init_memory()
+    first = store.commit_files({"seed.txt": b"seed"}, "seed")
+
+    with store.head_bound_transaction("master") as transaction:
+        transaction.assert_current()
+        store.commit_files({"raced.txt": b"raced"}, "raced")
+        with pytest.raises(HeadMismatchError) as excinfo:
+            transaction.assert_current()
+
+    assert excinfo.value.branch == "master"
+    assert excinfo.value.expected_head == first
+    assert excinfo.value.actual_head == store.branch_sha("master")
+
+
 def test_head_bound_transaction_post_commit_hooks_run_after_successful_commit():
     store = GitStore.init_memory()
     store.commit_files({"seed.txt": b"seed"}, "seed")
