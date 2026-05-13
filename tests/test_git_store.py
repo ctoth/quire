@@ -9,7 +9,7 @@ from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import MemoryRepo
 
 import quire.git_store as git_store
-from quire.git_store import GitStore, GitStorePolicy, HeadMismatchError
+from quire.git_store import GitStore, GitStorePolicy, HeadMismatchError, MaterializeConflictError
 from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
 from quire.refs import RefName
 
@@ -263,6 +263,108 @@ def test_materialize_worktree_can_remove_stale_files_and_preserve_runtime_paths(
     assert not (root / "docs" / "example.yaml").exists()
     assert not stale.exists()
     assert sidecar.read_bytes() == b"cache"
+
+
+def test_materialize_commit_to_explicit_root_reports_writes_and_skips(tmp_path):
+    store = GitStore.init_memory()
+    commit = store.commit_files(
+        {
+            "books/a.txt": b"a",
+            "notes/b.txt": b"b",
+        },
+        "seed",
+    )
+    root = tmp_path / "checkout"
+
+    first = store.materialize(commit=commit, root=root)
+    second = store.materialize(commit=commit, root=root)
+
+    assert first.written_paths == ("books/a.txt", "notes/b.txt")
+    assert first.skipped_paths == ()
+    assert second.written_paths == ()
+    assert second.skipped_paths == ("books/a.txt", "notes/b.txt")
+    assert (root / "books" / "a.txt").read_bytes() == b"a"
+    assert (root / "notes" / "b.txt").read_bytes() == b"b"
+
+
+def test_materialize_refuses_to_overwrite_local_edits_unless_forced(tmp_path):
+    store = GitStore.init_memory()
+    commit = store.commit_files({"docs/a.txt": b"canonical"}, "seed")
+    root = tmp_path / "checkout"
+    edited = root / "docs" / "a.txt"
+    edited.parent.mkdir(parents=True)
+    edited.write_bytes(b"local edit")
+
+    with pytest.raises(MaterializeConflictError) as excinfo:
+        store.materialize(commit=commit, root=root)
+
+    assert excinfo.value.conflict_paths == ("docs/a.txt",)
+    assert "docs/a.txt" in str(excinfo.value)
+    assert edited.read_bytes() == b"local edit"
+
+    forced = store.materialize(commit=commit, root=root, force=True)
+
+    assert forced.written_paths == ("docs/a.txt",)
+    assert edited.read_bytes() == b"canonical"
+
+
+def test_materialize_clean_roots_delete_stale_files_and_skip_ignored_paths(tmp_path):
+    store = GitStore.init_memory()
+    commit = store.commit_files({"docs/keep.txt": b"keep"}, "seed")
+    root = tmp_path / "checkout"
+    stale = root / "docs" / "stale.txt"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"stale")
+    outside = root / "outside" / "stale.txt"
+    outside.parent.mkdir(parents=True)
+    outside.write_bytes(b"outside")
+    ignored = root / "cache" / "runtime.sqlite"
+    ignored.parent.mkdir(parents=True)
+    ignored.write_bytes(b"cache")
+    git_head = root / ".git" / "HEAD"
+    git_head.parent.mkdir(parents=True)
+    git_head.write_bytes(b"ref: refs/heads/master\n")
+
+    report = store.materialize(
+        commit=commit,
+        root=root,
+        clean=True,
+        clean_roots=("docs", "cache"),
+        ignored_path=lambda relpath: relpath.startswith("cache/"),
+    )
+
+    assert report.written_paths == ("docs/keep.txt",)
+    assert report.deleted_paths == ("docs/stale.txt",)
+    assert not stale.exists()
+    assert outside.read_bytes() == b"outside"
+    assert ignored.read_bytes() == b"cache"
+    assert git_head.read_bytes() == b"ref: refs/heads/master\n"
+
+
+def test_materialize_missing_branch_reports_empty_branch_failure(tmp_path):
+    store = GitStore.init_memory()
+
+    with pytest.raises(ValueError, match="Branch 'missing' has no commit"):
+        store.materialize(branch="missing", root=tmp_path / "checkout")
+
+
+def test_iter_tree_files_can_walk_selected_roots():
+    store = GitStore.init_memory()
+    commit = store.commit_files(
+        {
+            "books/a.txt": b"a",
+            "notes/b.txt": b"b",
+            "other/c.txt": b"c",
+        },
+        "seed",
+    )
+
+    files = tuple(store.iter_tree_files(commit=commit, roots=("books", "notes")))
+
+    assert [(file.relpath, file.content) for file in files] == [
+        ("books/a.txt", b"a"),
+        ("notes/b.txt", b"b"),
+    ]
 
 
 def test_materialize_worktree_prunes_directories_emptied_by_stale_file_removal(tmp_path):
