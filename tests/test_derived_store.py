@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -366,6 +367,47 @@ def test_projection_schema_creates_tables_and_materializes_rows(tmp_path):
         )
         with pytest.raises(sqlite3.IntegrityError):
             notes.insert_row(conn, {"id": "n2", "page_id": "missing", "body": "Nope."})
+    finally:
+        conn.close()
+
+
+def test_projection_tables_insert_dataclass_rows():
+    @dataclass(frozen=True)
+    class PageProjectionRow:
+        id: str
+        title: str
+        metadata_json: dict[str, int]
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        pages = ProjectionTable(
+            name="pages",
+            columns=(
+                ProjectionColumn("id", "TEXT", nullable=False),
+                ProjectionColumn("title", "TEXT", nullable=False),
+                ProjectionColumn(
+                    "metadata_json",
+                    "TEXT",
+                    encoder=json_encoder,
+                    decoder=json_decoder,
+                ),
+            ),
+            primary_key=("id",),
+        )
+        schema = create_projection_schema(pages)
+        schema.create_all(conn)
+
+        pages.insert_rows(
+            conn,
+            (
+                PageProjectionRow("intro", "Introduction", {"rank": 1}),
+                PageProjectionRow("api", "API", {"rank": 2}),
+            ),
+        )
+
+        rows = pages.select_all(conn)
+        assert [row.values["id"] for row in rows] == ["intro", "api"]
+        assert rows[0].values["metadata_json"] == {"rank": 1}
     finally:
         conn.close()
 

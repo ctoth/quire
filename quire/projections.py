@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Protocol, TypeAlias
 
 
@@ -262,13 +262,14 @@ class ProjectionTable:
         columns = ", ".join(quote_identifier(column.name) for column in self.columns)
         return f"SELECT {columns} FROM {quote_identifier(table_name)}"
 
-    def encode_row(self, values: Mapping[str, Any]) -> dict[str, Any]:
-        return {column.name: column.encode(values.get(column.name)) for column in self.columns}
+    def encode_row(self, values: Mapping[str, Any] | object) -> dict[str, Any]:
+        row_values = _row_values(values)
+        return {column.name: column.encode(row_values.get(column.name)) for column in self.columns}
 
     def insert_row(
         self,
         conn: sqlite3.Connection,
-        values: Mapping[str, Any],
+        values: Mapping[str, Any] | object,
         *,
         or_ignore: bool = False,
         or_replace: bool = False,
@@ -281,6 +282,24 @@ class ProjectionTable:
                 bindings=bindings,
             ),
             self.encode_row(values),
+        )
+
+    def insert_rows(
+        self,
+        conn: sqlite3.Connection,
+        rows: Iterable[Mapping[str, Any] | object],
+        *,
+        or_ignore: bool = False,
+        or_replace: bool = False,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.executemany(
+            self.insert_sql(
+                or_ignore=or_ignore,
+                or_replace=or_replace,
+                bindings=bindings,
+            ),
+            tuple(self.encode_row(row) for row in rows),
         )
 
     def select_all(
@@ -368,11 +387,23 @@ class FtsProjection:
     def insert_row(
         self,
         conn: sqlite3.Connection,
-        values: Mapping[str, Any],
+        values: Mapping[str, Any] | object,
         *,
         bindings: Mapping[str, str] | None = None,
     ) -> None:
-        conn.execute(self.insert_sql(bindings), dict(values))
+        conn.execute(self.insert_sql(bindings), _row_values(values))
+
+    def insert_rows(
+        self,
+        conn: sqlite3.Connection,
+        rows: Iterable[Mapping[str, Any] | object],
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.executemany(
+            self.insert_sql(bindings),
+            tuple(_row_values(row) for row in rows),
+        )
 
     def population_sql(self, bindings: Mapping[str, str] | None = None) -> str:
         if self.source_query is None:
@@ -496,7 +527,7 @@ class VecProjection:
     def insert_row(
         self,
         conn: sqlite3.Connection,
-        values: Mapping[str, Any],
+        values: Mapping[str, Any] | object,
         *,
         bindings: Mapping[str, str] | None = None,
     ) -> None:
@@ -505,13 +536,25 @@ class VecProjection:
     def insert_rowid(
         self,
         conn: sqlite3.Connection,
-        values: Mapping[str, Any],
+        values: Mapping[str, Any] | object,
         *,
         rowid: int,
         bindings: Mapping[str, str] | None = None,
     ) -> None:
         row = {"rowid": rowid, **self.encode_row(values)}
         conn.execute(self.insert_rowid_sql(bindings), row)
+
+    def insert_rows(
+        self,
+        conn: sqlite3.Connection,
+        rows: Iterable[Mapping[str, Any] | object],
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.executemany(
+            self.insert_sql(bindings),
+            tuple(self.encode_row(row) for row in rows),
+        )
 
     def delete_rowid(
         self,
@@ -537,8 +580,9 @@ class VecProjection:
             "ORDER BY distance"
         )
 
-    def encode_row(self, values: Mapping[str, Any]) -> dict[str, Any]:
-        return {column.name: column.encode(values.get(column.name)) for column in self.columns}
+    def encode_row(self, values: Mapping[str, Any] | object) -> dict[str, Any]:
+        row_values = _row_values(values)
+        return {column.name: column.encode(row_values.get(column.name)) for column in self.columns}
 
     def schema_hash_material(self) -> dict[str, Any]:
         return {
@@ -678,6 +722,16 @@ def _render_dynamic_text(
     if "{" in rendered or "}" in rendered:
         raise ValueError(f"Unbound dynamic projection text segment in {value!r}")
     return rendered
+
+
+def _row_values(values: Mapping[str, Any] | object) -> Mapping[str, Any]:
+    if isinstance(values, Mapping):
+        return values
+    if is_dataclass(values):
+        return asdict(values)
+    raise TypeError(
+        f"Projection row must be a mapping or dataclass, got {type(values).__name__}"
+    )
 
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:
