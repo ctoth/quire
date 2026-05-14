@@ -24,14 +24,18 @@ That is what quire adds.
   gives you a fully functional in-RAM repo for tests.
 - **Placements separate identity from storage.** A ref maps to
   `(branch, path)` through a pluggable codec — flat YAML per namespace,
-  hash-scattered for large collections, fixed files, templated paths, or
-  per-identity branches.
+  hash-scattered for large collections, fixed files, templated paths,
+  nested or subdir layouts, singletons, or per-identity branches.
 - **Contracts are first-class.** Every family declares a `VersionId`.
   `check_contract_manifest` refuses silent shape drift: bump the version,
   or file a `CompatibilityMarker` with a written reason. You cannot quietly
   break a persisted ABI.
-- **Batched transactions.** `store.transact()` coalesces adds and deletes
-  into a single commit.
+- **Compare-and-swap writes.** Every writer accepts `expected_head`. If the
+  branch tip moved between read and commit, you get a typed
+  `HeadMismatchError` before any objects are written.
+- **Batched transactions.** `transact()` coalesces adds, deletes, and moves
+  into a single commit, with foreign-key validation against the
+  post-transaction state.
 - **Structural typing throughout.** `ArtifactFamily[TOwner, TRef, TDoc]`,
   `Protocol` backends, msgspec-validated decode.
 
@@ -39,8 +43,8 @@ That is what quire adds.
 
 - Not a git porcelain. No push/pull, no remotes, no merge resolution UI.
   Quire does expose low-level graph plumbing such as parent inspection and
-  merge-base calculation so downstream semantic merge code can build on the
-  object store without shelling out to git.
+  native merge-base calculation so downstream semantic merge code can build
+  on the object store without shelling out to git.
 - Not a working-tree manager. `materialize_worktree()` exists for the cases
   that need it, but it is a side door, not the front door.
 - Not a general-purpose ORM. Documents are `msgspec.Struct` values; identity,
@@ -59,11 +63,16 @@ Requires Python 3.11+. Depends on `dulwich`, `msgspec`, and `pyyaml`.
 ```python
 import msgspec
 
-from quire.artifacts import ArtifactFamily, FlatYamlPlacement
-from quire.families import FamilyDefinition, FamilyRegistry
-from quire.family_store import DocumentFamilyStore
-from quire.git_store import GitStore
-from quire.versions import VersionId
+from quire import (
+    ArtifactFamily,
+    BoundFamilyRegistry,
+    DocumentFamilyStore,
+    FamilyDefinition,
+    FamilyRegistry,
+    FlatYamlPlacement,
+    GitStore,
+    VersionId,
+)
 
 
 class Claim(msgspec.Struct):
@@ -71,7 +80,7 @@ class Claim(msgspec.Struct):
     strength: float = 0.0
 
 
-V = VersionId("2026.04.18", allow_placeholder=False)
+V = VersionId("2026.05.01", allow_placeholder=False)
 
 claims = ArtifactFamily(
     name="claims",
@@ -86,35 +95,64 @@ registry = FamilyRegistry(
     families=(FamilyDefinition(key="claims", name="claims", contract_version=V, artifact_family=claims),),
 )
 
+
 class Owner:
     branch = "master"
+
 
 store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
 bound = registry.bind(store.owner, store)
 
-bound.claims.save("alpha", Claim(name="alpha", strength=0.8), message="seed alpha")
-bound.claims.save("beta",  Claim(name="beta"),                message="seed beta")
+with bound.transact(message="seed") as txn:
+    txn.claims.save("alpha", Claim(name="alpha", strength=0.8))
+    txn.claims.save("beta",  Claim(name="beta"))
 
 assert list(bound.claims.iter()) == ["alpha", "beta"]
 assert bound.claims.require("alpha").strength == 0.8
 ```
 
-No filesystem was touched. The repo lives in process memory; each `save` is a
-real commit against the object store with a real tree and a real SHA.
+No filesystem was touched. The repo lives in process memory; the
+transaction produces a single commit with both records.
 
 ## Concept map
 
 | Layer | Responsibility |
 | --- | --- |
-| `GitStore` | Raw object store ops: `commit_files`, `commit_flat_tree`, refs, notes, branches, merge-base. Backed by `dulwich` (`Repo` or `MemoryRepo`). |
+| `GitStore` + `GitStorePolicy` | Raw object store ops: `commit_files`, `commit_flat_tree`, refs, notes, branches, native merge-base. Backed by `dulwich` (`Repo` or `MemoryRepo`). Policy controls ignored paths and other generic knobs. |
+| `GitGcReport` | Dry-run gc reporting unreachable objects. |
 | `RefName`, `NotesRef`, `VersionId` | Validated newtypes — placeholder refs and empty versions are rejected at construction. |
-| `ArtifactFamily` | A typed document family: `doc_type`, placement, optional codec/render/validate hooks. |
-| Placements | `FlatYamlPlacement`, `HashScatteredYamlPlacement`, `FixedFilePlacement`, `TemplateFilePlacement`, `SingletonFilePlacement` — all pluggable. |
+| `TreePath`, `GitTreePath`, `FilesystemTreePath`, `coerce_tree_path` | Typed path values that distinguish object-store paths from filesystem paths and agree with tree walking. |
+| `ArtifactFamily` | A typed document family: `doc_type`, placement, optional codec/render/normalize/validate hooks. |
+| Placements | `FlatYamlPlacement`, `HashScatteredYamlPlacement`, `NestedFlatYamlPlacement`, `FixedFilePlacement`, `SubdirFixedFilePlacement`, `TemplateFilePlacement`, `SingletonFilePlacement` — all pluggable. |
 | `BranchPlacement` | `owner` / `primary` / `current` / `fixed` / `template` — where the artifact is written. Templates can derive a branch name from the ref itself. |
+| Ref codecs | `encode_ref_value` plus `single_field_ref_type` / `singleton_ref_type` helpers; reversible `stem`, `base64url`, and `uri` codecs for ref-to-filename mapping. |
+| `FamilyIdentityPolicy` | Per-family hooks for artifact id, version id, canonical payload, logical id fields, source-local fields. |
 | `FamilyRegistry` → `BoundFamilyRegistry` → `BoundFamily` | Grouped families with duplicate-key/name/accessor checks; `bound.<accessor>.save(...)` attribute access. |
-| `DocumentFamilyStore` + `DocumentFamilyTransaction` | Load/save/move/delete, prepare-then-commit, batched transactions. |
+| `DocumentFamilyStore` + `BoundFamilyTransaction` + `TransactionalBoundFamily` | Load/save/move/delete, prepare-then-commit, batched transactions with per-family attribute access inside the transaction. |
+| `HeadMismatchError` | Typed compare-and-swap failure raised before any object writes happen. |
 | `ContractManifest` + `check_contract_manifest` | Persisted ABI. Body drift without a version bump or compatibility marker raises. |
-| `ReferenceKey`, `FamilyReferenceIndex`, `ForeignKeySpec` | Declarative family references and mandatory cross-family FK validation. |
+| `ReferenceKey`, `FamilyReferenceIndex`, `CrossFamilyReferenceIndex`, `ReferenceResolution`, `ForeignKeySpec` | Declarative family references, alias indexing with match provenance, and mandatory cross-family FK validation. |
+| `canonical_json_bytes`, `canonical_json_sha256` | Deterministic payload canonicalization for hashing and contract bodies. |
+
+## Transactions and concurrency
+
+Writers and transactions accept `expected_head`:
+
+```python
+head = store.backend.branch_sha("master")
+# ... think about it, plan changes ...
+with bound.transact(message="apply plan", expected_head=head) as txn:
+    txn.claims.save("alpha", Claim(name="alpha", strength=0.9))
+```
+
+If another writer advanced `master` in between, `HeadMismatchError` fires
+before any tree, blob, or commit object is written — no orphaned objects,
+no partial state. Multi-artifact transactions stay pinned to a single
+target branch and refuse cross-branch writes.
+
+`GitStore` serializes filesystem-backed mutations and uses compare-and-swap
+ref updates under the hood, so concurrent writers from separate processes
+still observe a consistent ref history.
 
 ## Registry queries
 
@@ -146,10 +184,11 @@ accessors are still rejected.
 Families can declare the artifact identity field and any additional reference
 keys that should resolve to that identity. Quire builds `FamilyReferenceIndex`
 values from loaded family records and raises typed errors for missing or
-ambiguous references.
+ambiguous references. Each resolution carries `match provenance` so callers
+can tell whether a hit came from the primary identity field or an alias.
 
 ```python
-from quire.references import ForeignKeySpec, ReferenceKey
+from quire import ForeignKeySpec, ReferenceKey
 
 concepts = FamilyDefinition(
     key="concepts",
@@ -185,14 +224,15 @@ Bound family writes and transactions validate declared foreign keys before
 committing. Validation uses the post-transaction state, so a transaction can add
 a target record and a dependent record together. Deleting or replacing a target
 that would leave existing dependents dangling fails before the commit is
-written.
+written. FK validation is scoped to the foreign-key graph touched by the
+transaction, so unrelated families pay no scan cost.
 
 ## Contracts, briefly
 
 ```python
-baseline = registry.contract_manifest(package_name="demo", package_version="0.1.0")
+baseline = registry.contract_manifest(package_name="demo", package_version="0.2.0")
 # ... later, after changing a placement namespace ...
-updated  = changed_registry.contract_manifest(package_name="demo", package_version="0.1.0")
+updated  = changed_registry.contract_manifest(package_name="demo", package_version="0.2.0")
 
 check_contract_manifest(baseline, updated)
 # ContractManifestError: Contract body changed without version bump or
@@ -205,9 +245,9 @@ the question.
 
 ## Status
 
-`0.1.x`. The package surface is small and deliberate; breaking changes in this
-phase are expected to be announced via contract-version bumps rather than
-silent shape drift. See `quire/__init__.py` for the exported surface.
+`0.2.x`. The package surface is small and deliberate; breaking changes in this
+phase are announced via contract-version bumps rather than silent shape drift.
+See `quire/__init__.py` for the exported surface.
 
 ## License
 
