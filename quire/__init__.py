@@ -17,6 +17,7 @@ from quire.artifacts import (
     encode_ref_value,
 )
 from quire.contracts import ContractEntry, ContractManifest, ContractManifestError, check_contract_manifest
+from quire.derived_store import DerivedStoreGcReport, DerivedStoreHandle, DerivedStoreManager
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitGcReport, GitStore, GitStorePolicy, HeadMismatchError
 from quire.refs import RefName, single_field_ref_type, singleton_ref_type
@@ -62,6 +63,9 @@ __all__ = [
     "ContractManifestError",
     "CrossFamilyReferenceIndex",
     "DocumentFamilyStore",
+    "DerivedStoreGcReport",
+    "DerivedStoreHandle",
+    "DerivedStoreManager",
     "FamilyDefinition",
     "FamilyIdentityPolicy",
     "FamilyReferenceIndex",
