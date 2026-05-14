@@ -6,6 +6,22 @@ from typing import Any, Protocol
 
 from quire.projections import ProjectionColumn, ProjectionIndex, ProjectionTable, VecProjection, quote_identifier
 
+__all__ = [
+    "EMBEDDING_MODEL_PROJECTION",
+    "EmbeddingModelIdentity",
+    "RestoreReport",
+    "SqliteVecEntityStore",
+    "SqliteVecRegistry",
+    "SqliteVecSnapshotStore",
+    "VecEntitySnapshot",
+    "VecEntityStoreSpec",
+    "VecSnapshot",
+    "embedding_status_projection",
+    "ensure_embedding_tables",
+    "is_missing_table_error",
+    "rowid_vec_projection",
+]
+
 
 class EmbeddingModelIdentity(Protocol):
     @property

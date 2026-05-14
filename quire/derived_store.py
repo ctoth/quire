@@ -14,6 +14,24 @@ from typing import Any
 
 from quire.hashing import canonical_json_sha256
 
+__all__ = [
+    "DerivedStoreBuildDiagnostic",
+    "DerivedStoreBuildError",
+    "DerivedStoreBuilder",
+    "DerivedStoreGcReport",
+    "DerivedStoreHandle",
+    "DerivedStoreManager",
+    "DerivedStoreMaterialization",
+    "ProjectionBuildStep",
+    "SqliteFileMaterialization",
+    "checkpoint_and_close_sqlite",
+    "derived_store_content_hash",
+    "digest_directory",
+    "materialize_sqlite_file",
+    "order_projection_steps",
+    "read_dependency_pins",
+]
+
 
 DerivedStoreBuilder = Callable[[Path], None]
 
