@@ -28,6 +28,12 @@ from quire.projections import (
     json_encoder,
     render_projection_name,
 )
+from quire.sqlite_vec_store import (
+    SqliteVecEntityStore,
+    VecEntityStoreSpec,
+    embedding_status_projection,
+    rowid_vec_projection,
+)
 
 
 def _serialize_float32(vector: list[float]) -> bytes:
@@ -571,5 +577,45 @@ def test_vec_projection_materializes_rowids_and_searches_vectors():
         )
         vectors.delete_rowid(conn, rowid=1, bindings=bindings)
         assert conn.execute('SELECT rowid FROM "page_vec_small" WHERE rowid = 1').fetchone() is None
+    finally:
+        conn.close()
+
+
+def test_sqlite_vec_store_spec_uses_projection_primitives_for_status_and_names():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        status = embedding_status_projection(
+            name="page_embedding_status",
+            entity_id_column="page_id",
+            index_name="idx_page_embedding_status_model",
+        )
+        spec = VecEntityStoreSpec(
+            name="pages",
+            status_projection=status,
+            status_id_column="page_id",
+            vector_projection=rowid_vec_projection("page_vec_{model_identity_hash}"),
+            source_table="page",
+        )
+        store = SqliteVecEntityStore(conn, spec)
+
+        for statement in status.ddl_statements():
+            conn.execute(statement)
+
+        assert status.insert_sql(or_replace=True) == (
+            'INSERT OR REPLACE INTO "page_embedding_status" '
+            '("model_identity_hash", "page_id", "content_hash", "embedded_at") '
+            "VALUES (:model_identity_hash, :page_id, :content_hash, :embedded_at)"
+        )
+        assert spec.vector_projection.projection_name(
+            {"model_identity_hash": "abc123", "dimensions": "3"}
+        ) == "page_vec_abc123"
+        assert store.existing_content_hashes(
+            type(
+                "Identity",
+                (),
+                {"identity_hash": "missing"},
+            )()
+        ) == {}
     finally:
         conn.close()
