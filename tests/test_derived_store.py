@@ -20,6 +20,7 @@ from quire.projections import (
     ProjectionColumn,
     ProjectionForeignKey,
     ProjectionIndex,
+    ProjectionRow,
     ProjectionSchemaError,
     ProjectionTable,
     VecProjection,
@@ -412,6 +413,31 @@ def test_projection_tables_insert_dataclass_rows():
         conn.close()
 
 
+def test_projection_tables_insert_generic_projection_rows():
+    conn = sqlite3.connect(":memory:")
+    try:
+        pages = ProjectionTable(
+            name="pages",
+            columns=(
+                ProjectionColumn("id", "TEXT", nullable=False),
+                ProjectionColumn("title", "TEXT", nullable=False),
+            ),
+            primary_key=("id",),
+        )
+        schema = create_projection_schema(pages)
+        schema.create_all(conn)
+
+        pages.insert_row(
+            conn,
+            ProjectionRow(table="pages", values={"id": "intro", "title": "Introduction"}),
+        )
+
+        rows = pages.select_all(conn)
+        assert rows[0].values == {"id": "intro", "title": "Introduction"}
+    finally:
+        conn.close()
+
+
 def test_projection_schema_validation_reports_missing_tables():
     schema = create_projection_schema(
         ProjectionTable(
@@ -489,7 +515,10 @@ def test_fts_projection_supports_direct_row_insert():
 
         page_search.insert_row(
             conn,
-            {"id": "api", "title": "API", "body": "Generated projection APIs"},
+            ProjectionRow(
+                table="page_search",
+                values={"id": "api", "title": "API", "body": "Generated projection APIs"},
+            ),
         )
 
         rows = conn.execute(

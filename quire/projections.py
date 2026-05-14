@@ -727,10 +727,13 @@ def _render_dynamic_text(
 def _row_values(values: Mapping[str, Any] | object) -> Mapping[str, Any]:
     if isinstance(values, Mapping):
         return values
+    if isinstance(values, ProjectionRow):
+        return values.values
     if is_dataclass(values):
         return asdict(values)
     raise TypeError(
-        f"Projection row must be a mapping or dataclass, got {type(values).__name__}"
+        "Projection row must be a mapping, ProjectionRow, or dataclass, "
+        f"got {type(values).__name__}"
     )
 
 
