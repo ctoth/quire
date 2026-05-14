@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import struct
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,10 @@ from quire.projections import (
     json_encoder,
     render_projection_name,
 )
+
+
+def _serialize_float32(vector: list[float]) -> bytes:
+    return struct.pack(f"{len(vector)}f", *vector)
 
 
 def _build_sqlite(path: Path, value: str = "ready") -> None:
@@ -385,5 +390,50 @@ def test_fts_projection_supports_direct_row_insert():
             {"query": "projection"},
         ).fetchall()
         assert rows == [("api",)]
+    finally:
+        conn.close()
+
+
+def test_vec_projection_materializes_rowids_and_searches_vectors():
+    sqlite_vec = pytest.importorskip("sqlite_vec")
+    conn = sqlite3.connect(":memory:")
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    try:
+        vectors = VecProjection(
+            table="page_vec_{model}",
+            key_column=None,
+            vector_column=ProjectionColumn("embedding", "float[{dimensions}]", nullable=False),
+        )
+        schema = create_projection_schema(vectors)
+        bindings = {"model": "small", "dimensions": "3"}
+
+        schema.create_all(conn, bindings=bindings)
+        schema.validate_connection(conn, bindings=bindings)
+        vectors.insert_rowid(
+            conn,
+            {"embedding": _serialize_float32([0.1, 0.2, 0.3])},
+            rowid=1,
+            bindings=bindings,
+        )
+        vectors.insert_rowid(
+            conn,
+            {"embedding": _serialize_float32([0.9, 0.9, 0.9])},
+            rowid=2,
+            bindings=bindings,
+        )
+
+        rows = conn.execute(
+            vectors.search_sql(bindings=bindings),
+            {"query_vector": _serialize_float32([0.1, 0.2, 0.31]), "k": 1},
+        ).fetchall()
+
+        assert rows[0][0] == 1
+        assert vectors.insert_rowid_sql(bindings) == (
+            'INSERT INTO "page_vec_small" '
+            '(rowid, "embedding") VALUES (:rowid, :embedding)'
+        )
+        vectors.delete_rowid(conn, rowid=1, bindings=bindings)
+        assert conn.execute('SELECT rowid FROM "page_vec_small" WHERE rowid = 1').fetchone() is None
     finally:
         conn.close()

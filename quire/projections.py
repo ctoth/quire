@@ -461,6 +461,82 @@ class VecProjection:
     def projection_name(self, bindings: Mapping[str, str] | None = None) -> str:
         return render_projection_name(self.table, bindings)
 
+    def ddl_statements(
+        self,
+        bindings: Mapping[str, str] | None = None,
+    ) -> tuple[str, ...]:
+        table_name = self.projection_name(bindings)
+        columns = ", ".join(
+            f"{column.name} {_render_dynamic_text(column.sql_type, bindings)}"
+            for column in self.columns
+        )
+        return (
+            f"CREATE VIRTUAL TABLE {quote_identifier(table_name)} "
+            f"USING vec0({columns})",
+        )
+
+    def insert_sql(self, bindings: Mapping[str, str] | None = None) -> str:
+        table_name = self.projection_name(bindings)
+        columns = ", ".join(quote_identifier(column.name) for column in self.columns)
+        params = ", ".join(f":{column.name}" for column in self.columns)
+        return f"INSERT INTO {quote_identifier(table_name)} ({columns}) VALUES ({params})"
+
+    def insert_rowid_sql(self, bindings: Mapping[str, str] | None = None) -> str:
+        table_name = self.projection_name(bindings)
+        columns = ", ".join(
+            ("rowid",) + tuple(quote_identifier(column.name) for column in self.columns)
+        )
+        params = ", ".join((":rowid",) + tuple(f":{column.name}" for column in self.columns))
+        return f"INSERT INTO {quote_identifier(table_name)} ({columns}) VALUES ({params})"
+
+    def delete_rowid_sql(self, bindings: Mapping[str, str] | None = None) -> str:
+        table_name = self.projection_name(bindings)
+        return f"DELETE FROM {quote_identifier(table_name)} WHERE rowid = :rowid"
+
+    def insert_row(
+        self,
+        conn: sqlite3.Connection,
+        values: Mapping[str, Any],
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.execute(self.insert_sql(bindings), self.encode_row(values))
+
+    def insert_rowid(
+        self,
+        conn: sqlite3.Connection,
+        values: Mapping[str, Any],
+        *,
+        rowid: int,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        row = {"rowid": rowid, **self.encode_row(values)}
+        conn.execute(self.insert_rowid_sql(bindings), row)
+
+    def delete_rowid(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        rowid: int,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.execute(self.delete_rowid_sql(bindings), {"rowid": rowid})
+
+    def search_sql(
+        self,
+        *,
+        bindings: Mapping[str, str] | None = None,
+        vector_param: str = "query_vector",
+        limit_param: str = "k",
+    ) -> str:
+        table_name = self.projection_name(bindings)
+        vector_column = quote_identifier(self.vector_column.name)
+        return (
+            f"SELECT rowid, distance FROM {quote_identifier(table_name)} "
+            f"WHERE {vector_column} MATCH :{vector_param} AND k = :{limit_param} "
+            "ORDER BY distance"
+        )
+
     def encode_row(self, values: Mapping[str, Any]) -> dict[str, Any]:
         return {column.name: column.encode(values.get(column.name)) for column in self.columns}
 
@@ -501,7 +577,7 @@ class ProjectionSchema:
     ) -> tuple[str, ...]:
         statements: list[str] = []
         for projection in self.projections:
-            if isinstance(projection, (ProjectionTable, FtsProjection)):
+            if isinstance(projection, (ProjectionTable, FtsProjection, VecProjection)):
                 statements.extend(projection.ddl_statements(bindings))
         return tuple(statements)
 
@@ -523,7 +599,7 @@ class ProjectionSchema:
         missing_tables: list[str] = []
         missing_columns: list[str] = []
         for projection in self.projections:
-            if not isinstance(projection, (ProjectionTable, FtsProjection)):
+            if not isinstance(projection, (ProjectionTable, FtsProjection, VecProjection)):
                 continue
             table_name = projection.projection_name(bindings)
             if not _has_table(conn, table_name):
@@ -583,6 +659,24 @@ def render_projection_name(name: str, bindings: Mapping[str, str] | None = None)
     if "{" in rendered or "}" in rendered:
         raise ValueError(f"Unbound dynamic projection name segment in {name!r}")
     _validate_identifier(rendered, "projection name")
+    return rendered
+
+
+def _render_dynamic_text(
+    value: str,
+    bindings: Mapping[str, str] | None = None,
+) -> str:
+    if "{" not in value:
+        return value
+    if bindings is None:
+        raise ValueError(f"Dynamic projection text {value!r} requires bindings")
+    rendered = value
+    for key, replacement in bindings.items():
+        if not _DYNAMIC_SEGMENT.fullmatch(replacement):
+            raise ValueError(f"Invalid dynamic text segment for {key}: {replacement!r}")
+        rendered = rendered.replace("{" + key + "}", replacement)
+    if "{" in rendered or "}" in rendered:
+        raise ValueError(f"Unbound dynamic projection text segment in {value!r}")
     return rendered
 
 

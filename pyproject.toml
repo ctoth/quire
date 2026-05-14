@@ -57,6 +57,7 @@ dev = [
     "pytest-benchmark>=5.1",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
+    "sqlite-vec>=0.1",
 ]
 
 [build-system]
