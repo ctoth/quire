@@ -347,6 +347,48 @@ class FtsProjection:
     def projection_name(self, bindings: Mapping[str, str] | None = None) -> str:
         return render_projection_name(self.table, bindings)
 
+    def ddl_statements(
+        self,
+        bindings: Mapping[str, str] | None = None,
+    ) -> tuple[str, ...]:
+        table_name = self.projection_name(bindings)
+        columns = [quote_identifier(self.key_column) + " UNINDEXED"]
+        columns.extend(quote_identifier(column) for column in self.columns)
+        return (
+            f"CREATE VIRTUAL TABLE {quote_identifier(table_name)} "
+            f"USING fts5({', '.join(columns)})",
+        )
+
+    def insert_sql(self, bindings: Mapping[str, str] | None = None) -> str:
+        table_name = self.projection_name(bindings)
+        columns = ", ".join(quote_identifier(column) for column in self.column_names)
+        params = ", ".join(f":{column}" for column in self.column_names)
+        return f"INSERT INTO {quote_identifier(table_name)} ({columns}) VALUES ({params})"
+
+    def insert_row(
+        self,
+        conn: sqlite3.Connection,
+        values: Mapping[str, Any],
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.execute(self.insert_sql(bindings), dict(values))
+
+    def population_sql(self, bindings: Mapping[str, str] | None = None) -> str:
+        if self.source_query is None:
+            raise ValueError(f"FTS projection {self.table!r} has no source query")
+        table_name = self.projection_name(bindings)
+        columns = ", ".join(quote_identifier(column) for column in self.column_names)
+        return f"INSERT INTO {quote_identifier(table_name)} ({columns}) {self.source_query}"
+
+    def populate_from_source_query(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.execute(self.population_sql(bindings))
+
     def population_plan(self) -> str:
         if self.source_query is not None:
             return self.source_query
@@ -362,6 +404,25 @@ class FtsProjection:
             raise ValueError(
                 f"FTS projection {self.table!r} does not declare search column(s): {joined}"
             )
+
+    def match_sql(
+        self,
+        select_columns: tuple[str, ...],
+        *,
+        bindings: Mapping[str, str] | None = None,
+        query_param: str = "query",
+        limit_param: str | None = None,
+    ) -> str:
+        self.validate_search_columns(select_columns)
+        table_name = self.projection_name(bindings)
+        selected = ", ".join(quote_identifier(column) for column in select_columns)
+        statement = (
+            f"SELECT {selected} FROM {quote_identifier(table_name)} "
+            f"WHERE {quote_identifier(table_name)} MATCH :{query_param}"
+        )
+        if limit_param is not None:
+            statement += f" LIMIT :{limit_param}"
+        return statement
 
     def schema_hash_material(self) -> dict[str, Any]:
         return {
@@ -440,7 +501,7 @@ class ProjectionSchema:
     ) -> tuple[str, ...]:
         statements: list[str] = []
         for projection in self.projections:
-            if isinstance(projection, ProjectionTable):
+            if isinstance(projection, (ProjectionTable, FtsProjection)):
                 statements.extend(projection.ddl_statements(bindings))
         return tuple(statements)
 
@@ -462,7 +523,7 @@ class ProjectionSchema:
         missing_tables: list[str] = []
         missing_columns: list[str] = []
         for projection in self.projections:
-            if not isinstance(projection, ProjectionTable):
+            if not isinstance(projection, (ProjectionTable, FtsProjection)):
                 continue
             table_name = projection.projection_name(bindings)
             if not _has_table(conn, table_name):

@@ -313,3 +313,77 @@ def test_projection_schema_validation_reports_missing_tables():
             schema.validate_connection(conn)
     finally:
         conn.close()
+
+
+def test_fts_projection_materializes_and_queries_search_rows():
+    conn = sqlite3.connect(":memory:")
+    try:
+        pages = ProjectionTable(
+            name="pages",
+            columns=(
+                ProjectionColumn("id", "TEXT", nullable=False),
+                ProjectionColumn("title", "TEXT", nullable=False),
+                ProjectionColumn("body", "TEXT", nullable=False),
+            ),
+            primary_key=("id",),
+        )
+        page_search = FtsProjection(
+            table="page_search",
+            key_column="id",
+            columns=("title", "body"),
+            source_query='SELECT id, title, body FROM "pages"',
+        )
+        schema = create_projection_schema(pages, page_search)
+
+        schema.create_all(conn)
+        pages.insert_row(
+            conn,
+            {
+                "id": "intro",
+                "title": "Introduction",
+                "body": "A quiet tour through the system.",
+            },
+        )
+        page_search.populate_from_source_query(conn)
+        conn.commit()
+
+        rows = conn.execute(
+            page_search.match_sql(("id", "title"), query_param="query"),
+            {"query": "quiet"},
+        ).fetchall()
+
+        assert rows == [("intro", "Introduction")]
+        assert page_search.population_sql() == (
+            'INSERT INTO "page_search" ("id", "title", "body") '
+            'SELECT id, title, body FROM "pages"'
+        )
+        with pytest.raises(ValueError, match="does not declare search column"):
+            page_search.match_sql(("missing",))
+    finally:
+        conn.close()
+
+
+def test_fts_projection_supports_direct_row_insert():
+    conn = sqlite3.connect(":memory:")
+    try:
+        page_search = FtsProjection(
+            table="page_search",
+            key_column="id",
+            columns=("title", "body"),
+            row_plan="caller supplied page rows",
+        )
+        schema = create_projection_schema(page_search)
+        schema.create_all(conn)
+
+        page_search.insert_row(
+            conn,
+            {"id": "api", "title": "API", "body": "Generated projection APIs"},
+        )
+
+        rows = conn.execute(
+            page_search.match_sql(("id",), query_param="query"),
+            {"query": "projection"},
+        ).fetchall()
+        assert rows == [("api",)]
+    finally:
+        conn.close()
