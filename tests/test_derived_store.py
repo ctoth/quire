@@ -6,6 +6,18 @@ from pathlib import Path
 import pytest
 
 from quire.derived_store import DerivedStoreManager
+from quire.projections import (
+    FtsProjection,
+    ProjectionColumn,
+    ProjectionForeignKey,
+    ProjectionIndex,
+    ProjectionTable,
+    VecProjection,
+    create_projection_schema,
+    json_decoder,
+    json_encoder,
+    render_projection_name,
+)
 
 
 def _build_sqlite(path: Path, value: str = "ready") -> None:
@@ -110,3 +122,107 @@ def test_gc_deletes_unkept_stores_and_temp_files(tmp_path):
     assert report.deleted_paths == (drop.path,)
     assert report.deleted_temp_paths == (temp,)
     assert not temp.exists()
+
+
+def test_projection_table_validates_declared_columns_and_codecs():
+    pages = ProjectionTable(
+        name="pages",
+        columns=(
+            ProjectionColumn("id", "TEXT", nullable=False),
+            ProjectionColumn(
+                "metadata_json",
+                "TEXT",
+                encoder=json_encoder,
+                decoder=json_decoder,
+            ),
+            ProjectionColumn("updated_at", "INTEGER", insertable=False),
+        ),
+        primary_key=("id",),
+        indexes=(ProjectionIndex("idx_pages_updated", ("updated_at",)),),
+    )
+
+    encoded = pages.encode_row(
+        {"id": "intro", "metadata_json": {"order": 1}, "updated_at": 12}
+    )
+    assert encoded == {
+        "id": "intro",
+        "metadata_json": '{"order":1}',
+        "updated_at": 12,
+    }
+    decoded = pages.decode_row(encoded)
+
+    assert decoded.values["metadata_json"] == {"order": 1}
+    assert tuple(column.name for column in pages.insert_columns) == (
+        "id",
+        "metadata_json",
+    )
+    assert pages.schema_hash_material()["columns"][1]["codec"] == "json"
+
+
+def test_projection_table_rejects_invalid_foreign_key_and_index_columns():
+    with pytest.raises(ValueError, match="Foreign key references undeclared columns"):
+        ProjectionTable(
+            name="annotations",
+            columns=(ProjectionColumn("id", "TEXT"),),
+            foreign_keys=(
+                ProjectionForeignKey(
+                    columns=("missing_page_id",),
+                    ref_table="pages",
+                    ref_columns=("id",),
+                ),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="references undeclared columns"):
+        ProjectionTable(
+            name="annotations",
+            columns=(ProjectionColumn("id", "TEXT"),),
+            indexes=(ProjectionIndex("idx_annotations_page", ("page_id",)),),
+        )
+
+
+def test_projection_schema_validates_names_and_hashes_declarations():
+    pages = ProjectionTable(
+        name="pages",
+        columns=(ProjectionColumn("id", "TEXT", nullable=False),),
+        primary_key=("id",),
+    )
+    search = FtsProjection(
+        table="page_search",
+        key_column="id",
+        columns=("title", "body"),
+        row_plan="page title/body text",
+    )
+    vectors = VecProjection(
+        table="page_vec_{model}",
+        key_column=ProjectionColumn("id", "TEXT"),
+        vector_column=ProjectionColumn("embedding", "FLOAT[3]"),
+    )
+
+    schema = create_projection_schema(
+        pages,
+        search,
+        vectors,
+        metadata={"version": "one"},
+    )
+
+    assert schema.projection_names == ("pages", "page_search", "page_vec_{model}")
+    assert schema.projection("pages") is pages
+    assert search.population_plan() == "page title/body text"
+    search.validate_search_columns(("title", "body"))
+    assert render_projection_name("page_vec_{model}", {"model": "small_3"}) == "page_vec_small_3"
+    assert '"version":"one"' in schema.schema_hash_material()
+
+
+def test_projection_schema_rejects_duplicate_projection_names():
+    first = ProjectionTable(
+        name="pages",
+        columns=(ProjectionColumn("id", "TEXT"),),
+    )
+    second = ProjectionTable(
+        name="pages",
+        columns=(ProjectionColumn("slug", "TEXT"),),
+    )
+
+    with pytest.raises(ValueError, match="duplicate projection names"):
+        create_projection_schema(first, second)
