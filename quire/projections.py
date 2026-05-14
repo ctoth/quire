@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeAlias
@@ -33,6 +34,11 @@ def json_decoder(value: Any) -> Any:
     return json.loads(value)
 
 
+def quote_identifier(identifier: str) -> str:
+    _validate_identifier(identifier, "SQLite identifier")
+    return f'"{identifier}"'
+
+
 @dataclass(frozen=True)
 class ProjectionColumn:
     name: str
@@ -47,6 +53,18 @@ class ProjectionColumn:
 
     def __post_init__(self) -> None:
         _validate_identifier(self.name, "projection column")
+
+    def ddl(self) -> str:
+        parts = [quote_identifier(self.name), self.sql_type]
+        if self.primary_key:
+            parts.append("PRIMARY KEY")
+        if not self.nullable:
+            parts.append("NOT NULL")
+        if self.default_sql is not None:
+            parts.extend(("DEFAULT", self.default_sql))
+        if self.check_sql is not None:
+            parts.append(f"CHECK({self.check_sql})")
+        return " ".join(parts)
 
     def encode(self, value: Any) -> Any:
         if self.encoder is None:
@@ -95,6 +113,15 @@ class ProjectionForeignKey:
             "ref_columns": self.ref_columns,
         }
 
+    def ddl(self, bindings: Mapping[str, str] | None = None) -> str:
+        columns = ", ".join(quote_identifier(column) for column in self.columns)
+        ref_table = render_projection_name(self.ref_table, bindings)
+        ref_columns = ", ".join(quote_identifier(column) for column in self.ref_columns)
+        return (
+            f"FOREIGN KEY ({columns}) REFERENCES "
+            f"{quote_identifier(ref_table)}({ref_columns})"
+        )
+
 
 @dataclass(frozen=True)
 class ProjectionIndex:
@@ -117,6 +144,17 @@ class ProjectionIndex:
             "unique": self.unique,
             "where_sql": self.where_sql,
         }
+
+    def ddl(self, table_name: str) -> str:
+        unique = "UNIQUE " if self.unique else ""
+        columns = ", ".join(quote_identifier(column) for column in self.columns)
+        statement = (
+            f"CREATE {unique}INDEX IF NOT EXISTS {quote_identifier(self.name)} "
+            f"ON {quote_identifier(table_name)}({columns})"
+        )
+        if self.where_sql is not None:
+            statement += f" WHERE {self.where_sql}"
+        return statement
 
 
 @dataclass(frozen=True)
@@ -174,14 +212,96 @@ class ProjectionTable:
     def projection_name(self, bindings: Mapping[str, str] | None = None) -> str:
         return render_projection_name(self.name, bindings)
 
+    def create_ddl(self, bindings: Mapping[str, str] | None = None) -> str:
+        table_name = self.projection_name(bindings)
+        exists = " IF NOT EXISTS" if self.if_not_exists else ""
+        parts = [column.ddl() for column in self.columns]
+        if self.primary_key:
+            key_columns = ", ".join(quote_identifier(column) for column in self.primary_key)
+            parts.append(f"PRIMARY KEY ({key_columns})")
+        parts.extend(foreign_key.ddl(bindings) for foreign_key in self.foreign_keys)
+        parts.extend(f"CHECK({check})" for check in self.checks)
+        body = ",\n    ".join(parts)
+        return f"CREATE TABLE{exists} {quote_identifier(table_name)} (\n    {body}\n)"
+
+    def ddl_statements(
+        self,
+        bindings: Mapping[str, str] | None = None,
+    ) -> tuple[str, ...]:
+        table_name = self.projection_name(bindings)
+        return (self.create_ddl(bindings),) + tuple(
+            index.ddl(table_name) for index in self.indexes
+        )
+
+    def insert_sql(
+        self,
+        *,
+        or_ignore: bool = False,
+        or_replace: bool = False,
+        bindings: Mapping[str, str] | None = None,
+    ) -> str:
+        if or_ignore and or_replace:
+            raise ValueError("insert_sql accepts only one conflict policy")
+        table_name = self.projection_name(bindings)
+        if or_ignore:
+            verb = "INSERT OR IGNORE"
+        elif or_replace:
+            verb = "INSERT OR REPLACE"
+        else:
+            verb = "INSERT"
+        columns = ", ".join(quote_identifier(column.name) for column in self.insert_columns)
+        params = ", ".join(f":{column.name}" for column in self.insert_columns)
+        return f"{verb} INTO {quote_identifier(table_name)} ({columns}) VALUES ({params})"
+
+    def select_all_sql(
+        self,
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> str:
+        table_name = self.projection_name(bindings)
+        columns = ", ".join(quote_identifier(column.name) for column in self.columns)
+        return f"SELECT {columns} FROM {quote_identifier(table_name)}"
+
     def encode_row(self, values: Mapping[str, Any]) -> dict[str, Any]:
         return {column.name: column.encode(values.get(column.name)) for column in self.columns}
 
-    def decode_row(self, row: Mapping[str, Any]) -> Any:
+    def insert_row(
+        self,
+        conn: sqlite3.Connection,
+        values: Mapping[str, Any],
+        *,
+        or_ignore: bool = False,
+        or_replace: bool = False,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        conn.execute(
+            self.insert_sql(
+                or_ignore=or_ignore,
+                or_replace=or_replace,
+                bindings=bindings,
+            ),
+            self.encode_row(values),
+        )
+
+    def select_all(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> tuple[Any, ...]:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(self.select_all_sql(bindings=bindings)).fetchall()
+        return tuple(self.decode_row(row) for row in rows)
+
+    def decode_row(self, row: sqlite3.Row | Mapping[str, Any]) -> Any:
+        if isinstance(row, sqlite3.Row):
+            row_keys = set(row.keys())
+        else:
+            row_keys = set(row)
         decoded = {
             column.name: column.decode(row[column.name])
             for column in self.columns
-            if column.name in row
+            if column.name in row_keys
         }
         if self.row_factory is not None:
             return self.row_factory(decoded)
@@ -314,6 +434,50 @@ class ProjectionSchema:
                 return item
         raise KeyError(name)
 
+    def ddl_statements(
+        self,
+        bindings: Mapping[str, str] | None = None,
+    ) -> tuple[str, ...]:
+        statements: list[str] = []
+        for projection in self.projections:
+            if isinstance(projection, ProjectionTable):
+                statements.extend(projection.ddl_statements(bindings))
+        return tuple(statements)
+
+    def create_all(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        for statement in self.ddl_statements(bindings):
+            conn.execute(statement)
+
+    def validate_connection(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        bindings: Mapping[str, str] | None = None,
+    ) -> None:
+        missing_tables: list[str] = []
+        missing_columns: list[str] = []
+        for projection in self.projections:
+            if not isinstance(projection, ProjectionTable):
+                continue
+            table_name = projection.projection_name(bindings)
+            if not _has_table(conn, table_name):
+                missing_tables.append(table_name)
+                continue
+            for column in projection.column_names:
+                if column not in _table_columns(conn, table_name):
+                    missing_columns.append(f"{table_name}.{column}")
+        if missing_tables:
+            missing = ", ".join(sorted(missing_tables))
+            raise ProjectionSchemaError(f"missing table(s) {missing}")
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ProjectionSchemaError(f"missing column(s) {missing}")
+
     def schema_hash_material(self) -> str:
         material = {
             "metadata": self.metadata,
@@ -359,6 +523,19 @@ def render_projection_name(name: str, bindings: Mapping[str, str] | None = None)
         raise ValueError(f"Unbound dynamic projection name segment in {name!r}")
     _validate_identifier(rendered, "projection name")
     return rendered
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'virtual table') AND name = ?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({quote_identifier(table)})").fetchall()
+    return {str(row[1]) for row in rows}
 
 
 def _validate_dynamic_name(name: str, label: str) -> None:

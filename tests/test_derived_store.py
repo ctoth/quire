@@ -11,6 +11,7 @@ from quire.projections import (
     ProjectionColumn,
     ProjectionForeignKey,
     ProjectionIndex,
+    ProjectionSchemaError,
     ProjectionTable,
     VecProjection,
     create_projection_schema,
@@ -226,3 +227,89 @@ def test_projection_schema_rejects_duplicate_projection_names():
 
     with pytest.raises(ValueError, match="duplicate projection names"):
         create_projection_schema(first, second)
+
+
+def test_projection_schema_creates_tables_and_materializes_rows(tmp_path):
+    db_path = tmp_path / "library.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        pages = ProjectionTable(
+            name="pages",
+            columns=(
+                ProjectionColumn("id", "TEXT", nullable=False),
+                ProjectionColumn("title", "TEXT", nullable=False),
+                ProjectionColumn(
+                    "metadata_json",
+                    "TEXT",
+                    encoder=json_encoder,
+                    decoder=json_decoder,
+                ),
+            ),
+            primary_key=("id",),
+        )
+        notes = ProjectionTable(
+            name="notes",
+            columns=(
+                ProjectionColumn("id", "TEXT", nullable=False),
+                ProjectionColumn("page_id", "TEXT", nullable=False),
+                ProjectionColumn("body", "TEXT", nullable=False),
+            ),
+            primary_key=("id",),
+            foreign_keys=(
+                ProjectionForeignKey(
+                    columns=("page_id",),
+                    ref_table="pages",
+                    ref_columns=("id",),
+                ),
+            ),
+            indexes=(ProjectionIndex("idx_notes_page", ("page_id",)),),
+        )
+        schema = create_projection_schema(pages, notes)
+
+        schema.create_all(conn)
+        schema.validate_connection(conn)
+        pages.insert_row(
+            conn,
+            {
+                "id": "intro",
+                "title": "Introduction",
+                "metadata_json": {"rank": 1},
+            },
+        )
+        notes.insert_row(
+            conn,
+            {"id": "n1", "page_id": "intro", "body": "Keep this."},
+        )
+        conn.commit()
+
+        rows = pages.select_all(conn)
+
+        assert rows[0].values == {
+            "id": "intro",
+            "title": "Introduction",
+            "metadata_json": {"rank": 1},
+        }
+        assert notes.insert_sql() == (
+            'INSERT INTO "notes" ("id", "page_id", "body") '
+            "VALUES (:id, :page_id, :body)"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            notes.insert_row(conn, {"id": "n2", "page_id": "missing", "body": "Nope."})
+    finally:
+        conn.close()
+
+
+def test_projection_schema_validation_reports_missing_tables():
+    schema = create_projection_schema(
+        ProjectionTable(
+            name="events",
+            columns=(ProjectionColumn("id", "TEXT"),),
+        )
+    )
+    conn = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(ProjectionSchemaError, match="missing table"):
+            schema.validate_connection(conn)
+    finally:
+        conn.close()

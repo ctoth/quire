@@ -39,6 +39,7 @@ from quire.projections import (
     json_decoder,
     json_encoder,
     projection_name,
+    quote_identifier,
     render_projection_name,
 )
 from quire.references import (
@@ -140,6 +141,7 @@ __all__ = [
     "json_decoder",
     "json_encoder",
     "projection_name",
+    "quote_identifier",
     "read_git_note",
     "render_projection_name",
     "single_field_ref_type",
