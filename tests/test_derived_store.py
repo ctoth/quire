@@ -12,8 +12,11 @@ from quire.derived_store import (
     DerivedStoreBuildError,
     DerivedStoreManager,
     ProjectionBuildStep,
+    digest_directory,
     derived_store_content_hash,
+    materialize_sqlite_file,
     order_projection_steps,
+    read_dependency_pins,
 )
 from quire.projections import (
     FtsProjection,
@@ -97,6 +100,40 @@ def test_materialize_reuses_existing_cache_without_rebuilding(tmp_path):
     assert calls == 1
 
 
+def test_materialize_with_report_can_force_rebuild_existing_cache(tmp_path):
+    manager = DerivedStoreManager(tmp_path / "derived")
+    calls = 0
+
+    def build(path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        _build_sqlite(path, value=f"build-{calls}")
+
+    first = manager.materialize_with_report(
+        projection_id="library.search",
+        source_commit="b" * 40,
+        content_hash="schema-a",
+        build=build,
+    )
+    second = manager.materialize_with_report(
+        projection_id="library.search",
+        source_commit="b" * 40,
+        content_hash="schema-a",
+        build=build,
+        force=True,
+    )
+
+    assert first.handle == second.handle
+    assert first.built is True
+    assert second.built is True
+    assert calls == 2
+    conn = second.handle.open_readonly()
+    try:
+        assert conn.execute("SELECT value FROM marker").fetchone()[0] == "build-2"
+    finally:
+        conn.close()
+
+
 def test_materialize_cleans_failed_temp_store(tmp_path):
     manager = DerivedStoreManager(tmp_path / "derived")
 
@@ -168,6 +205,130 @@ def test_build_error_preserves_structured_diagnostics_and_cleans_temp_store(tmp_
     assert error.value.diagnostics == (diagnostic,)
     assert diagnostic.material()["details"] == {"id": "intro"}
     assert not list((tmp_path / "derived").glob("tmp/*"))
+
+
+def test_materialize_sqlite_file_publishes_hash_and_skips_matching_output(tmp_path):
+    output = tmp_path / "library.sqlite"
+    calls = 0
+
+    def build(path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        _build_sqlite(path, value=f"build-{calls}")
+
+    first = materialize_sqlite_file(
+        output,
+        content_hash="content-a",
+        build=build,
+    )
+    second = materialize_sqlite_file(
+        output,
+        content_hash="content-a",
+        build=build,
+    )
+
+    assert first.built is True
+    assert second.built is False
+    assert calls == 1
+    assert output.with_suffix(".hash").read_text() == "content-a"
+    conn = sqlite3.connect(output)
+    try:
+        assert conn.execute("SELECT value FROM marker").fetchone()[0] == "build-1"
+    finally:
+        conn.close()
+
+
+def test_materialize_sqlite_file_preserves_existing_output_on_publish_failure(
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "library.sqlite"
+    materialize_sqlite_file(
+        output,
+        content_hash="content-a",
+        build=lambda path: _build_sqlite(path, value="original"),
+    )
+    original_replace = Path.replace
+
+    def fail_output_replace(self: Path, target: Path | str) -> Path:
+        if Path(target) == output:
+            raise RuntimeError("replace failed")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_output_replace)
+
+    with pytest.raises(RuntimeError, match="replace failed"):
+        materialize_sqlite_file(
+            output,
+            content_hash="content-b",
+            build=lambda path: _build_sqlite(path, value="replacement"),
+        )
+
+    assert output.with_suffix(".hash").read_text() == "content-a"
+    conn = sqlite3.connect(output)
+    try:
+        assert conn.execute("SELECT value FROM marker").fetchone()[0] == "original"
+    finally:
+        conn.close()
+
+
+def test_materialize_sqlite_file_can_publish_failed_build_when_output_missing(
+    tmp_path,
+):
+    output = tmp_path / "library.sqlite"
+
+    def build(path: Path) -> None:
+        _build_sqlite(path, value="diagnostic")
+        raise RuntimeError("build failed")
+
+    with pytest.raises(RuntimeError, match="build failed"):
+        materialize_sqlite_file(
+            output,
+            content_hash="content-a",
+            build=build,
+            publish_failure_when_missing=True,
+        )
+
+    assert output.exists()
+    assert not output.with_suffix(".hash").exists()
+    conn = sqlite3.connect(output)
+    try:
+        assert conn.execute("SELECT value FROM marker").fetchone()[0] == "diagnostic"
+    finally:
+        conn.close()
+
+
+def test_digest_directory_and_dependency_pins_are_generic(tmp_path):
+    source = tmp_path / "schema"
+    source.mkdir()
+    (source / "b.txt").write_text("second")
+    nested = source / "nested"
+    nested.mkdir()
+    (nested / "a.txt").write_text("first")
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_text(
+        """
+[[package]]
+name = "alpha"
+version = "1.2.3"
+source = { registry = "https://example.invalid/simple" }
+
+[[package]]
+name = "beta"
+version = "4.5.6"
+""".strip()
+    )
+
+    first = digest_directory(source)
+    second = digest_directory(source)
+    pins = read_dependency_pins(lock_path, ("beta", "alpha"))
+
+    assert first == second
+    assert len(first) == 64
+    assert pins == {
+        "alpha": "1.2.3|{'registry': 'https://example.invalid/simple'}",
+        "beta": "4.5.6|None",
+    }
 
 
 def test_derived_store_content_hash_and_projection_step_ordering_are_generic():

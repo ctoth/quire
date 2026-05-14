@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import tempfile
+import tomllib
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +71,18 @@ class DerivedStoreGcReport:
     deleted_temp_paths: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True)
+class DerivedStoreMaterialization:
+    handle: DerivedStoreHandle
+    built: bool
+
+
+@dataclass(frozen=True)
+class SqliteFileMaterialization:
+    path: Path
+    built: bool
+
+
 class DerivedStoreManager:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -79,7 +94,25 @@ class DerivedStoreManager:
         source_commit: str,
         content_hash: str,
         build: DerivedStoreBuilder,
+        force: bool = False,
     ) -> DerivedStoreHandle:
+        return self.materialize_with_report(
+            projection_id=projection_id,
+            source_commit=source_commit,
+            content_hash=content_hash,
+            build=build,
+            force=force,
+        ).handle
+
+    def materialize_with_report(
+        self,
+        *,
+        projection_id: str,
+        source_commit: str,
+        content_hash: str,
+        build: DerivedStoreBuilder,
+        force: bool = False,
+    ) -> DerivedStoreMaterialization:
         cache_key = self.cache_key(
             projection_id=projection_id,
             source_commit=source_commit,
@@ -93,13 +126,15 @@ class DerivedStoreManager:
             cache_key=cache_key,
             path=final_path,
         )
-        if final_path.is_file():
-            return handle
+        if not force and final_path.is_file():
+            return DerivedStoreMaterialization(handle=handle, built=False)
 
         lock_path = self._lock_path(cache_key)
         with _exclusive_file_lock(lock_path):
-            if final_path.is_file():
-                return handle
+            if not force and final_path.is_file():
+                return DerivedStoreMaterialization(handle=handle, built=False)
+            if force:
+                _delete_file_family(final_path)
 
             temp_path = self._temp_path(projection_id, cache_key)
             try:
@@ -109,7 +144,7 @@ class DerivedStoreManager:
                     raise FileNotFoundError(f"derived-store builder did not create {temp_path}")
                 final_path.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(temp_path, final_path)
-                return handle
+                return DerivedStoreMaterialization(handle=handle, built=True)
             except Exception:
                 _delete_file_family(temp_path)
                 raise
@@ -197,6 +232,93 @@ def derived_store_content_hash(
     )
 
 
+def digest_directory(path: Path) -> str:
+    digest = sha256()
+    if not path.exists():
+        return ""
+    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+        digest.update(item.relative_to(path).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def read_dependency_pins(
+    lock_path: Path,
+    dependency_names: Iterable[str],
+) -> dict[str, str]:
+    if not lock_path.exists():
+        return {}
+    selected = set(dependency_names)
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    pins: dict[str, str] = {}
+    for package in lock.get("package", ()):
+        if not isinstance(package, dict):
+            continue
+        name = package.get("name")
+        if name not in selected:
+            continue
+        version = str(package.get("version") or "")
+        source = package.get("source")
+        pins[str(name)] = f"{version}|{source!r}"
+    return dict(sorted(pins.items()))
+
+
+def checkpoint_and_close_sqlite(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+
+
+def materialize_sqlite_file(
+    path: Path,
+    *,
+    content_hash: str | None,
+    build: DerivedStoreBuilder,
+    force: bool = False,
+    publish_failure_when_missing: bool = False,
+) -> SqliteFileMaterialization:
+    if not force and content_hash is not None and path.exists():
+        hash_path = path.with_suffix(".hash")
+        if hash_path.exists() and hash_path.read_text().strip() == content_hash:
+            return SqliteFileMaterialization(path=path, built=False)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f".{path.name}.lock")
+    with _exclusive_file_lock(lock_path):
+        if not force and content_hash is not None and path.exists():
+            hash_path = path.with_suffix(".hash")
+            if hash_path.exists() and hash_path.read_text().strip() == content_hash:
+                return SqliteFileMaterialization(path=path, built=False)
+        had_existing_file = path.exists()
+        temp_path = _sibling_temp_path(path)
+        temp_hash_path = temp_path.with_name(f"{temp_path.name}.hash")
+        try:
+            build(temp_path)
+            if not temp_path.is_file():
+                raise FileNotFoundError(f"SQLite builder did not create {temp_path}")
+        except Exception:
+            if publish_failure_when_missing and not had_existing_file and temp_path.exists():
+                temp_path.replace(path)
+            _delete_file_family(temp_path)
+            temp_hash_path.unlink(missing_ok=True)
+            raise
+        if content_hash is not None:
+            temp_hash_path.write_text(content_hash)
+        try:
+            temp_path.replace(path)
+            if content_hash is not None:
+                temp_hash_path.replace(path.with_suffix(".hash"))
+        except Exception:
+            _delete_file_family(temp_path)
+            temp_hash_path.unlink(missing_ok=True)
+            raise
+        finally:
+            _delete_file_family(temp_path)
+            temp_hash_path.unlink(missing_ok=True)
+    return SqliteFileMaterialization(path=path, built=True)
+
+
 def order_projection_steps(
     steps: Iterable[ProjectionBuildStep],
 ) -> tuple[ProjectionBuildStep, ...]:
@@ -268,6 +390,18 @@ def _remove_empty_parent(path: Path) -> None:
         path.rmdir()
     except OSError:
         return
+
+
+def _sibling_temp_path(path: Path) -> Path:
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    os.close(fd)
+    temp_path = Path(temp_name)
+    temp_path.unlink()
+    return temp_path
 
 
 def _path_segment(value: str) -> str:
