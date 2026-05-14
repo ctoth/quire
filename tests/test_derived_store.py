@@ -20,7 +20,6 @@ from quire.projections import (
     ProjectionColumn,
     ProjectionForeignKey,
     ProjectionIndex,
-    ProjectionRow,
     ProjectionSchemaError,
     ProjectionTable,
     VecProjection,
@@ -429,7 +428,7 @@ def test_projection_tables_insert_generic_projection_rows():
 
         pages.insert_row(
             conn,
-            ProjectionRow(table="pages", values={"id": "intro", "title": "Introduction"}),
+            pages.row(id="intro", title="Introduction"),
         )
 
         rows = pages.select_all(conn)
@@ -515,9 +514,10 @@ def test_fts_projection_supports_direct_row_insert():
 
         page_search.insert_row(
             conn,
-            ProjectionRow(
-                table="page_search",
-                values={"id": "api", "title": "API", "body": "Generated projection APIs"},
+            page_search.row(
+                id="api",
+                title="API",
+                body="Generated projection APIs",
             ),
         )
 

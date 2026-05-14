@@ -262,6 +262,9 @@ class ProjectionTable:
         columns = ", ".join(quote_identifier(column.name) for column in self.columns)
         return f"SELECT {columns} FROM {quote_identifier(table_name)}"
 
+    def row(self, **values: Any) -> ProjectionRow:
+        return ProjectionRow(table=self.name, values=values)
+
     def encode_row(self, values: Mapping[str, Any] | object) -> dict[str, Any]:
         row_values = _row_values(values)
         return {column.name: column.encode(row_values.get(column.name)) for column in self.columns}
@@ -383,6 +386,9 @@ class FtsProjection:
         columns = ", ".join(quote_identifier(column) for column in self.column_names)
         params = ", ".join(f":{column}" for column in self.column_names)
         return f"INSERT INTO {quote_identifier(table_name)} ({columns}) VALUES ({params})"
+
+    def row(self, **values: Any) -> ProjectionRow:
+        return ProjectionRow(table=self.table, values=values)
 
     def insert_row(
         self,
@@ -523,6 +529,9 @@ class VecProjection:
     def delete_rowid_sql(self, bindings: Mapping[str, str] | None = None) -> str:
         table_name = self.projection_name(bindings)
         return f"DELETE FROM {quote_identifier(table_name)} WHERE rowid = :rowid"
+
+    def row(self, **values: Any) -> ProjectionRow:
+        return ProjectionRow(table=self.table, values=values)
 
     def insert_row(
         self,
