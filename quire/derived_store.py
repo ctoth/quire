@@ -3,15 +3,50 @@ from __future__ import annotations
 import os
 import sqlite3
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from quire.hashing import canonical_json_sha256
 
 
 DerivedStoreBuilder = Callable[[Path], None]
+
+
+@dataclass(frozen=True)
+class DerivedStoreBuildDiagnostic:
+    code: str
+    message: str
+    severity: str = "error"
+    projection: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def material(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "severity": self.severity,
+            "projection": self.projection,
+            "details": dict(self.details),
+        }
+
+
+class DerivedStoreBuildError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        diagnostics: Iterable[DerivedStoreBuildDiagnostic] = (),
+    ) -> None:
+        super().__init__(message)
+        self.diagnostics = tuple(diagnostics)
+
+
+@dataclass(frozen=True)
+class ProjectionBuildStep:
+    name: str
+    depends_on: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -143,6 +178,57 @@ class DerivedStoreManager:
             / "tmp"
             / f"{_path_segment(projection_id)}-{_path_segment(cache_key)}-{unique}.sqlite"
         )
+
+
+def derived_store_content_hash(
+    *,
+    projection_version: str,
+    schema_hash: str,
+    dependencies: Mapping[str, str] | None = None,
+    extra_inputs: Mapping[str, Any] | None = None,
+) -> str:
+    return canonical_json_sha256(
+        {
+            "projection_version": projection_version,
+            "schema_hash": schema_hash,
+            "dependencies": {} if dependencies is None else dict(dependencies),
+            "extra_inputs": {} if extra_inputs is None else dict(extra_inputs),
+        }
+    )
+
+
+def order_projection_steps(
+    steps: Iterable[ProjectionBuildStep],
+) -> tuple[ProjectionBuildStep, ...]:
+    by_name: dict[str, ProjectionBuildStep] = {}
+    for step in steps:
+        if step.name in by_name:
+            raise ValueError(f"duplicate projection build step {step.name!r}")
+        by_name[step.name] = step
+
+    ordered: list[ProjectionBuildStep] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        if name in visiting:
+            raise ValueError(f"cycle in projection build steps at {name!r}")
+        try:
+            step = by_name[name]
+        except KeyError:
+            raise ValueError(f"unknown projection build step dependency {name!r}") from None
+        visiting.add(name)
+        for dependency in step.depends_on:
+            visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+        ordered.append(step)
+
+    for name in by_name:
+        visit(name)
+    return tuple(ordered)
 
 
 @contextmanager

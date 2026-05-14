@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from quire.derived_store import DerivedStoreManager
+from quire.derived_store import (
+    DerivedStoreBuildDiagnostic,
+    DerivedStoreBuildError,
+    DerivedStoreManager,
+    ProjectionBuildStep,
+    derived_store_content_hash,
+    order_projection_steps,
+)
 from quire.projections import (
     FtsProjection,
     ProjectionColumn,
@@ -128,6 +135,64 @@ def test_gc_deletes_unkept_stores_and_temp_files(tmp_path):
     assert report.deleted_paths == (drop.path,)
     assert report.deleted_temp_paths == (temp,)
     assert not temp.exists()
+
+
+def test_build_error_preserves_structured_diagnostics_and_cleans_temp_store(tmp_path):
+    manager = DerivedStoreManager(tmp_path / "derived")
+    diagnostic = DerivedStoreBuildDiagnostic(
+        code="missing_source",
+        message="source row missing",
+        projection="pages",
+        details={"id": "intro"},
+    )
+
+    def build(path: Path) -> None:
+        _build_sqlite(path)
+        raise DerivedStoreBuildError("projection build failed", (diagnostic,))
+
+    with pytest.raises(DerivedStoreBuildError) as error:
+        manager.materialize(
+            projection_id="library.search",
+            source_commit="f" * 40,
+            content_hash="schema-a",
+            build=build,
+        )
+
+    assert error.value.diagnostics == (diagnostic,)
+    assert diagnostic.material()["details"] == {"id": "intro"}
+    assert not list((tmp_path / "derived").glob("tmp/*"))
+
+
+def test_derived_store_content_hash_and_projection_step_ordering_are_generic():
+    first = derived_store_content_hash(
+        projection_version="v1",
+        schema_hash="schema",
+        dependencies={"sqlite": "3"},
+        extra_inputs={"families": ("pages", "notes")},
+    )
+    second = derived_store_content_hash(
+        projection_version="v1",
+        schema_hash="schema",
+        dependencies={"sqlite": "3"},
+        extra_inputs={"families": ("pages", "notes")},
+    )
+    ordered = order_projection_steps(
+        (
+            ProjectionBuildStep("search", depends_on=("pages",)),
+            ProjectionBuildStep("pages"),
+            ProjectionBuildStep("vectors", depends_on=("pages",)),
+        )
+    )
+
+    assert first == second
+    assert tuple(step.name for step in ordered) == ("pages", "search", "vectors")
+    with pytest.raises(ValueError, match="cycle"):
+        order_projection_steps(
+            (
+                ProjectionBuildStep("a", depends_on=("b",)),
+                ProjectionBuildStep("b", depends_on=("a",)),
+            )
+        )
 
 
 def test_projection_table_validates_declared_columns_and_codecs():

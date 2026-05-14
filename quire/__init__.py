@@ -17,7 +17,16 @@ from quire.artifacts import (
     encode_ref_value,
 )
 from quire.contracts import ContractEntry, ContractManifest, ContractManifestError, check_contract_manifest
-from quire.derived_store import DerivedStoreGcReport, DerivedStoreHandle, DerivedStoreManager
+from quire.derived_store import (
+    DerivedStoreBuildDiagnostic,
+    DerivedStoreBuildError,
+    DerivedStoreGcReport,
+    DerivedStoreHandle,
+    DerivedStoreManager,
+    ProjectionBuildStep,
+    derived_store_content_hash,
+    order_projection_steps,
+)
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitGcReport, GitStore, GitStorePolicy, HeadMismatchError
 from quire.refs import RefName, single_field_ref_type, singleton_ref_type
@@ -84,6 +93,8 @@ __all__ = [
     "CrossFamilyReferenceIndex",
     "DocumentFamilyStore",
     "DerivedStoreGcReport",
+    "DerivedStoreBuildDiagnostic",
+    "DerivedStoreBuildError",
     "DerivedStoreHandle",
     "DerivedStoreManager",
     "FamilyDefinition",
@@ -115,6 +126,7 @@ __all__ = [
     "ProjectionSchema",
     "ProjectionSchemaError",
     "ProjectionTable",
+    "ProjectionBuildStep",
     "RefName",
     "ReferenceKey",
     "ReferenceIndex",
@@ -133,6 +145,7 @@ __all__ = [
     "check_contract_manifest",
     "coerce_tree_path",
     "create_projection_schema",
+    "derived_store_content_hash",
     "documents",
     "build_reference_lookup",
     "encode_ref_value",
@@ -140,6 +153,7 @@ __all__ = [
     "finalize_reference_lookup",
     "json_decoder",
     "json_encoder",
+    "order_projection_steps",
     "projection_name",
     "quote_identifier",
     "read_git_note",
