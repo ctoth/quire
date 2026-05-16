@@ -8,6 +8,7 @@ from typing import Generic, Protocol, TypeAlias, TypeVar
 from quire.versions import VersionId
 
 TRecord = TypeVar("TRecord")
+TExtractRecord = TypeVar("TExtractRecord", contravariant=True)
 
 
 class AmbiguousReferenceError(ValueError):
@@ -176,8 +177,8 @@ def build_reference_lookup(
     return finalize_reference_lookup(lookup)
 
 
-class ReferenceKeyExtractor(Protocol[TRecord]):
-    def __call__(self, record: TRecord) -> Iterable[str | None] | str | None:
+class ReferenceKeyExtractor(Protocol[TExtractRecord]):
+    def __call__(self, record: TExtractRecord) -> Iterable[str | None] | str | None:
         ...
 
 

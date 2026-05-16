@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, runtime_checkable
+from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 import msgspec
 
@@ -15,6 +15,8 @@ from quire.versions import VersionId
 TRef = TypeVar("TRef")
 TDoc = TypeVar("TDoc")
 TOwner = TypeVar("TOwner")
+TPlacementOwner = TypeVar("TPlacementOwner", contravariant=True)
+TPlacementRef = TypeVar("TPlacementRef")
 
 BranchPolicy: TypeAlias = Literal["owner", "primary", "current", "fixed", "template"]
 CollisionSuffix: TypeAlias = Literal["none", "sha256"]
@@ -43,8 +45,9 @@ def _normalize_path(path: str | Path) -> str:
 
 
 def _render_path(path: object) -> str:
-    if hasattr(path, "as_posix"):
-        return str(path.as_posix())
+    path_value = cast(Any, path)
+    if hasattr(path_value, "as_posix"):
+        return str(path_value.as_posix())
     return str(path)
 
 
@@ -58,7 +61,10 @@ def _loaded_artifact_path(loaded: object) -> str:
         root_concrete = getattr(store_root, "concrete_path", None)
         if callable(artifact_concrete) and callable(root_concrete):
             try:
-                return artifact_concrete().resolve().relative_to(root_concrete().resolve()).as_posix()
+                artifact_path_value = artifact_concrete()
+                root_path_value = root_concrete()
+                if isinstance(artifact_path_value, Path) and isinstance(root_path_value, Path):
+                    return artifact_path_value.resolve().relative_to(root_path_value.resolve()).as_posix()
             except ValueError:
                 pass
         rendered = _normalize_path(_render_path(artifact_path))
@@ -328,34 +334,34 @@ class BranchPlacement:
 
 
 @runtime_checkable
-class ArtifactPlacementPolicy(Protocol[TOwner, TRef]):
-    def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
+class ArtifactPlacementPolicy(Protocol[TPlacementOwner, TPlacementRef]):
+    def address_for(self, owner: TPlacementOwner, ref: TPlacementRef) -> ArtifactAddress:
         ...
 
     def iter_refs(
         self,
-        owner: TOwner,
+        owner: TPlacementOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> Iterator[TRef]:
+    ) -> Iterator[TPlacementRef]:
         ...
 
     def iter_artifacts(
         self,
-        owner: TOwner,
+        owner: TPlacementOwner,
         backend: ReadOnlyDocumentStoreBackend | None,
         *,
         branch: str | None = None,
         commit: str | None = None,
-    ) -> Iterator[ScannedArtifact[TRef]]:
+    ) -> Iterator[ScannedArtifact[TPlacementRef]]:
         ...
 
-    def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
+    def ref_from_locator(self, locator: ArtifactLocator) -> TPlacementRef:
         ...
 
-    def ref_from_loaded(self, loaded: object) -> TRef:
+    def ref_from_loaded(self, loaded: object) -> TPlacementRef:
         ...
 
     def contract_body(self) -> dict[str, object]:

@@ -288,7 +288,7 @@ class FamilyRegistry(Generic[TOwner, TKey]):
         if len(matches) > 1:
             names = ", ".join(family.name for family in matches)
             raise ValueError(f"multiple families match metadata {key!r}={value!r}: {names}")
-        return matches[0]
+        return next(iter(matches))
 
     def by_storage_root(self, root: str) -> FamilyDefinition[TOwner, TKey, Any, Any]:
         matches: list[FamilyDefinition[TOwner, TKey, Any, Any]] = []
@@ -435,10 +435,10 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         return self.store.coerce(self.family, payload, source=source)
 
     def render(self, document: TDoc) -> str:
-        return self.store.render(document, family=self.family)
+        return self.store.render(document, family=cast(Any, self.family))
 
     def payload(self, document: TDoc) -> object:
-        return self.store.payload(document, family=self.family)
+        return self.store.payload(document, family=cast(Any, self.family))
 
     def iter(self, *, branch: str | None = None, commit: str | None = None) -> Iterator[TRef]:
         return self.store.iter(self.family, branch=branch, commit=commit)
@@ -683,7 +683,7 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
         return self.transaction.store.ref_from_path(self.family, path)
 
     def payload(self, document: TDoc) -> object:
-        return self.transaction.store.payload(document, family=self.family)
+        return self.transaction.store.payload(document, family=cast(Any, self.family))
 
     def save(self, ref: TRef, doc: TDoc) -> None:
         self.transaction.save(self.family, ref, doc)

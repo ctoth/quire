@@ -5,7 +5,7 @@ import re
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias, cast
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -920,7 +920,7 @@ def _row_values(values: Mapping[str, Any] | object) -> Mapping[str, Any]:
     if isinstance(values, ProjectionRow):
         return values.values
     if is_dataclass(values):
-        return asdict(values)
+        return asdict(cast(Any, values))
     raise TypeError(
         "Projection row must be a mapping, ProjectionRow, or dataclass, "
         f"got {type(values).__name__}"

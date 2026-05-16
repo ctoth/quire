@@ -600,7 +600,7 @@ class GitStore:
             return blob.id.decode("ascii")
 
     def gc(self, *, dry_run: bool = True) -> GitGcReport:
-        all_objects = set(self._repo.object_store)
+        all_objects: set[bytes] = {cast(bytes, object_id) for object_id in self._repo.object_store}
         reachable: set[bytes] = set()
         stack = list(self._repo.refs.as_dict().values())
         while stack:
@@ -843,7 +843,7 @@ class GitStore:
 
         merge_bases = find_merge_base(
             self._repo,
-            [sha_a.encode("ascii"), sha_b.encode("ascii")],
+            cast(Any, [sha_a.encode("ascii"), sha_b.encode("ascii")]),
         )
         if not merge_bases:
             raise ValueError(f"No common ancestor between {branch_a!r} and {branch_b!r}")
@@ -965,6 +965,8 @@ class GitStore:
         with self.head_bound_transaction(branch) if branch is not None else nullcontext() as head_txn:
             target_commit = commit
             if branch is not None:
+                if not isinstance(head_txn, HeadBoundTransaction):
+                    raise TypeError("branch materialization requires a head-bound transaction")
                 target_commit = head_txn.expected_head
                 if target_commit is None:
                     raise ValueError(f"Branch {branch!r} has no commit")
@@ -1302,12 +1304,12 @@ class GitStore:
         for parts in effective_deletes:
             parent = parts[:-1]
             name = parts[-1]
-            entries = entries_by_dir.get(parent)
-            if entries is None:
+            delete_entries = entries_by_dir.get(parent)
+            if delete_entries is None:
                 continue
-            existing = entries.get(name)
+            existing = delete_entries.get(name)
             if existing is not None and not existing[0] & 0o040000:
-                entries.pop(name)
+                delete_entries.pop(name)
 
         root_tree: Tree | None = None
         for directory in sorted(touched_dirs, key=lambda item: (len(item), item), reverse=True):

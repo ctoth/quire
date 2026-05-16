@@ -83,7 +83,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         family: ArtifactFamily[TOwner, TRef, TDoc],
         path: str | Path,
     ) -> TRef:
-        return family.placement.ref_from_locator(PathArtifactLocator(path))
+        return family.placement.ref_from_locator(PathArtifactLocator(normalized_path(path)))
 
     def ref_from_loaded(
         self,

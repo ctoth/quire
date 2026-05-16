@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from io import BytesIO, StringIO
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Iterator, Protocol, Self, TextIO
+from typing import Any, BinaryIO, Iterator, Protocol, Self, TextIO
 
 
 class TreePath(Protocol):
@@ -140,7 +140,7 @@ class FilesystemTreePath(_BaseTreePath):
 class GitTreePath(_BaseTreePath):
     def __init__(
         self,
-        store: object,
+        store: Any,
         commit: str | None = None,
         relative_path: PurePosixPath | None = None,
     ) -> None:
