@@ -18,6 +18,14 @@ from quire.derived_store import (
     order_projection_steps,
     read_dependency_pins,
 )
+from quire.derived_runtime import (
+    DEFAULT_SQLITE_BUSY_TIMEOUT_MS,
+    connect_sqlite_store,
+    connect_sqlite_store_readonly,
+    read_derived_store_schema_version,
+    validate_derived_store_schema,
+    write_derived_store_schema_metadata,
+)
 from quire.projections import (
     FtsProjection,
     ProjectionColumn,
@@ -453,6 +461,39 @@ def test_projection_schema_validates_names_and_hashes_declarations():
     assert '"version":"one"' in schema.schema_hash_material()
 
 
+def test_projection_schema_runtime_catalog_describes_declared_store():
+    pages = ProjectionTable(
+        name="pages",
+        columns=(
+            ProjectionColumn("id", "TEXT", nullable=False),
+            ProjectionColumn("title", "TEXT", nullable=False),
+        ),
+        primary_key=("id",),
+    )
+    search = FtsProjection(
+        table="page_search",
+        key_column="id",
+        columns=("title", "body"),
+        row_plan="page title/body text",
+    )
+    vectors = VecProjection(
+        table="page_vec_{model}",
+        key_column=None,
+        vector_column=ProjectionColumn("embedding", "FLOAT[{dimensions}]", nullable=False),
+    )
+    schema = create_projection_schema(pages, search, vectors, metadata={"owner": "test"})
+
+    catalog = schema.runtime_catalog({"model": "small", "dimensions": "3"})
+
+    assert catalog.metadata == {"owner": "test"}
+    assert catalog.names == ("pages", "page_search", "page_vec_small")
+    assert catalog.entry("pages").column_names == ("id", "title")
+    assert catalog.entry("pages").columns[0].primary_key is True
+    assert catalog.entry("page_search").kind == "fts5"
+    assert catalog.entry("page_vec_small").kind == "vec0"
+    assert catalog.entry("page_vec_small").dynamic is True
+
+
 def test_projection_schema_rejects_duplicate_projection_names():
     first = ProjectionTable(
         name="pages",
@@ -536,6 +577,45 @@ def test_projection_schema_creates_tables_and_materializes_rows(tmp_path):
             notes.insert_row(conn, {"id": "n2", "page_id": "missing", "body": "Nope."})
     finally:
         conn.close()
+
+
+def test_sqlite_runtime_policy_metadata_and_readonly_schema_validation(tmp_path):
+    db_path = tmp_path / "runtime.sqlite"
+    pages = ProjectionTable(
+        name="pages",
+        columns=(
+            ProjectionColumn("id", "TEXT", nullable=False),
+            ProjectionColumn("title", "TEXT", nullable=False),
+        ),
+        primary_key=("id",),
+    )
+    schema = create_projection_schema(pages)
+    conn = connect_sqlite_store(db_path)
+    try:
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] >= DEFAULT_SQLITE_BUSY_TIMEOUT_MS
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        schema.create_all(conn)
+        write_derived_store_schema_metadata(conn, schema_version=7, key="library")
+        pages.insert_row(conn, {"id": "intro", "title": "Introduction"})
+        conn.commit()
+    finally:
+        conn.close()
+
+    readonly = connect_sqlite_store_readonly(db_path)
+    try:
+        assert readonly.execute("PRAGMA query_only").fetchone()[0] == 1
+        assert read_derived_store_schema_version(readonly, key="library") == 7
+        validate_derived_store_schema(
+            readonly,
+            schema=schema,
+            expected_version=7,
+            key="library",
+        )
+        assert readonly.execute('SELECT title FROM "pages"').fetchone()[0] == "Introduction"
+        with pytest.raises(sqlite3.OperationalError):
+            readonly.execute('INSERT INTO "pages" ("id", "title") VALUES ("x", "X")')
+    finally:
+        readonly.close()
 
 
 def test_projection_tables_insert_dataclass_rows():

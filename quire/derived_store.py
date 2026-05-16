@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from quire.hashing import canonical_json_sha256
+from quire.derived_runtime import connect_sqlite_store_readonly
 
 __all__ = [
     "DerivedStoreBuildDiagnostic",
@@ -79,8 +80,7 @@ class DerivedStoreHandle:
     path: Path
 
     def open_readonly(self) -> sqlite3.Connection:
-        uri = self.path.resolve().as_posix()
-        return sqlite3.connect(f"file:{uri}?mode=ro", uri=True)
+        return connect_sqlite_store_readonly(self.path)
 
 
 @dataclass(frozen=True)

@@ -167,6 +167,44 @@ class ProjectionRow:
 
 
 @dataclass(frozen=True)
+class ProjectionCatalogColumn:
+    name: str
+    sql_type: str
+    nullable: bool
+    primary_key: bool = False
+    insertable: bool = True
+
+
+@dataclass(frozen=True)
+class ProjectionCatalogEntry:
+    name: str
+    kind: str
+    columns: tuple[ProjectionCatalogColumn, ...]
+    declaration_name: str
+    dynamic: bool = False
+
+    @property
+    def column_names(self) -> tuple[str, ...]:
+        return tuple(column.name for column in self.columns)
+
+
+@dataclass(frozen=True)
+class ProjectionRuntimeCatalog:
+    entries: tuple[ProjectionCatalogEntry, ...]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(entry.name for entry in self.entries)
+
+    def entry(self, name: str) -> ProjectionCatalogEntry:
+        for item in self.entries:
+            if item.name == name:
+                return item
+        raise KeyError(name)
+
+
+@dataclass(frozen=True)
 class ProjectionTable:
     name: str
     columns: tuple[ProjectionColumn, ...]
@@ -634,6 +672,18 @@ class ProjectionSchema:
                 statements.extend(projection.ddl_statements(bindings))
         return tuple(statements)
 
+    def runtime_catalog(
+        self,
+        bindings: Mapping[str, str] | None = None,
+    ) -> ProjectionRuntimeCatalog:
+        return ProjectionRuntimeCatalog(
+            entries=tuple(
+                projection_catalog_entry(projection, bindings=bindings)
+                for projection in self.projections
+            ),
+            metadata=self.metadata,
+        )
+
     def create_all(
         self,
         conn: sqlite3.Connection,
@@ -696,6 +746,51 @@ def projection_name(projection: SemanticProjection) -> str:
     if isinstance(projection, ProjectionTable):
         return projection.name
     return projection.table
+
+
+def projection_catalog_entry(
+    projection: SemanticProjection,
+    *,
+    bindings: Mapping[str, str] | None = None,
+) -> ProjectionCatalogEntry:
+    declared_name = projection_name(projection)
+    name = projection.projection_name(bindings)
+    if isinstance(projection, ProjectionTable):
+        columns = tuple(
+            ProjectionCatalogColumn(
+                name=column.name,
+                sql_type=column.sql_type,
+                nullable=column.nullable,
+                primary_key=column.primary_key or column.name in projection.primary_key,
+                insertable=column.insertable,
+            )
+            for column in projection.columns
+        )
+        kind = "table"
+    elif isinstance(projection, FtsProjection):
+        columns = (ProjectionCatalogColumn(projection.key_column, "TEXT", False),) + tuple(
+            ProjectionCatalogColumn(column, "TEXT", True) for column in projection.columns
+        )
+        kind = "fts5"
+    else:
+        columns = tuple(
+            ProjectionCatalogColumn(
+                name=column.name,
+                sql_type=column.sql_type,
+                nullable=column.nullable,
+                primary_key=column.primary_key,
+                insertable=column.insertable,
+            )
+            for column in projection.columns
+        )
+        kind = "vec0"
+    return ProjectionCatalogEntry(
+        name=name,
+        kind=kind,
+        columns=columns,
+        declaration_name=declared_name,
+        dynamic="{" in declared_name or "}" in declared_name,
+    )
 
 
 def render_projection_name(name: str, bindings: Mapping[str, str] | None = None) -> str:
