@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from enum import Enum
-from typing import Any, Generic, TypeVar, cast, get_args, get_origin, get_type_hints
+from typing import Any, Generic, TypeVar, get_args, get_origin, get_type_hints
 
 from quire.projections import (
     ProjectionColumn,
@@ -277,7 +277,7 @@ ProjectionSpec = ProjectionPath | CompositePath | RepeatedPath | DerivedPath
 class ProjectionModel(Generic[ResultT]):
     name: str
     table: str
-    result_type: type[ResultT] | None
+    result_type: type[ResultT]
     fields: tuple[ProjectionSpec, ...]
     attribute_bucket: tuple[str, ...] | None = None
     primary_key: tuple[str, ...] = ()
@@ -334,7 +334,7 @@ class ProjectionModel(Generic[ResultT]):
                 _assign_path(data, field.path, field.default)
         if extras and self.attribute_bucket is not None:
             _assign_path(data, self.attribute_bucket, extras)
-        return cast(ResultT, _construct(self.result_type, data))
+        return _construct(self.result_type, data)
 
     def coerce(self, value: object) -> ResultT:
         if self.result_type is not None and isinstance(value, self.result_type):
@@ -395,7 +395,7 @@ class ProjectionModel(Generic[ResultT]):
         return {
             "name": self.name,
             "table": self.table,
-            "result_type": None if self.result_type is None else f"{self.result_type.__module__}.{self.result_type.__qualname__}",
+            "result_type": f"{self.result_type.__module__}.{self.result_type.__qualname__}",
             "attribute_bucket": self.attribute_bucket,
             "primary_key": self.primary_key,
             "fields": tuple(
@@ -436,9 +436,7 @@ def _assign_path(target: dict[str, Any], path: tuple[str, ...], value: Any) -> N
     current[path[-1]] = value
 
 
-def _construct(result_type: type[Any] | None, data: Mapping[str, Any]) -> Any:
-    if result_type is None:
-        return dict(data)
+def _construct(result_type: type[ResultT], data: Mapping[str, Any]) -> ResultT:
     if not is_dataclass(result_type):
         return result_type(**data)
     hints = get_type_hints(result_type)
