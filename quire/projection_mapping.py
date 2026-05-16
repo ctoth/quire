@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from enum import Enum
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Any, Generic, TypeVar, cast, get_args, get_origin, get_type_hints
 
 from quire.projections import (
     ProjectionColumn,
@@ -18,6 +18,7 @@ from quire.projections import (
 
 
 _MISSING = object()
+ResultT = TypeVar("ResultT")
 
 
 @dataclass(frozen=True)
@@ -233,10 +234,10 @@ ProjectionSpec = ProjectionPath | RepeatedPath | DerivedPath
 
 
 @dataclass(frozen=True)
-class ProjectionModel:
+class ProjectionModel(Generic[ResultT]):
     name: str
     table: str
-    result_type: type[Any] | None
+    result_type: type[ResultT] | None
     fields: tuple[ProjectionSpec, ...]
     attribute_bucket: tuple[str, ...] | None = None
     primary_key: tuple[str, ...] = ()
@@ -256,7 +257,7 @@ class ProjectionModel:
                 row[field.key] = field.encode_value(source)
         return row
 
-    def from_row(self, row: Mapping[str, object]) -> object:
+    def from_row(self, row: Mapping[str, object]) -> ResultT:
         known = {
             field.column
             for field in self.fields
@@ -282,9 +283,9 @@ class ProjectionModel:
                 _assign_path(data, field.path, field.default)
         if extras and self.attribute_bucket is not None:
             _assign_path(data, self.attribute_bucket, extras)
-        return _construct(self.result_type, data)
+        return cast(ResultT, _construct(self.result_type, data))
 
-    def coerce(self, value: object) -> object:
+    def coerce(self, value: object) -> ResultT:
         if self.result_type is not None and isinstance(value, self.result_type):
             return value
         if not isinstance(value, Mapping):
