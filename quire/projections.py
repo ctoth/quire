@@ -89,6 +89,92 @@ class ProjectionColumn:
         }
 
 
+_UNSET: Any = object()
+
+
+@dataclass(frozen=True)
+class ProjectionField:
+    """Reusable typed projection-field descriptor.
+
+    A field describes the stable semantic storage role. Individual tables can
+    derive columns from that descriptor with local cardinality or key overrides
+    without re-declaring the SQL type and codec policy.
+    """
+
+    name: str
+    sql_type: str
+    nullable: bool = True
+    primary_key: bool = False
+    insertable: bool = True
+    default_sql: str | None = None
+    check_sql: str | None = None
+    encoder: ProjectionEncoder | None = None
+    decoder: ProjectionDecoder | None = None
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.name, "projection field")
+
+    def column(
+        self,
+        *,
+        name: str | None = None,
+        sql_type: str | None = None,
+        nullable: bool | None = None,
+        primary_key: bool | None = None,
+        insertable: bool | None = None,
+        default_sql: Any = _UNSET,
+        check_sql: Any = _UNSET,
+        encoder: Any = _UNSET,
+        decoder: Any = _UNSET,
+    ) -> ProjectionColumn:
+        return ProjectionColumn(
+            name=self.name if name is None else name,
+            sql_type=self.sql_type if sql_type is None else sql_type,
+            nullable=self.nullable if nullable is None else nullable,
+            primary_key=self.primary_key if primary_key is None else primary_key,
+            insertable=self.insertable if insertable is None else insertable,
+            default_sql=self.default_sql if default_sql is _UNSET else default_sql,
+            check_sql=self.check_sql if check_sql is _UNSET else check_sql,
+            encoder=self.encoder if encoder is _UNSET else encoder,
+            decoder=self.decoder if decoder is _UNSET else decoder,
+        )
+
+
+def text_field(name: str, *, nullable: bool = True) -> ProjectionField:
+    return ProjectionField(name, "TEXT", nullable=nullable)
+
+
+def integer_field(name: str, *, nullable: bool = True) -> ProjectionField:
+    return ProjectionField(name, "INTEGER", nullable=nullable)
+
+
+def real_field(name: str, *, nullable: bool = True) -> ProjectionField:
+    return ProjectionField(name, "REAL", nullable=nullable)
+
+
+def json_text_field(name: str, *, nullable: bool = True) -> ProjectionField:
+    return ProjectionField(
+        name,
+        "TEXT",
+        nullable=nullable,
+        encoder=json_encoder,
+        decoder=json_decoder,
+    )
+
+
+def family_reference_field(
+    family: str,
+    *,
+    role: str | None = None,
+    nullable: bool = True,
+) -> ProjectionField:
+    _validate_identifier(family, "family reference")
+    if role is not None:
+        _validate_identifier(role, "family reference role")
+    prefix = family if role is None else f"{role}_{family}"
+    return ProjectionField(f"{prefix}_id", "TEXT", nullable=nullable)
+
+
 @dataclass(frozen=True)
 class ProjectionForeignKey:
     columns: tuple[str, ...]
@@ -878,3 +964,34 @@ def _codec_name(
         getattr(decoder, "__name__", decoder.__class__.__name__ if decoder else "none"),
     )
     return ":".join(names)
+
+
+ARTIFACT_ID_FIELD = ProjectionField("id", "TEXT")
+AUTOINCREMENT_ID_FIELD = ProjectionField(
+    "id",
+    "INTEGER PRIMARY KEY AUTOINCREMENT",
+    insertable=False,
+)
+PRIMARY_LOGICAL_ID_FIELD = ProjectionField(
+    "primary_logical_id",
+    "TEXT",
+    nullable=False,
+    default_sql="''",
+)
+LOGICAL_IDS_JSON_FIELD = ProjectionField(
+    "logical_ids_json",
+    "TEXT",
+    nullable=False,
+    default_sql="'[]'",
+)
+VERSION_ID_FIELD = ProjectionField(
+    "version_id",
+    "TEXT",
+    nullable=False,
+    default_sql="''",
+)
+CONTENT_HASH_FIELD = ProjectionField("content_hash", "TEXT", nullable=False)
+SEQUENCE_FIELD = ProjectionField("seq", "INTEGER", nullable=False)
+CONDITIONS_CEL_FIELD = ProjectionField("conditions_cel", "TEXT")
+CONDITIONS_IR_FIELD = ProjectionField("conditions_ir", "TEXT")
+PROVENANCE_JSON_FIELD = ProjectionField("provenance_json", "TEXT")

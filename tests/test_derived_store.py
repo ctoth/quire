@@ -27,14 +27,19 @@ from quire.derived_runtime import (
     write_derived_store_schema_metadata,
 )
 from quire.projections import (
+    ARTIFACT_ID_FIELD,
+    CONTENT_HASH_FIELD,
     FtsProjection,
+    ProjectionField,
     ProjectionColumn,
     ProjectionForeignKey,
     ProjectionIndex,
     ProjectionSchemaError,
     ProjectionTable,
+    SEQUENCE_FIELD,
     VecProjection,
     create_projection_schema,
+    family_reference_field,
     json_decoder,
     json_encoder,
     render_projection_name,
@@ -404,6 +409,37 @@ def test_projection_table_validates_declared_columns_and_codecs():
         "metadata_json",
     )
     assert pages.schema_hash_material()["columns"][1]["codec"] == "json"
+
+
+def test_projection_field_derives_columns_without_redeclaring_sql_policy():
+    note_ref = family_reference_field("note", nullable=False)
+    score = ProjectionField(
+        "score",
+        "REAL",
+        nullable=False,
+        check_sql="score >= 0",
+    )
+
+    table = ProjectionTable(
+        name="annotations",
+        columns=(
+            ARTIFACT_ID_FIELD.column(primary_key=True),
+            note_ref.column(name="source_note_id"),
+            CONTENT_HASH_FIELD.column(default_sql="''"),
+            SEQUENCE_FIELD.column(),
+            score.column(),
+            score.column(name="normalized_score", check_sql=None),
+        ),
+    )
+
+    assert tuple(column.ddl() for column in table.columns) == (
+        '"id" TEXT PRIMARY KEY',
+        '"source_note_id" TEXT NOT NULL',
+        '"content_hash" TEXT NOT NULL DEFAULT \'\'',
+        '"seq" INTEGER NOT NULL',
+        '"score" REAL NOT NULL CHECK(score >= 0)',
+        '"normalized_score" REAL NOT NULL',
+    )
 
 
 def test_projection_table_rejects_invalid_foreign_key_and_index_columns():
