@@ -244,6 +244,18 @@ class ProjectionModel:
             _assign_path(data, self.attribute_bucket, extras)
         return _construct(self.result_type, data)
 
+    def coerce(self, value: object) -> object:
+        if self.result_type is not None and isinstance(value, self.result_type):
+            return value
+        if not isinstance(value, Mapping):
+            expected = (
+                "mapping"
+                if self.result_type is None
+                else f"{self.result_type.__name__} or mapping"
+            )
+            raise TypeError(f"{self.name} projection expects {expected}")
+        return self.from_row(value)
+
     def child_rows(self, source: object) -> tuple[ProjectionRow, ...]:
         rows: list[ProjectionRow] = []
         for field in self.fields:
@@ -357,4 +369,3 @@ def _coerce_value(annotation: Any, value: Any) -> Any:
         if is_dataclass(candidate) and isinstance(value, Mapping):
             return _construct(candidate, value)
     return value
-

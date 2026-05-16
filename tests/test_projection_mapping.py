@@ -234,6 +234,21 @@ def test_attribute_bucket_only_when_declared():
     assert model.from_row({"id": "r1", "extra": 3}) == AttributeRecord("r1", {"extra": 3})
 
 
+def test_coerce_accepts_result_type_or_mapping():
+    model = ProjectionModel(
+        name="flat",
+        table="flat",
+        result_type=FlatRecord,
+        fields=(ScalarPath(("id",), "id"), ScalarPath(("title",), "title"),),
+    )
+    record = FlatRecord("r1", "Intro")
+
+    assert model.coerce(record) is record
+    assert model.coerce({"id": "r2", "title": "Next"}) == FlatRecord("r2", "Next")
+    with pytest.raises(TypeError, match="FlatRecord or mapping"):
+        model.coerce(["r3"])
+
+
 def test_schema_hash_changes_when_path_changes_but_column_does_not():
     first = ProjectionModel(
         name="schema",
@@ -331,4 +346,3 @@ def _parent_model() -> ProjectionModel:
             ),
         ),
     )
-
