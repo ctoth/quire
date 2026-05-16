@@ -286,6 +286,23 @@ def test_attribute_bucket_only_when_declared():
     assert model.from_row({"id": "r1", "extra": 3}) == AttributeRecord("r1", {"extra": 3})
 
 
+def test_ignored_columns_are_not_attributes():
+    model = ProjectionModel(
+        name="ignored",
+        table="ignored",
+        result_type=AttributeRecord,
+        fields=(ScalarPath(("id",), "id"),),
+        attribute_bucket=("attributes",),
+        ignored_columns=("join_only",),
+    )
+
+    assert model.from_row({"id": "r1", "join_only": "skip", "extra": 3}) == AttributeRecord(
+        "r1",
+        {"extra": 3},
+    )
+    assert "join_only" in model.schema_hash_material()["ignored_columns"]
+
+
 def test_derived_path_renders_non_column_key_without_decoding_it():
     model = ProjectionModel(
         name="derived",

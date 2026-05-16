@@ -280,6 +280,7 @@ class ProjectionModel(Generic[ResultT]):
     result_type: type[ResultT]
     fields: tuple[ProjectionSpec, ...]
     attribute_bucket: tuple[str, ...] | None = None
+    ignored_columns: tuple[str, ...] = ()
     primary_key: tuple[str, ...] = ()
 
     def to_row(self, source: object) -> Mapping[str, object]:
@@ -314,7 +315,8 @@ class ProjectionModel(Generic[ResultT]):
         )
         known.update(field.table for field in self.fields if isinstance(field, RepeatedPath))
         known.update(field.key for field in self.fields if isinstance(field, DerivedPath))
-        extras = {key: value for key, value in row.items() if key not in known}
+        ignored = set(self.ignored_columns)
+        extras = {key: value for key, value in row.items() if key not in known and key not in ignored}
         if extras and self.attribute_bucket is None:
             raise KeyError(f"Unknown projection row key(s): {', '.join(sorted(extras))}")
 
@@ -397,6 +399,7 @@ class ProjectionModel(Generic[ResultT]):
             "table": self.table,
             "result_type": f"{self.result_type.__module__}.{self.result_type.__qualname__}",
             "attribute_bucket": self.attribute_bucket,
+            "ignored_columns": tuple(sorted(self.ignored_columns)),
             "primary_key": self.primary_key,
             "fields": tuple(
                 sorted(
