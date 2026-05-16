@@ -177,6 +177,22 @@ def test_optional_missing_path_returns_none_by_default():
     assert model.from_row({"id": "r1"}) == OptionalRecord("r1", None)
 
 
+def test_scalar_path_decodes_declared_alternate_columns():
+    model = ProjectionModel(
+        name="alias",
+        table="alias",
+        result_type=FlatRecord,
+        fields=(
+            ScalarPath(("id",), "id"),
+            ScalarPath(("title",), "title", decode_columns=("label",)),
+        ),
+    )
+
+    assert model.to_row(FlatRecord("r1", "Intro")) == {"id": "r1", "title": "Intro"}
+    assert model.from_row({"id": "r1", "label": "Intro"}) == FlatRecord("r1", "Intro")
+    assert "label" in model.schema_hash_material()["fields"][1]["decode_columns"]
+
+
 def test_repeated_path_expands_into_child_rows_with_parent_keys():
     model = _parent_model()
 

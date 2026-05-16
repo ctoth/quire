@@ -56,6 +56,7 @@ class ScalarPath:
     indexed: bool = False
     default: Any = None
     missing: str = "none"
+    decode_columns: tuple[str, ...] = ()
 
     def column_spec(self) -> ProjectionColumn:
         return ProjectionColumn(
@@ -87,6 +88,7 @@ class ScalarPath:
             "primary_key": self.primary_key,
             "indexed": self.indexed,
             "missing": self.missing,
+            "decode_columns": self.decode_columns,
             "codec": self.codec.schema_hash_material(),
         }
 
@@ -185,8 +187,9 @@ class CompositePath:
     def decode_value(self, row: Mapping[str, object]) -> Any:
         values: dict[str, Any] = {}
         for field in self.fields:
-            if field.column in row:
-                values[field.column] = field.decode_value(row[field.column])
+            column = _decode_column_for(field, row)
+            if column is not None:
+                values[field.column] = field.decode_value(row[column])
             elif field.missing == "raise":
                 raise KeyError(field.column)
             else:
@@ -303,15 +306,17 @@ class ProjectionModel(Generic[ResultT]):
 
     def from_row(self, row: Mapping[str, object]) -> ResultT:
         known = {
-            field.column
+            column
             for field in self.fields
             if not isinstance(field, RepeatedPath | DerivedPath | CompositePath)
+            for column in (field.column, *field.decode_columns)
         }
         known.update(
-            column.column
+            decoded_column
             for field in self.fields
             if isinstance(field, CompositePath)
             for column in field.fields
+            for decoded_column in (column.column, *column.decode_columns)
         )
         known.update(field.table for field in self.fields if isinstance(field, RepeatedPath))
         known.update(field.key for field in self.fields if isinstance(field, DerivedPath))
@@ -328,8 +333,8 @@ class ProjectionModel(Generic[ResultT]):
                 _assign_path(data, field.path, field.decode_value(row))
             elif isinstance(field, DerivedPath):
                 continue
-            elif field.column in row:
-                _assign_path(data, field.path, field.decode_value(row[field.column]))
+            elif (column := _decode_column_for(field, row)) is not None:
+                _assign_path(data, field.path, field.decode_value(row[column]))
             elif field.missing == "raise":
                 raise KeyError(field.column)
             else:
@@ -412,6 +417,13 @@ class ProjectionModel(Generic[ResultT]):
 
 def _stable_field_material(field: ProjectionSpec) -> Mapping[str, Any]:
     return dict(field.schema_hash_material())
+
+
+def _decode_column_for(field: ScalarPath, row: Mapping[str, object]) -> str | None:
+    for column in (field.column, *field.decode_columns):
+        if column in row:
+            return column
+    return None
 
 
 def _read_path(source: object, path: tuple[str, ...], *, default: Any = None) -> Any:
