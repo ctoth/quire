@@ -6,6 +6,7 @@ from enum import Enum
 import pytest
 
 from quire.projection_mapping import (
+    DerivedPath,
     EnumPath,
     JsonPath,
     ProjectionModel,
@@ -232,6 +233,31 @@ def test_attribute_bucket_only_when_declared():
     )
 
     assert model.from_row({"id": "r1", "extra": 3}) == AttributeRecord("r1", {"extra": 3})
+
+
+def test_derived_path_renders_non_column_key_without_decoding_it():
+    model = ProjectionModel(
+        name="derived",
+        table="derived",
+        result_type=FlatRecord,
+        fields=(
+            ScalarPath(("id",), "id"),
+            ScalarPath(("title",), "title"),
+            DerivedPath(("title",), "label"),
+        ),
+    )
+
+    assert model.to_row(FlatRecord("r1", "Intro")) == {"id": "r1", "title": "Intro"}
+    assert model.to_mapping(FlatRecord("r1", "Intro")) == {
+        "id": "r1",
+        "title": "Intro",
+        "label": "Intro",
+    }
+    assert model.from_row({"id": "r1", "title": "Intro", "label": "Ignored"}) == FlatRecord(
+        "r1",
+        "Intro",
+    )
+    assert "label" not in model.projection_tables()[0].column_names
 
 
 def test_coerce_accepts_result_type_or_mapping():

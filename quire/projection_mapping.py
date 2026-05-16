@@ -137,6 +137,32 @@ class ReferencePath(ScalarPath):
         return material
 
 
+@dataclass(frozen=True)
+class DerivedPath:
+    path: tuple[str, ...]
+    key: str
+    codec: ProjectionCodec = SCALAR_CODEC
+    default: Any = None
+    missing: str = "none"
+
+    def encode_value(self, source: object) -> Any:
+        value = _read_path(source, self.path, default=_MISSING)
+        if value is _MISSING:
+            if self.missing == "raise":
+                raise KeyError(".".join(self.path))
+            value = self.default
+        return self.codec.encode(value)
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": type(self).__name__,
+            "path": self.path,
+            "key": self.key,
+            "missing": self.missing,
+            "codec": self.codec.schema_hash_material(),
+        }
+
+
 ProjectionPath = ScalarPath | JsonPath | EnumPath | ReferencePath
 
 
@@ -203,7 +229,7 @@ class RepeatedPath:
         }
 
 
-ProjectionSpec = ProjectionPath | RepeatedPath
+ProjectionSpec = ProjectionPath | RepeatedPath | DerivedPath
 
 
 @dataclass(frozen=True)
@@ -218,14 +244,26 @@ class ProjectionModel:
     def to_row(self, source: object) -> Mapping[str, object]:
         row: dict[str, object] = {}
         for field in self.fields:
-            if isinstance(field, RepeatedPath):
+            if isinstance(field, RepeatedPath | DerivedPath):
                 continue
             row[field.column] = field.encode_value(source)
         return row
 
+    def to_mapping(self, source: object) -> Mapping[str, object]:
+        row = dict(self.to_row(source))
+        for field in self.fields:
+            if isinstance(field, DerivedPath):
+                row[field.key] = field.encode_value(source)
+        return row
+
     def from_row(self, row: Mapping[str, object]) -> object:
-        known = {field.column for field in self.fields if not isinstance(field, RepeatedPath)}
+        known = {
+            field.column
+            for field in self.fields
+            if not isinstance(field, RepeatedPath | DerivedPath)
+        }
         known.update(field.table for field in self.fields if isinstance(field, RepeatedPath))
+        known.update(field.key for field in self.fields if isinstance(field, DerivedPath))
         extras = {key: value for key, value in row.items() if key not in known}
         if extras and self.attribute_bucket is None:
             raise KeyError(f"Unknown projection row key(s): {', '.join(sorted(extras))}")
@@ -234,6 +272,8 @@ class ProjectionModel:
         for field in self.fields:
             if isinstance(field, RepeatedPath):
                 _assign_path(data, field.path, field.decode_rows(row.get(field.table)))
+            elif isinstance(field, DerivedPath):
+                continue
             elif field.column in row:
                 _assign_path(data, field.path, field.decode_value(row[field.column]))
             elif field.missing == "raise":
@@ -264,7 +304,11 @@ class ProjectionModel:
         return tuple(rows)
 
     def projection_tables(self) -> tuple[ProjectionTable, ...]:
-        columns = tuple(field.column_spec() for field in self.fields if not isinstance(field, RepeatedPath))
+        columns = tuple(
+            field.column_spec()
+            for field in self.fields
+            if not isinstance(field, RepeatedPath | DerivedPath)
+        )
         foreign_keys = tuple(
             field.foreign_key()
             for field in self.fields
@@ -273,7 +317,7 @@ class ProjectionModel:
         indexes = tuple(
             ProjectionIndex(f"idx_{self.table}_{field.column}", (field.column,))
             for field in self.fields
-            if not isinstance(field, RepeatedPath) and field.indexed
+            if not isinstance(field, RepeatedPath | DerivedPath) and field.indexed
         )
         tables = [
             ProjectionTable(

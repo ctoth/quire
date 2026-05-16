@@ -94,6 +94,7 @@ from quire.projections import (
     text_field,
 )
 from quire.projection_mapping import (
+    DerivedPath,
     EnumPath,
     JsonPath,
     ProjectionCodec,
@@ -171,6 +172,7 @@ __all__ = [
     "DerivedStoreHandle",
     "DerivedStoreManager",
     "DerivedStoreMaterialization",
+    "DerivedPath",
     "EMBEDDING_MODEL_PROJECTION",
     "EnumPath",
     "FamilyDefinition",
