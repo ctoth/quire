@@ -174,6 +174,7 @@ class RepeatedPath:
     fields: tuple[ProjectionPath, ...]
     parent_fk: str
     parent_path: tuple[str, ...] = ("id",)
+    item_parent_path: tuple[str, ...] | None = None
     item_type: type[Any] | None = None
     fetch: str = "parent_keyed_select"
 
@@ -213,6 +214,10 @@ class RepeatedPath:
             if not isinstance(row_map, Mapping):
                 raise TypeError("Repeated child row must be a mapping or ProjectionRow")
             item_data: dict[str, Any] = {}
+            if self.item_parent_path is not None:
+                if self.parent_fk not in row_map:
+                    raise KeyError(self.parent_fk)
+                _assign_path(item_data, self.item_parent_path, row_map[self.parent_fk])
             for field in self.fields:
                 _assign_path(item_data, field.path, field.decode_value(row_map.get(field.column)))
             decoded.append(_construct(self.item_type, item_data) if self.item_type is not None else item_data)
@@ -225,6 +230,7 @@ class RepeatedPath:
             "table": self.table,
             "parent_fk": self.parent_fk,
             "parent_path": self.parent_path,
+            "item_parent_path": self.item_parent_path,
             "fetch": self.fetch,
             "fields": tuple(_stable_field_material(field) for field in self.fields),
         }

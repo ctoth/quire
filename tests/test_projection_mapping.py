@@ -66,6 +66,7 @@ class OptionalRecord:
 class Link:
     concept_id: str
     role: str
+    parent_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +167,7 @@ def test_optional_missing_path_returns_none_by_default():
 def test_repeated_path_expands_into_child_rows_with_parent_keys():
     model = _parent_model()
 
-    rows = model.child_rows(Parent("p1", (Link("c1", "target"), Link("c2", "support"))))
+    rows = model.child_rows(Parent("p1", (Link("c1", "target", "p1"), Link("c2", "support", "p1"))))
 
     assert rows == (
         ProjectionRow("parent_link", {"parent_id": "p1", "concept_id": "c1", "role": "target"}),
@@ -187,7 +188,7 @@ def test_repeated_path_decodes_children_into_typed_tuple():
         }
     )
 
-    assert result == Parent("p1", (Link("c1", "target"), Link("c2", "support")))
+    assert result == Parent("p1", (Link("c1", "target", "p1"), Link("c2", "support", "p1")))
 
 
 def test_reference_path_emits_column_and_foreign_key():
@@ -367,6 +368,7 @@ def _parent_model() -> ProjectionModel:
                 path=("links",),
                 table="parent_link",
                 parent_fk="parent_id",
+                item_parent_path=("parent_id",),
                 item_type=Link,
                 fields=(ScalarPath(("concept_id",), "concept_id"), ScalarPath(("role",), "role")),
             ),
