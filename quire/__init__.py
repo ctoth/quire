@@ -94,6 +94,7 @@ from quire.projections import (
     text_field,
 )
 from quire.projection_mapping import (
+    CompositePath,
     DerivedPath,
     EnumPath,
     JsonPath,
@@ -158,6 +159,7 @@ __all__ = [
     "CONDITIONS_CEL_FIELD",
     "CONDITIONS_IR_FIELD",
     "CONTENT_HASH_FIELD",
+    "CompositePath",
     "ContractEntry",
     "ContractManifest",
     "ContractManifestError",

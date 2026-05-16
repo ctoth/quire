@@ -168,6 +168,40 @@ ProjectionPath = ScalarPath | JsonPath | EnumPath | ReferencePath
 
 
 @dataclass(frozen=True)
+class CompositePath:
+    path: tuple[str, ...]
+    fields: tuple[ProjectionPath, ...]
+    encoder: Callable[[Any], Mapping[str, Any]]
+    decoder: Callable[[Mapping[str, Any]], Any]
+
+    def encode_values(self, source: object) -> Mapping[str, object]:
+        value = _read_path(source, self.path, default=None)
+        raw_values = self.encoder(value)
+        row: dict[str, object] = {}
+        for field in self.fields:
+            row[field.column] = field.codec.encode(raw_values.get(field.column))
+        return row
+
+    def decode_value(self, row: Mapping[str, object]) -> Any:
+        values: dict[str, Any] = {}
+        for field in self.fields:
+            if field.column in row:
+                values[field.column] = field.decode_value(row[field.column])
+            elif field.missing == "raise":
+                raise KeyError(field.column)
+            else:
+                values[field.column] = field.default
+        return self.decoder(values)
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": "CompositePath",
+            "path": self.path,
+            "fields": tuple(_stable_field_material(field) for field in self.fields),
+        }
+
+
+@dataclass(frozen=True)
 class RepeatedPath:
     path: tuple[str, ...]
     table: str
@@ -236,7 +270,7 @@ class RepeatedPath:
         }
 
 
-ProjectionSpec = ProjectionPath | RepeatedPath | DerivedPath
+ProjectionSpec = ProjectionPath | CompositePath | RepeatedPath | DerivedPath
 
 
 @dataclass(frozen=True)
@@ -253,6 +287,9 @@ class ProjectionModel(Generic[ResultT]):
         for field in self.fields:
             if isinstance(field, RepeatedPath | DerivedPath):
                 continue
+            if isinstance(field, CompositePath):
+                row.update(field.encode_values(source))
+                continue
             row[field.column] = field.encode_value(source)
         return row
 
@@ -267,8 +304,14 @@ class ProjectionModel(Generic[ResultT]):
         known = {
             field.column
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath)
+            if not isinstance(field, RepeatedPath | DerivedPath | CompositePath)
         }
+        known.update(
+            column.column
+            for field in self.fields
+            if isinstance(field, CompositePath)
+            for column in field.fields
+        )
         known.update(field.table for field in self.fields if isinstance(field, RepeatedPath))
         known.update(field.key for field in self.fields if isinstance(field, DerivedPath))
         extras = {key: value for key, value in row.items() if key not in known}
@@ -279,6 +322,8 @@ class ProjectionModel(Generic[ResultT]):
         for field in self.fields:
             if isinstance(field, RepeatedPath):
                 _assign_path(data, field.path, field.decode_rows(row.get(field.table)))
+            elif isinstance(field, CompositePath):
+                _assign_path(data, field.path, field.decode_value(row))
             elif isinstance(field, DerivedPath):
                 continue
             elif field.column in row:
@@ -314,7 +359,12 @@ class ProjectionModel(Generic[ResultT]):
         columns = tuple(
             field.column_spec()
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath)
+            if not isinstance(field, RepeatedPath | DerivedPath | CompositePath)
+        ) + tuple(
+            column.column_spec()
+            for field in self.fields
+            if isinstance(field, CompositePath)
+            for column in field.fields
         )
         foreign_keys = tuple(
             field.foreign_key()
@@ -324,7 +374,7 @@ class ProjectionModel(Generic[ResultT]):
         indexes = tuple(
             ProjectionIndex(f"idx_{self.table}_{field.column}", (field.column,))
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath) and field.indexed
+            if not isinstance(field, RepeatedPath | DerivedPath | CompositePath) and field.indexed
         )
         tables = [
             ProjectionTable(

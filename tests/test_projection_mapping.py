@@ -6,6 +6,7 @@ from enum import Enum
 import pytest
 
 from quire.projection_mapping import (
+    CompositePath,
     DerivedPath,
     EnumPath,
     JsonPath,
@@ -79,6 +80,18 @@ class Parent:
 class ReferenceRecord:
     id: str
     context_id: str | None = None
+
+
+@dataclass(frozen=True)
+class Citation:
+    paper: str | None = None
+    page: int | None = None
+
+
+@dataclass(frozen=True)
+class CitedRecord:
+    id: str
+    citation: Citation | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +223,43 @@ def test_reference_path_emits_column_and_foreign_key():
         "ref_table": "context",
         "ref_columns": ("id",),
     }
+
+
+def test_composite_path_round_trips_multi_column_value():
+    model = ProjectionModel(
+        name="citation",
+        table="citation",
+        result_type=CitedRecord,
+        fields=(
+            ScalarPath(("id",), "id"),
+            CompositePath(
+                path=("citation",),
+                fields=(
+                    ScalarPath(("paper",), "paper"),
+                    ScalarPath(("page",), "page"),
+                ),
+                encoder=lambda citation: (
+                    {}
+                    if citation is None
+                    else {"paper": citation.paper, "page": citation.page}
+                ),
+                decoder=lambda row: (
+                    None
+                    if row.get("paper") is None and row.get("page") is None
+                    else Citation(
+                        None if row.get("paper") is None else str(row["paper"]),
+                        None if row.get("page") is None else int(row["page"]),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    row = model.to_row(CitedRecord("r1", Citation("paper-a", 7)))
+
+    assert row == {"id": "r1", "paper": "paper-a", "page": 7}
+    assert model.from_row(row) == CitedRecord("r1", Citation("paper-a", 7))
+    assert model.from_row({"id": "r2"}) == CitedRecord("r2", None)
 
 
 def test_unknown_keys_raise_when_no_attribute_bucket_declared():
