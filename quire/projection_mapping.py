@@ -233,9 +233,9 @@ ProjectionPath = ScalarPath | JsonPath | EnumPath | ReferencePath | ProjectionBi
 
 
 @dataclass(frozen=True)
-class CompositePath:
+class ProjectionComponent:
     path: tuple[str, ...]
-    fields: tuple[ProjectionPath, ...]
+    bindings: tuple[ProjectionBinding, ...]
     encoder: Callable[[Any], Mapping[str, Any]]
     decoder: Callable[[Mapping[str, Any]], Any]
 
@@ -243,28 +243,28 @@ class CompositePath:
         value = _read_path(source, self.path, default=None)
         raw_values = self.encoder(value)
         row: dict[str, object] = {}
-        for field in self.fields:
-            column = _column_name_for(field)
-            row[column] = _encode_projection_value(field, raw_values.get(column))
+        for binding in self.bindings:
+            column = binding.column_name
+            row[column] = binding.projection_column.encode(raw_values.get(column))
         return row
 
     def decode_value(self, row: Mapping[str, object]) -> Any:
         values: dict[str, Any] = {}
-        for field in self.fields:
-            column = _decode_column_for(field, row)
+        for binding in self.bindings:
+            column = _decode_column_for(binding, row)
             if column is not None:
-                values[_column_name_for(field)] = field.decode_value(row[column])
-            elif field.missing == "raise":
-                raise KeyError(_column_name_for(field))
+                values[binding.column_name] = binding.decode_value(row[column])
+            elif binding.missing == "raise":
+                raise KeyError(binding.column_name)
             else:
-                values[_column_name_for(field)] = field.default
+                values[binding.column_name] = binding.default
         return self.decoder(values)
 
     def schema_hash_material(self) -> Mapping[str, Any]:
         return {
-            "kind": "CompositePath",
+            "kind": "ProjectionComponent",
             "path": self.path,
-            "fields": tuple(_stable_field_material(field) for field in self.fields),
+            "bindings": tuple(_stable_field_material(binding) for binding in self.bindings),
         }
 
 
@@ -341,7 +341,7 @@ class RepeatedPath:
         }
 
 
-ProjectionSpec = ProjectionPath | CompositePath | RepeatedPath | DerivedPath
+ProjectionSpec = ProjectionPath | ProjectionComponent | RepeatedPath | DerivedPath
 
 
 @dataclass(frozen=True)
@@ -362,7 +362,7 @@ class ProjectionModel(Generic[ResultT]):
         for field in self.fields:
             if isinstance(field, RepeatedPath | DerivedPath):
                 continue
-            if isinstance(field, CompositePath):
+            if isinstance(field, ProjectionComponent):
                 row.update(field.encode_values(source))
                 continue
             row[_column_name_for(field)] = field.encode_value(source)
@@ -379,14 +379,14 @@ class ProjectionModel(Generic[ResultT]):
         known = {
             column
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath | CompositePath)
+            if not isinstance(field, RepeatedPath | DerivedPath | ProjectionComponent)
             for column in _read_names_for(field)
         }
         known.update(
             decoded_column
             for field in self.fields
-            if isinstance(field, CompositePath)
-            for column in field.fields
+            if isinstance(field, ProjectionComponent)
+            for column in field.bindings
             for decoded_column in _read_names_for(column)
         )
         known.update(
@@ -405,7 +405,7 @@ class ProjectionModel(Generic[ResultT]):
         for field in self.fields:
             if isinstance(field, RepeatedPath):
                 _assign_path(data, field.path, field.decode_rows(row.get(field.decode_key or field.table)))
-            elif isinstance(field, CompositePath):
+            elif isinstance(field, ProjectionComponent):
                 _assign_path(data, field.path, field.decode_value(row))
             elif isinstance(field, DerivedPath):
                 continue
@@ -438,12 +438,12 @@ class ProjectionModel(Generic[ResultT]):
         columns = tuple(
             field.column_spec()
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath | CompositePath)
+            if not isinstance(field, RepeatedPath | DerivedPath | ProjectionComponent)
         ) + tuple(
             column.column_spec()
             for field in self.fields
-            if isinstance(field, CompositePath)
-            for column in field.fields
+            if isinstance(field, ProjectionComponent)
+            for column in field.bindings
         )
         foreign_keys = tuple(
             field.foreign_key()

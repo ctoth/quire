@@ -6,12 +6,12 @@ from enum import Enum
 import pytest
 
 from quire.projection_mapping import (
-    CompositePath,
     DerivedPath,
     EnumPath,
     JsonPath,
     ProjectionBinding,
     ProjectionCodec,
+    ProjectionComponent,
     ProjectionModel,
     ReferencePath,
     RepeatedPath,
@@ -260,18 +260,24 @@ def test_reference_path_emits_column_and_foreign_key():
     }
 
 
-def test_composite_path_round_trips_multi_column_value():
+def test_projection_component_round_trips_multi_column_value():
     model = ProjectionModel(
         name="citation",
         table="citation",
         result_type=CitedRecord,
         fields=(
             ScalarPath(("id",), "id"),
-            CompositePath(
+            ProjectionComponent(
                 path=("citation",),
-                fields=(
-                    ScalarPath(("paper",), "paper"),
-                    ScalarPath(("page",), "page"),
+                bindings=(
+                    ProjectionBinding(
+                        ("paper",),
+                        projection_column_owner=ProjectionColumn("paper", "TEXT"),
+                    ),
+                    ProjectionBinding(
+                        ("page",),
+                        projection_column_owner=ProjectionColumn("page", "INTEGER"),
+                    ),
                 ),
                 encoder=lambda citation: (
                     {}
