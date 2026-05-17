@@ -10,12 +10,13 @@ from quire.projection_mapping import (
     DerivedPath,
     EnumPath,
     JsonPath,
+    ProjectionCodec,
     ProjectionModel,
     ReferencePath,
     RepeatedPath,
     ScalarPath,
 )
-from quire.projections import ProjectionRow
+from quire.projections import ProjectionIndex, ProjectionRow
 
 
 @dataclass(frozen=True)
@@ -471,6 +472,69 @@ def test_relationship_shaped_fixture_uses_generic_projection_model():
         "relation_type": "draft",
         "note": "edge",
     }
+
+
+def test_projection_model_emits_declared_table_metadata():
+    real_codec = ProjectionCodec("real", "REAL")
+    model = ProjectionModel(
+        name="metadata",
+        table="relation_edge",
+        result_type=RelationshipFixture,
+        fields=(
+            ScalarPath(
+                ("source_id",),
+                "source_id",
+                nullable=False,
+                default_sql="''",
+            ),
+            ScalarPath(("target_id",), "target_id", nullable=False),
+            ScalarPath(("relation_type",), "relation_type", nullable=False),
+            ScalarPath(
+                ("note",),
+                "confidence",
+                codec=real_codec,
+                check_sql="confidence >= 0 AND confidence <= 1",
+            ),
+        ),
+        indexes=(
+            ProjectionIndex("idx_relation_edge_source", ("source_id", "target_id")),
+        ),
+        checks=("confidence IS NULL OR confidence >= 0",),
+        if_not_exists=True,
+    )
+
+    table = model.projection_tables()[0]
+
+    assert table.if_not_exists is True
+    assert table.checks == ("confidence IS NULL OR confidence >= 0",)
+    assert table.indexes == (
+        ProjectionIndex("idx_relation_edge_source", ("source_id", "target_id")),
+    )
+    assert table.columns[0].ddl() == "\"source_id\" TEXT NOT NULL DEFAULT ''"
+    assert table.columns[3].ddl() == '"confidence" REAL CHECK(confidence >= 0 AND confidence <= 1)'
+    assert table.ddl_statements()[1] == (
+        'CREATE INDEX IF NOT EXISTS "idx_relation_edge_source" '
+        'ON "relation_edge"("source_id", "target_id")'
+    )
+    assert model.schema_hash_material()["checks"] == ("confidence IS NULL OR confidence >= 0",)
+
+
+def test_projection_model_omits_noninsertable_columns_from_insert_sql():
+    id_codec = ProjectionCodec("auto_id", "INTEGER PRIMARY KEY AUTOINCREMENT")
+    model = ProjectionModel(
+        name="autoincrement",
+        table="autoincrement",
+        result_type=FlatRecord,
+        fields=(
+            ScalarPath(("id",), "id", codec=id_codec, insertable=False),
+            ScalarPath(("title",), "title"),
+        ),
+    )
+
+    table = model.projection_tables()[0]
+
+    assert table.columns[0].ddl() == '"id" INTEGER PRIMARY KEY AUTOINCREMENT'
+    assert table.insert_sql() == 'INSERT INTO "autoincrement" ("title") VALUES (:title)'
 
 
 def _parent_model() -> ProjectionModel:
