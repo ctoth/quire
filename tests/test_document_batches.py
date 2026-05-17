@@ -108,7 +108,7 @@ def test_load_document_batch_labels_items_with_batch_index(tmp_path) -> None:
 
     loaded = load_document_batch(path, EXAMPLE_BATCH_SPEC, store_root=tmp_path)
 
-    assert [item.filename for item in loaded] == ["batch#1", "batch#2"]
+    assert [item.filename for item in loaded] == ["batch.yaml#1", "batch.yaml#2"]
     assert [item.item_index for item in loaded] == [1, 2]
     assert [item.document.name for item in loaded] == ["alpha", "beta"]
     assert all(item.artifact_path is not None for item in loaded)
@@ -137,7 +137,7 @@ def test_load_document_batch_dir_orders_yaml_children_then_items(tmp_path) -> No
 
     loaded = load_document_batch_dir(batches_dir, EXAMPLE_BATCH_SPEC)
 
-    assert [item.filename for item in loaded] == ["a#1", "a#2", "b#1"]
+    assert [item.filename for item in loaded] == ["a.yaml#1", "a.yaml#2", "b.yaml#1"]
     assert [item.document.name for item in loaded] == ["alpha", "atom", "beta"]
 
 

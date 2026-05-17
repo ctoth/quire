@@ -139,7 +139,7 @@ def load_document_batch(
     )
     return tuple(
         LoadedBatchItem(
-            filename=f"{artifact_path.stem}#{index}",
+            filename=f"{artifact_path.name}#{index}",
             item_index=index,
             artifact_path=artifact_path,
             store_root=root_path,
