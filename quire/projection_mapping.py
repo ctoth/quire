@@ -15,6 +15,7 @@ from quire.projections import (
     ProjectionTable,
     json_decoder,
     json_encoder,
+    quote_identifier,
 )
 
 
@@ -391,12 +392,117 @@ ProjectionSpec = ProjectionPath | ProjectionComponent | ProjectionMetadata | Pro
 
 
 @dataclass(frozen=True)
+class ProjectionSelectedColumn:
+    source_alias: str
+    column: ProjectionColumn
+    read_name: str | None = None
+
+    @classmethod
+    def from_binding(cls, source_alias: str, binding: ProjectionBinding) -> ProjectionSelectedColumn:
+        return cls(
+            source_alias=source_alias,
+            column=binding.projection_column,
+            read_name=binding.read_name,
+        )
+
+    @property
+    def output_name(self) -> str:
+        return self.column.name if self.read_name is None else self.read_name
+
+    def select_sql(self) -> str:
+        expression = f"{quote_identifier(self.source_alias)}.{quote_identifier(self.column.name)}"
+        if self.output_name == self.column.name:
+            return expression
+        return f"{expression} AS {quote_identifier(self.output_name)}"
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": "ProjectionSelectedColumn",
+            "source_alias": self.source_alias,
+            "column": self.column.name,
+            "read_name": self.read_name,
+        }
+
+
+@dataclass(frozen=True)
+class ProjectionJoin:
+    table: ProjectionTable
+    alias: str
+    left_alias: str
+    left_column: ProjectionColumn
+    right_column: ProjectionColumn
+    kind: str = "LEFT"
+
+    def join_sql(self) -> str:
+        join_kind = self.kind.upper()
+        if join_kind not in {"INNER", "LEFT", "LEFT OUTER", "CROSS"}:
+            raise ValueError(f"Unsupported projection join kind: {self.kind!r}")
+        if join_kind == "CROSS":
+            return f"CROSS JOIN {quote_identifier(self.table.name)} AS {quote_identifier(self.alias)}"
+        left = f"{quote_identifier(self.alias)}.{quote_identifier(self.right_column.name)}"
+        right = f"{quote_identifier(self.left_alias)}.{quote_identifier(self.left_column.name)}"
+        return (
+            f"{join_kind} JOIN {quote_identifier(self.table.name)} AS {quote_identifier(self.alias)} "
+            f"ON {left} = {right}"
+        )
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": "ProjectionJoin",
+            "table": self.table.name,
+            "alias": self.alias,
+            "left_alias": self.left_alias,
+            "left_column": self.left_column.name,
+            "right_column": self.right_column.name,
+            "join_kind": self.kind.upper(),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectionQueryPlan:
+    name: str
+    base_table: ProjectionTable
+    base_alias: str
+    selections: tuple[ProjectionSelectedColumn, ...]
+    joins: tuple[ProjectionJoin, ...] = ()
+    order_by: tuple[str, ...] = ()
+
+    def select_sql(self, where_sql: str = "") -> str:
+        if not self.selections:
+            raise ValueError(f"Projection query plan {self.name!r} must declare selections")
+        select_columns = ",\n            ".join(selection.select_sql() for selection in self.selections)
+        join_sql = "\n        ".join(join.join_sql() for join in self.joins)
+        sql = (
+            "SELECT\n"
+            f"            {select_columns}\n"
+            f"        FROM {quote_identifier(self.base_table.name)} AS {quote_identifier(self.base_alias)}"
+        )
+        if join_sql:
+            sql = f"{sql}\n        {join_sql}"
+        if where_sql:
+            sql = f"{sql} {where_sql}"
+        elif self.order_by:
+            sql = f"{sql} ORDER BY {', '.join(self.order_by)}"
+        return sql
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": "ProjectionQueryPlan",
+            "name": self.name,
+            "base_table": self.base_table.name,
+            "base_alias": self.base_alias,
+            "selections": tuple(selection.schema_hash_material() for selection in self.selections),
+            "joins": tuple(join.schema_hash_material() for join in self.joins),
+            "order_by": self.order_by,
+        }
+
+
+@dataclass(frozen=True)
 class ProjectionModel(Generic[ResultT]):
     name: str
     table: str
     result_type: type[ResultT]
     fields: tuple[ProjectionSpec, ...]
-    ignored_columns: tuple[str, ...] = ()
     primary_key: tuple[str, ...] = ()
     indexes: tuple[ProjectionIndex, ...] = ()
     checks: tuple[str, ...] = ()
@@ -451,8 +557,7 @@ class ProjectionModel(Generic[ResultT]):
             for key in (field.attachment_key,)
         )
         known.update(field.output_key for field in self.fields if isinstance(field, ProjectionRenderView))
-        ignored = set(self.ignored_columns)
-        extras = {key: value for key, value in row.items() if key not in known and key not in ignored}
+        extras = {key: value for key, value in row.items() if key not in known}
         if extras:
             raise KeyError(f"Unknown projection row key(s): {', '.join(sorted(extras))}")
 
@@ -563,7 +668,6 @@ class ProjectionModel(Generic[ResultT]):
             "name": self.name,
             "table": self.table,
             "result_type": f"{self.result_type.__module__}.{self.result_type.__qualname__}",
-            "ignored_columns": tuple(sorted(self.ignored_columns)),
             "primary_key": self.primary_key,
             "indexes": tuple(index.schema_hash_material() for index in self.indexes),
             "checks": self.checks,

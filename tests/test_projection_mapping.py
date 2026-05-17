@@ -12,13 +12,16 @@ from quire.projection_mapping import (
     ProjectionBinding,
     ProjectionCodec,
     ProjectionComponent,
+    ProjectionJoin,
     ProjectionMetadata,
     ProjectionModel,
+    ProjectionQueryPlan,
     ProjectionRenderView,
+    ProjectionSelectedColumn,
     ReferencePath,
     ScalarPath,
 )
-from quire.projections import ProjectionColumn, ProjectionField, ProjectionIndex, ProjectionRow, json_decoder, json_encoder
+from quire.projections import ProjectionColumn, ProjectionField, ProjectionIndex, ProjectionRow, ProjectionTable, json_decoder, json_encoder
 
 
 @dataclass(frozen=True)
@@ -368,17 +371,48 @@ def test_projection_metadata_declares_allowed_extra_columns():
         model.from_row({"id": "r1", "confidence": 0.75, "extra": 3})
 
 
-def test_ignored_columns_are_not_attributes():
-    model = ProjectionModel(
-        name="ignored",
-        table="ignored",
-        result_type=FlatRecord,
-        fields=(ScalarPath(("id",), "id"),),
-        ignored_columns=("join_only",),
+def test_query_plan_declares_joined_columns_without_ignored_row_keys():
+    core = ProjectionTable(
+        "core",
+        (
+            ProjectionColumn("id", "TEXT", nullable=False),
+            ProjectionColumn("source_slug", "TEXT"),
+        ),
+    )
+    source = ProjectionTable(
+        "source",
+        (
+            ProjectionColumn("slug", "TEXT", nullable=False),
+            ProjectionColumn("source_id", "TEXT", nullable=False),
+        ),
+    )
+    plan = ProjectionQueryPlan(
+        name="core_source",
+        base_table=core,
+        base_alias="core",
+        selections=(
+            ProjectionSelectedColumn("core", core.columns[0]),
+            ProjectionSelectedColumn("source", source.columns[1], read_name="joined_source_id"),
+        ),
+        joins=(
+            ProjectionJoin(
+                table=source,
+                alias="source",
+                left_alias="core",
+                left_column=core.columns[1],
+                right_column=source.columns[0],
+            ),
+        ),
     )
 
-    assert model.from_row({"id": "r1", "join_only": "skip"}) == FlatRecord("r1")
-    assert "join_only" in model.schema_hash_material()["ignored_columns"]
+    assert plan.select_sql() == (
+        'SELECT\n'
+        '            "core"."id",\n'
+        '            "source"."source_id" AS "joined_source_id"\n'
+        '        FROM "core" AS "core"\n'
+        '        LEFT JOIN "source" AS "source" ON "source"."slug" = "core"."source_slug"'
+    )
+    assert plan.schema_hash_material()["joins"][0]["left_column"] == "source_slug"
 
 
 def test_projection_render_view_renders_non_column_key_without_decoding_it():
