@@ -230,6 +230,21 @@ class ProjectionRenderView:
         }
 
 
+@dataclass(frozen=True)
+class ProjectionInputKey:
+    key: str
+
+    def __post_init__(self) -> None:
+        if not self.key:
+            raise ValueError("ProjectionInputKey requires a non-empty key")
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": type(self).__name__,
+            "key": self.key,
+        }
+
+
 ProjectionPath = ScalarPath | JsonPath | EnumPath | ReferencePath | ProjectionBinding
 
 
@@ -388,7 +403,7 @@ class ProjectionAttachedRows:
         }
 
 
-ProjectionSpec = ProjectionPath | ProjectionComponent | ProjectionMetadata | ProjectionAttachedRows | ProjectionRenderView
+ProjectionSpec = ProjectionPath | ProjectionComponent | ProjectionMetadata | ProjectionAttachedRows | ProjectionRenderView | ProjectionInputKey
 
 
 @dataclass(frozen=True)
@@ -547,7 +562,7 @@ class ProjectionModel(Generic[ResultT]):
     def to_row(self, source: object) -> Mapping[str, object]:
         row: dict[str, object] = {}
         for field in self.fields:
-            if isinstance(field, ProjectionAttachedRows | ProjectionRenderView):
+            if isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionInputKey):
                 continue
             if isinstance(field, ProjectionComponent):
                 row.update(field.encode_values(source))
@@ -569,7 +584,7 @@ class ProjectionModel(Generic[ResultT]):
         known = {
             column
             for field in self.fields
-            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent | ProjectionMetadata)
+            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionInputKey | ProjectionComponent | ProjectionMetadata)
             for column in _read_names_for(field)
         }
         known.update(
@@ -593,6 +608,7 @@ class ProjectionModel(Generic[ResultT]):
             for key in (field.attachment_key,)
         )
         known.update(field.output_key for field in self.fields if isinstance(field, ProjectionRenderView))
+        known.update(field.key for field in self.fields if isinstance(field, ProjectionInputKey))
         extras = {key: value for key, value in row.items() if key not in known}
         if extras:
             raise KeyError(f"Unknown projection row key(s): {', '.join(sorted(extras))}")
@@ -611,7 +627,7 @@ class ProjectionModel(Generic[ResultT]):
                     data.update(metadata_value)
                 else:
                     raise TypeError("Top-level projection metadata must decode to a mapping")
-            elif isinstance(field, ProjectionRenderView):
+            elif isinstance(field, ProjectionRenderView | ProjectionInputKey):
                 continue
             elif (column := _decode_column_for(field, row)) is not None:
                 _assign_path(data, field.path, field.decode_value(row[column]))
@@ -660,7 +676,7 @@ class ProjectionModel(Generic[ResultT]):
         columns = tuple(
             field.column_spec()
             for field in self.fields
-            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent | ProjectionMetadata)
+            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionInputKey | ProjectionComponent | ProjectionMetadata)
         ) + tuple(
             column.column_spec()
             for field in self.fields

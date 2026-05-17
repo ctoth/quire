@@ -13,6 +13,7 @@ from quire.projection_mapping import (
     ProjectionCodec,
     ProjectionComponent,
     ProjectionDiscriminator,
+    ProjectionInputKey,
     ProjectionJoin,
     ProjectionMetadata,
     ProjectionModel,
@@ -370,6 +371,25 @@ def test_projection_metadata_declares_allowed_extra_columns():
     }
     with pytest.raises(KeyError, match="extra"):
         model.from_row({"id": "r1", "confidence": 0.75, "extra": 3})
+
+
+def test_projection_input_key_declares_non_materialized_row_input():
+    model = ProjectionModel(
+        name="input_key",
+        table="input_key",
+        result_type=FlatRecord,
+        fields=(
+            ScalarPath(("id",), "id"),
+            ProjectionInputKey("display_name"),
+        ),
+    )
+
+    assert model.from_row({"id": "r1", "display_name": "Rendered Name"}) == FlatRecord("r1")
+    assert model.to_row(FlatRecord("r2")) == {"id": "r2"}
+    assert model.to_mapping(FlatRecord("r2")) == {"id": "r2"}
+    assert model.projection_tables()[0].column_names == ("id",)
+    with pytest.raises(KeyError, match="other"):
+        model.from_row({"id": "r1", "display_name": "Rendered Name", "other": "nope"})
 
 
 def test_query_plan_declares_joined_columns_without_ignored_row_keys():
