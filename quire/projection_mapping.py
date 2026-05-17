@@ -459,12 +459,33 @@ class ProjectionJoin:
 
 
 @dataclass(frozen=True)
+class ProjectionDiscriminator:
+    column: ProjectionColumn
+    value: object
+
+    def predicate_sql(self, source_alias: str) -> str:
+        expression = f"{quote_identifier(source_alias)}.{quote_identifier(self.column.name)}"
+        return f"{expression} = {_sql_literal(self.column.encode(self.value))}"
+
+    def row_values(self) -> Mapping[str, object]:
+        return {self.column.name: self.column.encode(self.value)}
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": "ProjectionDiscriminator",
+            "column": self.column.name,
+            "value": self.column.encode(self.value),
+        }
+
+
+@dataclass(frozen=True)
 class ProjectionQueryPlan:
     name: str
     base_table: ProjectionTable
     base_alias: str
     selections: tuple[ProjectionSelectedColumn, ...]
     joins: tuple[ProjectionJoin, ...] = ()
+    discriminators: tuple[ProjectionDiscriminator, ...] = ()
     order_by: tuple[str, ...] = ()
 
     def select_sql(self, where_sql: str = "") -> str:
@@ -479,9 +500,20 @@ class ProjectionQueryPlan:
         )
         if join_sql:
             sql = f"{sql}\n        {join_sql}"
+        discriminator_sql = " AND ".join(
+            discriminator.predicate_sql(self.base_alias)
+            for discriminator in self.discriminators
+        )
         if where_sql:
-            sql = f"{sql} {where_sql}"
-        elif self.order_by:
+            if discriminator_sql and where_sql.strip().upper().startswith("WHERE "):
+                sql = f"{sql} WHERE {discriminator_sql} AND {where_sql.strip()[6:]}"
+            elif discriminator_sql:
+                sql = f"{sql} WHERE {discriminator_sql} {where_sql}"
+            else:
+                sql = f"{sql} {where_sql}"
+        elif discriminator_sql:
+            sql = f"{sql} WHERE {discriminator_sql}"
+        if self.order_by and not where_sql:
             sql = f"{sql} ORDER BY {', '.join(self.order_by)}"
         return sql
 
@@ -493,6 +525,10 @@ class ProjectionQueryPlan:
             "base_alias": self.base_alias,
             "selections": tuple(selection.schema_hash_material() for selection in self.selections),
             "joins": tuple(join.schema_hash_material() for join in self.joins),
+            "discriminators": tuple(
+                discriminator.schema_hash_material()
+                for discriminator in self.discriminators
+            ),
             "order_by": self.order_by,
         }
 
@@ -758,6 +794,17 @@ def _attached_order_values(field: ProjectionAttachedRows, row: Mapping[str, obje
             raise KeyError(column)
         values.append(row[column])
     return tuple(values)
+
+
+def _sql_literal(value: object) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int | float):
+        return str(value)
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
 
 
 def _read_path(source: object, path: tuple[str, ...], *, default: Any = None) -> Any:

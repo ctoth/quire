@@ -12,6 +12,7 @@ from quire.projection_mapping import (
     ProjectionBinding,
     ProjectionCodec,
     ProjectionComponent,
+    ProjectionDiscriminator,
     ProjectionJoin,
     ProjectionMetadata,
     ProjectionModel,
@@ -413,6 +414,52 @@ def test_query_plan_declares_joined_columns_without_ignored_row_keys():
         '        LEFT JOIN "source" AS "source" ON "source"."slug" = "core"."source_slug"'
     )
     assert plan.schema_hash_material()["joins"][0]["left_column"] == "source_slug"
+
+
+def test_query_plan_declares_discriminator_predicates_and_row_values():
+    edge = ProjectionTable(
+        "relation_edge",
+        (
+            ProjectionColumn("source_kind", "TEXT", nullable=False),
+            ProjectionColumn("source_id", "TEXT", nullable=False),
+            ProjectionColumn("target_kind", "TEXT", nullable=False),
+            ProjectionColumn("target_id", "TEXT", nullable=False),
+        ),
+    )
+    source_claim = ProjectionDiscriminator(edge.column("source_kind"), "claim")
+    target_claim = ProjectionDiscriminator(edge.column("target_kind"), "claim")
+    plan = ProjectionQueryPlan(
+        name="claim_stance",
+        base_table=edge,
+        base_alias="edge",
+        selections=(
+            ProjectionSelectedColumn("edge", edge.column("source_id"), read_name="claim_id"),
+            ProjectionSelectedColumn("edge", edge.column("target_id"), read_name="target_claim_id"),
+        ),
+        discriminators=(source_claim, target_claim),
+    )
+
+    assert plan.select_sql("WHERE edge.source_id = ?") == (
+        'SELECT\n'
+        '            "edge"."source_id" AS "claim_id",\n'
+        '            "edge"."target_id" AS "target_claim_id"\n'
+        '        FROM "relation_edge" AS "edge" '
+        'WHERE "edge"."source_kind" = \'claim\' AND "edge"."target_kind" = \'claim\' '
+        'AND edge.source_id = ?'
+    )
+    assert source_claim.row_values() == {"source_kind": "claim"}
+    assert plan.schema_hash_material()["discriminators"] == (
+        {
+            "kind": "ProjectionDiscriminator",
+            "column": "source_kind",
+            "value": "claim",
+        },
+        {
+            "kind": "ProjectionDiscriminator",
+            "column": "target_kind",
+            "value": "claim",
+        },
+    )
 
 
 def test_projection_render_view_renders_non_column_key_without_decoding_it():
