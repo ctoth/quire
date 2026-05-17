@@ -246,13 +246,20 @@ def test_projection_model_attaches_child_rows_by_declared_parent_path():
         {
             "parent_link": (
                 {"parent_id": "p2", "concept_id": "c2", "role": "support"},
+                {"parent_id": "p1", "concept_id": "c3", "role": "support"},
                 {"parent_id": "p1", "concept_id": "c1", "role": "target"},
             )
         },
     )
 
     assert rows == (
-        {"id": "p1", "links": ({"parent_id": "p1", "concept_id": "c1", "role": "target"},)},
+        {
+            "id": "p1",
+            "links": (
+                {"parent_id": "p1", "concept_id": "c1", "role": "target"},
+                {"parent_id": "p1", "concept_id": "c3", "role": "support"},
+            ),
+        },
         {"id": "p2", "links": ({"parent_id": "p2", "concept_id": "c2", "role": "support"},)},
     )
 
@@ -632,6 +639,7 @@ def _parent_model() -> ProjectionModel:
                 parent_fk="parent_id",
                 item_parent_path=("parent_id",),
                 item_type=Link,
+                order_by=("concept_id",),
                 fields=(ScalarPath(("concept_id",), "concept_id"), ScalarPath(("role",), "role")),
             ),
         ),

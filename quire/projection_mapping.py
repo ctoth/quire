@@ -277,6 +277,7 @@ class ProjectionAttachedRows:
     parent_path: tuple[str, ...] = ("id",)
     item_parent_path: tuple[str, ...] | None = None
     item_type: type[Any] | None = None
+    order_by: tuple[str | ProjectionPath, ...] = ()
     fetch: str = "parent_keyed_select"
 
     def __post_init__(self) -> None:
@@ -342,6 +343,7 @@ class ProjectionAttachedRows:
             "parent_fk": self.parent_fk,
             "parent_path": self.parent_path,
             "item_parent_path": self.item_parent_path,
+            "order_by": tuple(_attached_order_material(order_key) for order_key in self.order_by),
             "fetch": self.fetch,
             "fields": tuple(_stable_field_material(field) for field in self.fields),
         }
@@ -549,6 +551,12 @@ def _decode_column_for(field: ProjectionPath, row: Mapping[str, object]) -> str 
     return None
 
 
+def _attached_order_material(order_key: str | ProjectionPath) -> Mapping[str, Any]:
+    if isinstance(order_key, str):
+        return {"kind": "column", "name": order_key}
+    return _stable_field_material(order_key)
+
+
 def _parent_column_for_path(fields: tuple[ProjectionSpec, ...], path: tuple[str, ...]) -> str:
     for field in fields:
         if isinstance(field, ProjectionComponent):
@@ -575,7 +583,20 @@ def _group_attached_rows(
         if not isinstance(parent_value, Hashable):
             raise TypeError(f"Attached row child key {field.parent_fk} must be hashable")
         grouped.setdefault(parent_value, []).append(row_map)
+    if field.order_by:
+        for rows in grouped.values():
+            rows.sort(key=lambda row: _attached_order_values(field, row))
     return grouped
+
+
+def _attached_order_values(field: ProjectionAttachedRows, row: Mapping[str, object]) -> tuple[object, ...]:
+    values: list[object] = []
+    for order_key in field.order_by:
+        column = order_key if isinstance(order_key, str) else _column_name_for(order_key)
+        if column not in row:
+            raise KeyError(column)
+        values.append(row[column])
+    return tuple(values)
 
 
 def _read_path(source: object, path: tuple[str, ...], *, default: Any = None) -> Any:
