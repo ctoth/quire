@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from enum import Enum
@@ -672,6 +673,59 @@ class ProjectionModel(Generic[ResultT]):
                 row[field.attachment_key] = tuple(grouped.get(parent_value, ()))
         return tuple(rows)
 
+    def attached_rows_select_sql(
+        self,
+        field: ProjectionAttachedRows,
+        parent_count: int,
+    ) -> str:
+        if field not in self.fields:
+            raise KeyError(field.attachment_key)
+        if field.fetch != "parent_keyed_select":
+            raise ValueError(f"Unsupported attached-row fetch mode: {field.fetch!r}")
+        if parent_count < 1:
+            raise ValueError("attached row select requires at least one parent key")
+        columns = (field.parent_fk,) + tuple(_column_name_for(child_field) for child_field in field.fields)
+        select_columns = ", ".join(quote_identifier(column) for column in columns)
+        placeholders = ", ".join("?" for _ in range(parent_count))
+        order_columns = (field.parent_fk,) + tuple(
+            order_key if isinstance(order_key, str) else _column_name_for(order_key)
+            for order_key in field.order_by
+        )
+        order_sql = ", ".join(quote_identifier(column) for column in order_columns)
+        return (
+            f"SELECT {select_columns} FROM {quote_identifier(field.table)} "
+            f"WHERE {quote_identifier(field.parent_fk)} IN ({placeholders}) "
+            f"ORDER BY {order_sql}"
+        )
+
+    def select_with_attached_rows(
+        self,
+        conn: sqlite3.Connection,
+        query_plan: ProjectionQueryPlan,
+        where_sql: str = "",
+        params: Sequence[object] = (),
+    ) -> tuple[ResultT, ...]:
+        conn.row_factory = sqlite3.Row
+        parent_rows = tuple(
+            _row_mapping(row)
+            for row in conn.execute(query_plan.select_sql(where_sql), tuple(params)).fetchall()
+        )
+        if not parent_rows:
+            return ()
+        child_rows_by_table: dict[str, tuple[Mapping[str, object], ...]] = {}
+        for field in self.fields:
+            if not isinstance(field, ProjectionAttachedRows):
+                continue
+            parent_column = _parent_column_for_path(self.fields, field.parent_path)
+            parent_values = tuple(row[parent_column] for row in parent_rows)
+            child_rows = conn.execute(
+                self.attached_rows_select_sql(field, len(parent_values)),
+                parent_values,
+            ).fetchall()
+            child_rows_by_table[field.table] = tuple(_row_mapping(row) for row in child_rows)
+        attached_rows = self.attach_child_rows(parent_rows, child_rows_by_table)
+        return tuple(self.from_row(row) for row in attached_rows)
+
     def projection_tables(self) -> tuple[ProjectionTable, ...]:
         columns = tuple(
             field.column_spec()
@@ -810,6 +864,12 @@ def _attached_order_values(field: ProjectionAttachedRows, row: Mapping[str, obje
             raise KeyError(column)
         values.append(row[column])
     return tuple(values)
+
+
+def _row_mapping(row: sqlite3.Row | Mapping[str, object]) -> Mapping[str, object]:
+    if isinstance(row, sqlite3.Row):
+        return {key: row[key] for key in row.keys()}
+    return row
 
 
 def _sql_literal(value: object) -> str:

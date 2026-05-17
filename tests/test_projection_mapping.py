@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from enum import Enum
 
@@ -267,6 +268,37 @@ def test_projection_model_attaches_child_rows_by_declared_parent_path():
             ),
         },
         {"id": "p2", "links": ({"parent_id": "p2", "concept_id": "c2", "role": "support"},)},
+    )
+
+
+def test_projection_model_selects_with_attached_child_rows_from_sqlite():
+    model = _parent_model()
+    parent_table, link_table = model.projection_tables()
+    conn = sqlite3.connect(":memory:")
+    for table in (parent_table, link_table):
+        for statement in table.ddl_statements():
+            conn.execute(statement)
+    parent_table.insert_rows(conn, ({"id": "p1"}, {"id": "p2"}))
+    link_table.insert_rows(
+        conn,
+        (
+            {"parent_id": "p2", "concept_id": "c2", "role": "support"},
+            {"parent_id": "p1", "concept_id": "c3", "role": "support"},
+            {"parent_id": "p1", "concept_id": "c1", "role": "target"},
+        ),
+    )
+    plan = ProjectionQueryPlan(
+        name="parent_rows",
+        base_table=parent_table,
+        base_alias="parent",
+        selections=(ProjectionSelectedColumn("parent", parent_table.column("id")),),
+    )
+
+    rows = model.select_with_attached_rows(conn, plan, 'ORDER BY "parent"."id"')
+
+    assert rows == (
+        Parent("p1", (Link("c1", "target", "p1"), Link("c3", "support", "p1"))),
+        Parent("p2", (Link("c2", "support", "p2"),)),
     )
 
 
