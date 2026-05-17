@@ -12,6 +12,7 @@ from quire.projection_mapping import (
     ProjectionBinding,
     ProjectionCodec,
     ProjectionComponent,
+    ProjectionMetadata,
     ProjectionModel,
     ProjectionRenderView,
     ReferencePath,
@@ -328,7 +329,7 @@ def test_projection_component_round_trips_multi_column_value():
     assert model.from_row({"id": "r2"}) == CitedRecord("r2", None)
 
 
-def test_unknown_keys_raise_when_no_attribute_bucket_declared():
+def test_unknown_keys_raise_without_declared_metadata():
     model = ProjectionModel(
         name="strict",
         table="strict",
@@ -340,32 +341,43 @@ def test_unknown_keys_raise_when_no_attribute_bucket_declared():
         model.from_row({"id": "r1", "extra": "nope"})
 
 
-def test_attribute_bucket_only_when_declared():
+def test_projection_metadata_declares_allowed_extra_columns():
     model = ProjectionModel(
-        name="bucket",
-        table="bucket",
+        name="metadata",
+        table="metadata",
         result_type=AttributeRecord,
-        fields=(ScalarPath(("id",), "id"),),
-        attribute_bucket=("attributes",),
+        fields=(
+            ScalarPath(("id",), "id"),
+            ProjectionMetadata(
+                path=("attributes",),
+                fields=(ScalarPath(("confidence",), "confidence"),),
+                result_type=dict,
+            ),
+        ),
     )
 
-    assert model.from_row({"id": "r1", "extra": 3}) == AttributeRecord("r1", {"extra": 3})
+    assert model.from_row({"id": "r1", "confidence": 0.75}) == AttributeRecord(
+        "r1",
+        {"confidence": 0.75},
+    )
+    assert model.to_row(AttributeRecord("r2", {"confidence": 0.5})) == {
+        "id": "r2",
+        "confidence": 0.5,
+    }
+    with pytest.raises(KeyError, match="extra"):
+        model.from_row({"id": "r1", "confidence": 0.75, "extra": 3})
 
 
 def test_ignored_columns_are_not_attributes():
     model = ProjectionModel(
         name="ignored",
         table="ignored",
-        result_type=AttributeRecord,
+        result_type=FlatRecord,
         fields=(ScalarPath(("id",), "id"),),
-        attribute_bucket=("attributes",),
         ignored_columns=("join_only",),
     )
 
-    assert model.from_row({"id": "r1", "join_only": "skip", "extra": 3}) == AttributeRecord(
-        "r1",
-        {"extra": 3},
-    )
+    assert model.from_row({"id": "r1", "join_only": "skip"}) == FlatRecord("r1")
     assert "join_only" in model.schema_hash_material()["ignored_columns"]
 
 

@@ -269,6 +269,44 @@ class ProjectionComponent:
 
 
 @dataclass(frozen=True)
+class ProjectionMetadata:
+    path: tuple[str, ...]
+    fields: tuple[ProjectionPath, ...]
+    result_type: type[Any] | None = None
+
+    def encode_values(self, source: object) -> Mapping[str, object]:
+        metadata_source = source if not self.path else _read_path(source, self.path, default={})
+        row: dict[str, object] = {}
+        for field in self.fields:
+            row[_column_name_for(field)] = field.encode_value(metadata_source)
+        return row
+
+    def decode_value(self, row: Mapping[str, object]) -> Any:
+        data: dict[str, Any] = {}
+        for field in self.fields:
+            column = _decode_column_for(field, row)
+            if column is not None:
+                _assign_path(data, field.path, field.decode_value(row[column]))
+            elif field.missing == "raise":
+                raise KeyError(_column_name_for(field))
+            else:
+                _assign_path(data, field.path, field.default)
+        if self.result_type is None or self.result_type is dict:
+            return data
+        return _construct(self.result_type, data)
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        return {
+            "kind": "ProjectionMetadata",
+            "path": self.path,
+            "result_type": None
+            if self.result_type is None
+            else f"{self.result_type.__module__}.{self.result_type.__qualname__}",
+            "fields": tuple(_stable_field_material(field) for field in self.fields),
+        }
+
+
+@dataclass(frozen=True)
 class ProjectionAttachedRows:
     path: tuple[str, ...]
     table: str
@@ -349,7 +387,7 @@ class ProjectionAttachedRows:
         }
 
 
-ProjectionSpec = ProjectionPath | ProjectionComponent | ProjectionAttachedRows | ProjectionRenderView
+ProjectionSpec = ProjectionPath | ProjectionComponent | ProjectionMetadata | ProjectionAttachedRows | ProjectionRenderView
 
 
 @dataclass(frozen=True)
@@ -358,7 +396,6 @@ class ProjectionModel(Generic[ResultT]):
     table: str
     result_type: type[ResultT]
     fields: tuple[ProjectionSpec, ...]
-    attribute_bucket: tuple[str, ...] | None = None
     ignored_columns: tuple[str, ...] = ()
     primary_key: tuple[str, ...] = ()
     indexes: tuple[ProjectionIndex, ...] = ()
@@ -371,6 +408,9 @@ class ProjectionModel(Generic[ResultT]):
             if isinstance(field, ProjectionAttachedRows | ProjectionRenderView):
                 continue
             if isinstance(field, ProjectionComponent):
+                row.update(field.encode_values(source))
+                continue
+            if isinstance(field, ProjectionMetadata):
                 row.update(field.encode_values(source))
                 continue
             row[_column_name_for(field)] = field.encode_value(source)
@@ -387,7 +427,7 @@ class ProjectionModel(Generic[ResultT]):
         known = {
             column
             for field in self.fields
-            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent)
+            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent | ProjectionMetadata)
             for column in _read_names_for(field)
         }
         known.update(
@@ -398,6 +438,13 @@ class ProjectionModel(Generic[ResultT]):
             for decoded_column in _read_names_for(column)
         )
         known.update(
+            decoded_column
+            for field in self.fields
+            if isinstance(field, ProjectionMetadata)
+            for metadata_field in field.fields
+            for decoded_column in _read_names_for(metadata_field)
+        )
+        known.update(
             key
             for field in self.fields
             if isinstance(field, ProjectionAttachedRows)
@@ -406,7 +453,7 @@ class ProjectionModel(Generic[ResultT]):
         known.update(field.output_key for field in self.fields if isinstance(field, ProjectionRenderView))
         ignored = set(self.ignored_columns)
         extras = {key: value for key, value in row.items() if key not in known and key not in ignored}
-        if extras and self.attribute_bucket is None:
+        if extras:
             raise KeyError(f"Unknown projection row key(s): {', '.join(sorted(extras))}")
 
         data: dict[str, Any] = {}
@@ -415,6 +462,14 @@ class ProjectionModel(Generic[ResultT]):
                 _assign_path(data, field.path, field.decode_rows(row.get(field.attachment_key)))
             elif isinstance(field, ProjectionComponent):
                 _assign_path(data, field.path, field.decode_value(row))
+            elif isinstance(field, ProjectionMetadata):
+                metadata_value = field.decode_value(row)
+                if field.path:
+                    _assign_path(data, field.path, metadata_value)
+                elif isinstance(metadata_value, Mapping):
+                    data.update(metadata_value)
+                else:
+                    raise TypeError("Top-level projection metadata must decode to a mapping")
             elif isinstance(field, ProjectionRenderView):
                 continue
             elif (column := _decode_column_for(field, row)) is not None:
@@ -423,8 +478,6 @@ class ProjectionModel(Generic[ResultT]):
                 raise KeyError(_column_name_for(field))
             else:
                 _assign_path(data, field.path, field.default)
-        if extras and self.attribute_bucket is not None:
-            _assign_path(data, self.attribute_bucket, extras)
         return _construct(self.result_type, data)
 
     def coerce(self, value: object) -> ResultT:
@@ -466,12 +519,17 @@ class ProjectionModel(Generic[ResultT]):
         columns = tuple(
             field.column_spec()
             for field in self.fields
-            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent)
+            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent | ProjectionMetadata)
         ) + tuple(
             column.column_spec()
             for field in self.fields
             if isinstance(field, ProjectionComponent)
             for column in field.bindings
+        ) + tuple(
+            metadata_field.column_spec()
+            for field in self.fields
+            if isinstance(field, ProjectionMetadata)
+            for metadata_field in field.fields
         )
         foreign_keys = tuple(
             field.foreign_key()
@@ -505,7 +563,6 @@ class ProjectionModel(Generic[ResultT]):
             "name": self.name,
             "table": self.table,
             "result_type": f"{self.result_type.__module__}.{self.result_type.__qualname__}",
-            "attribute_bucket": self.attribute_bucket,
             "ignored_columns": tuple(sorted(self.ignored_columns)),
             "primary_key": self.primary_key,
             "indexes": tuple(index.schema_hash_material() for index in self.indexes),
@@ -563,7 +620,7 @@ def _parent_column_for_path(fields: tuple[ProjectionSpec, ...], path: tuple[str,
             for binding in field.bindings:
                 if binding.path == path:
                     return _column_name_for(binding)
-        elif not isinstance(field, ProjectionAttachedRows | ProjectionRenderView) and field.path == path:
+        elif isinstance(field, ScalarPath | ProjectionBinding) and field.path == path:
             return _column_name_for(field)
     raise KeyError(".".join(path))
 
