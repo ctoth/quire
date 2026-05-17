@@ -6,7 +6,7 @@ from types import MappingProxyType
 
 import msgspec
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import assume, given, strategies as st
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.families import FamilyDefinition, FamilyRegistry
@@ -266,8 +266,7 @@ def test_family_reference_index_resolves_generated_unique_aliases(alias_map: dic
     ).filter(lambda value: value != "shared"),
 )
 def test_family_reference_index_rejects_generated_duplicate_aliases(first_id: str, second_id: str) -> None:
-    if first_id == second_id:
-        return
+    assume(first_id != second_id)
     records = (
         RichRecord(first_id, aliases=("shared",)),
         RichRecord(second_id, aliases=("shared",)),
