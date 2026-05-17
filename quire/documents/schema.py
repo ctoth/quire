@@ -6,6 +6,7 @@ from typing import TypeVar, overload
 
 import msgspec
 
+from quire.documents._paths import _source_label
 from quire.documents.loaded import LoadedDocument
 from quire.tree_path import TreePath, coerce_tree_path
 
@@ -34,13 +35,6 @@ def to_document_builtins(value: object) -> object:
     if isinstance(value, list):
         return [to_document_builtins(item) for item in value]
     return value
-
-
-def _source_label(path: TreePath | Path) -> str:
-    if isinstance(path, Path):
-        return str(path)
-    rendered = path.as_posix()
-    return rendered if rendered else path.cache_key()
 
 
 def decode_document_bytes(

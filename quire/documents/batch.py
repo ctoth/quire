@@ -7,6 +7,7 @@ from typing import Any, Generic, TypeVar
 
 import msgspec
 
+from quire.documents._paths import _source_label
 from quire.documents.codecs import document_to_payload
 from quire.documents.schema import DocumentSchemaError, convert_document_value
 from quire.tree_path import TreePath, coerce_tree_path
@@ -29,13 +30,6 @@ class LoadedBatchItem(Generic[TDocument]):
     artifact_path: TreePath | None
     store_root: TreePath | None
     document: TDocument
-
-
-def _source_label(path: TreePath | Path) -> str:
-    if isinstance(path, Path):
-        return str(path)
-    rendered = path.as_posix()
-    return rendered if rendered else path.cache_key()
 
 
 def _decode_batch_mapping(payload: bytes, *, source: str) -> Mapping[str, object]:

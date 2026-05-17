@@ -15,6 +15,8 @@ from quire.documents import (
     load_document,
     load_document_dir,
 )
+from quire.documents._paths import _source_label
+from quire.tree_path import FilesystemTreePath
 
 
 def test_quire_documents_is_public() -> None:
@@ -101,6 +103,18 @@ def test_default_document_codec_round_trips_struct_documents():
     assert DEFAULT_DOCUMENT_CODEC.convert({"name": "demo", "value": 3}, ExampleDocument, source="input") == document
     assert DEFAULT_DOCUMENT_CODEC.payload(document) == {"name": "demo", "value": 3}
     assert "name: demo" in DEFAULT_DOCUMENT_CODEC.render(document)
+
+
+def test_source_label_returns_str_for_pathlib_path(tmp_path):
+    path = tmp_path / "demo.yaml"
+    assert _source_label(path) == str(path)
+
+
+def test_source_label_uses_as_posix_for_tree_path(tmp_path):
+    tree_path = FilesystemTreePath.from_filesystem_path(tmp_path) / "demo.yaml"
+    rendered = tree_path.as_posix()
+    assert rendered
+    assert _source_label(tree_path) == rendered
 
 
 def test_document_codec_can_group_custom_document_operations():
