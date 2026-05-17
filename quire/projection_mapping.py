@@ -213,6 +213,7 @@ class RepeatedPath:
     parent_path: tuple[str, ...] = ("id",)
     item_parent_path: tuple[str, ...] | None = None
     item_type: type[Any] | None = None
+    decode_key: str | None = None
     fetch: str = "parent_keyed_select"
 
     def child_table(self, parent_table: str) -> ProjectionTable:
@@ -268,6 +269,7 @@ class RepeatedPath:
             "parent_fk": self.parent_fk,
             "parent_path": self.parent_path,
             "item_parent_path": self.item_parent_path,
+            "decode_key": self.decode_key,
             "fetch": self.fetch,
             "fields": tuple(_stable_field_material(field) for field in self.fields),
         }
@@ -318,7 +320,12 @@ class ProjectionModel(Generic[ResultT]):
             for column in field.fields
             for decoded_column in (column.column, *column.decode_columns)
         )
-        known.update(field.table for field in self.fields if isinstance(field, RepeatedPath))
+        known.update(
+            key
+            for field in self.fields
+            if isinstance(field, RepeatedPath)
+            for key in _repeated_row_keys(field)
+        )
         known.update(field.key for field in self.fields if isinstance(field, DerivedPath))
         ignored = set(self.ignored_columns)
         extras = {key: value for key, value in row.items() if key not in known and key not in ignored}
@@ -328,7 +335,7 @@ class ProjectionModel(Generic[ResultT]):
         data: dict[str, Any] = {}
         for field in self.fields:
             if isinstance(field, RepeatedPath):
-                _assign_path(data, field.path, field.decode_rows(row.get(field.table)))
+                _assign_path(data, field.path, field.decode_rows(row.get(field.decode_key or field.table)))
             elif isinstance(field, CompositePath):
                 _assign_path(data, field.path, field.decode_value(row))
             elif isinstance(field, DerivedPath):
@@ -424,6 +431,12 @@ def _decode_column_for(field: ScalarPath, row: Mapping[str, object]) -> str | No
         if column in row:
             return column
     return None
+
+
+def _repeated_row_keys(field: RepeatedPath) -> tuple[str, ...]:
+    if field.decode_key is None:
+        return (field.table,)
+    return (field.table, field.decode_key)
 
 
 def _read_path(source: object, path: tuple[str, ...], *, default: Any = None) -> Any:

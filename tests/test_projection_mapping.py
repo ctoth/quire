@@ -220,6 +220,39 @@ def test_repeated_path_decodes_children_into_typed_tuple():
     assert result == Parent("p1", (Link("c1", "target", "p1"), Link("c2", "support", "p1")))
 
 
+def test_repeated_path_decodes_declared_attached_row_key():
+    model = ProjectionModel(
+        name="parent",
+        table="parent",
+        result_type=Parent,
+        fields=(
+            ScalarPath(("id",), "id"),
+            RepeatedPath(
+                path=("links",),
+                table="parent_link",
+                decode_key="links",
+                parent_fk="parent_id",
+                item_parent_path=("parent_id",),
+                item_type=Link,
+                fields=(ScalarPath(("concept_id",), "concept_id"), ScalarPath(("role",), "role")),
+            ),
+        ),
+    )
+
+    result = model.from_row(
+        {
+            "id": "p1",
+            "links": ({"parent_id": "p1", "concept_id": "c1", "role": "target"},),
+        }
+    )
+
+    assert result == Parent("p1", (Link("c1", "target", "p1"),))
+    assert any(
+        field.get("decode_key") == "links"
+        for field in model.schema_hash_material()["fields"]
+    )
+
+
 def test_reference_path_emits_column_and_foreign_key():
     model = ProjectionModel(
         name="reference",
