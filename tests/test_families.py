@@ -764,10 +764,21 @@ def test_transaction_head_check_is_named_as_advisory() -> None:
     store = DocumentFamilyStore(owner=Owner(), backend=backend)
     bound = registry.bind(store.owner, store)
 
-    transaction = bound.transact(message="advisory naming", expected_head="0" * 40)
+    bound.claims.save("paper", DemoDocument("alpha"), message="seed")
+    head_before = backend.branch_sha("master")
+    assert head_before is not None
 
-    assert hasattr(transaction.transaction, "_advisory_head_check")
-    assert not hasattr(transaction.transaction, "_check_preemptive_head")
+    # Creating the transaction with a stale expected_head must NOT raise:
+    # the head check is advisory (lazy), not preemptive.
+    transaction = bound.transact(message="advisory commit", expected_head="0" * 40)
+
+    # The mismatch only surfaces when the commit is actually attempted.
+    with pytest.raises(HeadMismatchError):
+        with transaction as txn:
+            txn.claims.save("other", DemoDocument("beta"))
+
+    # And the branch head must not have advanced.
+    assert backend.branch_sha("master") == head_before
 
 
 def test_bound_registry_transaction_writes_multiple_families() -> None:
