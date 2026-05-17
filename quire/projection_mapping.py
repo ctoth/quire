@@ -204,26 +204,26 @@ class ReferencePath(ScalarPath):
 
 
 @dataclass(frozen=True)
-class DerivedPath:
-    path: tuple[str, ...]
-    key: str
+class ProjectionRenderView:
+    source_path: tuple[str, ...]
+    output_key: str
     codec: ProjectionCodec = SCALAR_CODEC
     default: Any = None
     missing: str = "none"
 
     def encode_value(self, source: object) -> Any:
-        value = _read_path(source, self.path, default=_MISSING)
+        value = _read_path(source, self.source_path, default=_MISSING)
         if value is _MISSING:
             if self.missing == "raise":
-                raise KeyError(".".join(self.path))
+                raise KeyError(".".join(self.source_path))
             value = self.default
         return self.codec.encode(value)
 
     def schema_hash_material(self) -> Mapping[str, Any]:
         return {
             "kind": type(self).__name__,
-            "path": self.path,
-            "key": self.key,
+            "source_path": self.source_path,
+            "output_key": self.output_key,
             "missing": self.missing,
             "codec": self.codec.schema_hash_material(),
         }
@@ -341,7 +341,7 @@ class RepeatedPath:
         }
 
 
-ProjectionSpec = ProjectionPath | ProjectionComponent | RepeatedPath | DerivedPath
+ProjectionSpec = ProjectionPath | ProjectionComponent | RepeatedPath | ProjectionRenderView
 
 
 @dataclass(frozen=True)
@@ -360,7 +360,7 @@ class ProjectionModel(Generic[ResultT]):
     def to_row(self, source: object) -> Mapping[str, object]:
         row: dict[str, object] = {}
         for field in self.fields:
-            if isinstance(field, RepeatedPath | DerivedPath):
+            if isinstance(field, RepeatedPath | ProjectionRenderView):
                 continue
             if isinstance(field, ProjectionComponent):
                 row.update(field.encode_values(source))
@@ -371,15 +371,15 @@ class ProjectionModel(Generic[ResultT]):
     def to_mapping(self, source: object) -> Mapping[str, object]:
         row = dict(self.to_row(source))
         for field in self.fields:
-            if isinstance(field, DerivedPath):
-                row[field.key] = field.encode_value(source)
+            if isinstance(field, ProjectionRenderView):
+                row[field.output_key] = field.encode_value(source)
         return row
 
     def from_row(self, row: Mapping[str, object]) -> ResultT:
         known = {
             column
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath | ProjectionComponent)
+            if not isinstance(field, RepeatedPath | ProjectionRenderView | ProjectionComponent)
             for column in _read_names_for(field)
         }
         known.update(
@@ -395,7 +395,7 @@ class ProjectionModel(Generic[ResultT]):
             if isinstance(field, RepeatedPath)
             for key in _repeated_row_keys(field)
         )
-        known.update(field.key for field in self.fields if isinstance(field, DerivedPath))
+        known.update(field.output_key for field in self.fields if isinstance(field, ProjectionRenderView))
         ignored = set(self.ignored_columns)
         extras = {key: value for key, value in row.items() if key not in known and key not in ignored}
         if extras and self.attribute_bucket is None:
@@ -407,7 +407,7 @@ class ProjectionModel(Generic[ResultT]):
                 _assign_path(data, field.path, field.decode_rows(row.get(field.decode_key or field.table)))
             elif isinstance(field, ProjectionComponent):
                 _assign_path(data, field.path, field.decode_value(row))
-            elif isinstance(field, DerivedPath):
+            elif isinstance(field, ProjectionRenderView):
                 continue
             elif (column := _decode_column_for(field, row)) is not None:
                 _assign_path(data, field.path, field.decode_value(row[column]))
@@ -438,7 +438,7 @@ class ProjectionModel(Generic[ResultT]):
         columns = tuple(
             field.column_spec()
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath | ProjectionComponent)
+            if not isinstance(field, RepeatedPath | ProjectionRenderView | ProjectionComponent)
         ) + tuple(
             column.column_spec()
             for field in self.fields

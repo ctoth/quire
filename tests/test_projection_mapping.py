@@ -6,13 +6,13 @@ from enum import Enum
 import pytest
 
 from quire.projection_mapping import (
-    DerivedPath,
     EnumPath,
     JsonPath,
     ProjectionBinding,
     ProjectionCodec,
     ProjectionComponent,
     ProjectionModel,
+    ProjectionRenderView,
     ReferencePath,
     RepeatedPath,
     ScalarPath,
@@ -344,7 +344,7 @@ def test_ignored_columns_are_not_attributes():
     assert "join_only" in model.schema_hash_material()["ignored_columns"]
 
 
-def test_derived_path_renders_non_column_key_without_decoding_it():
+def test_projection_render_view_renders_non_column_key_without_decoding_it():
     model = ProjectionModel(
         name="derived",
         table="derived",
@@ -352,7 +352,7 @@ def test_derived_path_renders_non_column_key_without_decoding_it():
         fields=(
             ScalarPath(("id",), "id"),
             ScalarPath(("title",), "title"),
-            DerivedPath(("title",), "label"),
+            ProjectionRenderView(source_path=("title",), output_key="label"),
         ),
     )
 
