@@ -725,6 +725,10 @@ def test_projection_binding_decodes_declared_read_name_without_scalar_aliases():
 
     assert model.to_row(FlatRecord("r1", "Intro")) == {"id": "r1", "title": "Intro"}
     assert model.from_row({"id": "r1", "label": "Intro"}) == FlatRecord("r1", "Intro")
+    assert model.from_row({"id": "r1", "title": "Canonical", "label": "Alias"}) == FlatRecord(
+        "r1",
+        "Canonical",
+    )
     binding_material = next(
         field
         for field in model.schema_hash_material()["fields"]

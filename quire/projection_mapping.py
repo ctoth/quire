@@ -753,7 +753,7 @@ def _read_names_for(field: ProjectionPath) -> tuple[str, ...]:
     if isinstance(field, ProjectionBinding):
         if field.read_name is None or field.read_name == field.column_name:
             return (field.column_name,)
-        return (field.read_name, field.column_name)
+        return (field.column_name, field.read_name)
     return (field.column,)
 
 
