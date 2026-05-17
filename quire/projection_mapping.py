@@ -53,8 +53,11 @@ class ScalarPath:
     codec: ProjectionCodec = SCALAR_CODEC
     nullable: bool = True
     primary_key: bool = False
+    insertable: bool = True
     indexed: bool = False
     default: Any = None
+    default_sql: str | None = None
+    check_sql: str | None = None
     missing: str = "none"
     decode_columns: tuple[str, ...] = ()
 
@@ -64,6 +67,9 @@ class ScalarPath:
             self.codec.sql_type,
             nullable=self.nullable,
             primary_key=self.primary_key,
+            insertable=self.insertable,
+            default_sql=self.default_sql,
+            check_sql=self.check_sql,
             encoder=self.codec.encode,
             decoder=self.codec.decode,
         )
@@ -86,8 +92,11 @@ class ScalarPath:
             "column": self.column,
             "nullable": self.nullable,
             "primary_key": self.primary_key,
+            "insertable": self.insertable,
             "indexed": self.indexed,
             "missing": self.missing,
+            "default_sql": self.default_sql,
+            "check_sql": self.check_sql,
             "decode_columns": self.decode_columns,
             "codec": self.codec.schema_hash_material(),
         }
@@ -287,6 +296,9 @@ class ProjectionModel(Generic[ResultT]):
     attribute_bucket: tuple[str, ...] | None = None
     ignored_columns: tuple[str, ...] = ()
     primary_key: tuple[str, ...] = ()
+    indexes: tuple[ProjectionIndex, ...] = ()
+    checks: tuple[str, ...] = ()
+    if_not_exists: bool = False
 
     def to_row(self, source: object) -> Mapping[str, object]:
         row: dict[str, object] = {}
@@ -351,14 +363,10 @@ class ProjectionModel(Generic[ResultT]):
         return _construct(self.result_type, data)
 
     def coerce(self, value: object) -> ResultT:
-        if self.result_type is not None and isinstance(value, self.result_type):
+        if isinstance(value, self.result_type):
             return value
         if not isinstance(value, Mapping):
-            expected = (
-                "mapping"
-                if self.result_type is None
-                else f"{self.result_type.__name__} or mapping"
-            )
+            expected = f"{self.result_type.__name__} or mapping"
             raise TypeError(f"{self.name} projection expects {expected}")
         return self.from_row(value)
 
@@ -385,7 +393,7 @@ class ProjectionModel(Generic[ResultT]):
             for field in self.fields
             if isinstance(field, ReferencePath)
         )
-        indexes = tuple(
+        indexes = self.indexes + tuple(
             ProjectionIndex(f"idx_{self.table}_{field.column}", (field.column,))
             for field in self.fields
             if not isinstance(field, RepeatedPath | DerivedPath | CompositePath) and field.indexed
@@ -397,6 +405,8 @@ class ProjectionModel(Generic[ResultT]):
                 primary_key=self.primary_key,
                 foreign_keys=foreign_keys,
                 indexes=indexes,
+                checks=self.checks,
+                if_not_exists=self.if_not_exists,
                 row_factory=self.from_row,
             )
         ]
@@ -413,6 +423,9 @@ class ProjectionModel(Generic[ResultT]):
             "attribute_bucket": self.attribute_bucket,
             "ignored_columns": tuple(sorted(self.ignored_columns)),
             "primary_key": self.primary_key,
+            "indexes": tuple(index.schema_hash_material() for index in self.indexes),
+            "checks": self.checks,
+            "if_not_exists": self.if_not_exists,
             "fields": tuple(
                 sorted(
                     (_stable_field_material(field) for field in self.fields),
