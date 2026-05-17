@@ -8,6 +8,7 @@ from typing import Any, Generic, TypeVar, get_args, get_origin, get_type_hints
 
 from quire.projections import (
     ProjectionColumn,
+    ProjectionField,
     ProjectionForeignKey,
     ProjectionIndex,
     ProjectionRow,
@@ -44,6 +45,59 @@ class ProjectionCodec:
 
 SCALAR_CODEC = ProjectionCodec()
 JSON_CODEC = ProjectionCodec("json", "TEXT", json_encoder, json_decoder)
+
+
+@dataclass(frozen=True)
+class ProjectionBinding:
+    path: tuple[str, ...]
+    field: ProjectionField | None = None
+    column: ProjectionColumn | None = None
+    missing: str = "none"
+    default: Any = None
+
+    def __post_init__(self) -> None:
+        owner_count = sum(owner is not None for owner in (self.field, self.column))
+        if owner_count != 1:
+            raise ValueError("ProjectionBinding must reference exactly one physical owner")
+
+    @property
+    def projection_column(self) -> ProjectionColumn:
+        if self.column is not None:
+            return self.column
+        if self.field is None:
+            raise ValueError("ProjectionBinding has no physical owner")
+        return self.field.column()
+
+    @property
+    def column_name(self) -> str:
+        return self.projection_column.name
+
+    def column_spec(self) -> ProjectionColumn:
+        return self.projection_column
+
+    def encode_value(self, source: object) -> Any:
+        value = _read_path(source, self.path, default=_MISSING)
+        if value is _MISSING:
+            if self.missing == "raise":
+                raise KeyError(".".join(self.path))
+            value = self.default
+        return self.projection_column.encode(value)
+
+    def decode_value(self, value: Any) -> Any:
+        return self.projection_column.decode(value)
+
+    def schema_hash_material(self) -> Mapping[str, Any]:
+        owner: dict[str, Any]
+        if self.field is not None:
+            owner = {"kind": "ProjectionField", "name": self.field.name}
+        else:
+            owner = {"kind": "ProjectionColumn", "name": self.projection_column.name}
+        return {
+            "kind": type(self).__name__,
+            "path": self.path,
+            "owner": owner,
+            "missing": self.missing,
+        }
 
 
 @dataclass(frozen=True)

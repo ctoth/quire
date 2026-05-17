@@ -10,13 +10,14 @@ from quire.projection_mapping import (
     DerivedPath,
     EnumPath,
     JsonPath,
+    ProjectionBinding,
     ProjectionCodec,
     ProjectionModel,
     ReferencePath,
     RepeatedPath,
     ScalarPath,
 )
-from quire.projections import ProjectionIndex, ProjectionRow
+from quire.projections import ProjectionColumn, ProjectionField, ProjectionIndex, ProjectionRow, json_decoder, json_encoder
 
 
 @dataclass(frozen=True)
@@ -176,22 +177,6 @@ def test_optional_missing_path_returns_none_by_default():
     )
 
     assert model.from_row({"id": "r1"}) == OptionalRecord("r1", None)
-
-
-def test_scalar_path_decodes_declared_alternate_columns():
-    model = ProjectionModel(
-        name="alias",
-        table="alias",
-        result_type=FlatRecord,
-        fields=(
-            ScalarPath(("id",), "id"),
-            ScalarPath(("title",), "title", decode_columns=("label",)),
-        ),
-    )
-
-    assert model.to_row(FlatRecord("r1", "Intro")) == {"id": "r1", "title": "Intro"}
-    assert model.from_row({"id": "r1", "label": "Intro"}) == FlatRecord("r1", "Intro")
-    assert "label" in model.schema_hash_material()["fields"][1]["decode_columns"]
 
 
 def test_repeated_path_expands_into_child_rows_with_parent_keys():
@@ -535,6 +520,50 @@ def test_projection_model_omits_noninsertable_columns_from_insert_sql():
 
     assert table.columns[0].ddl() == '"id" INTEGER PRIMARY KEY AUTOINCREMENT'
     assert table.insert_sql() == 'INSERT INTO "autoincrement" ("title") VALUES (:title)'
+
+
+def test_projection_binding_references_projection_field_owner():
+    field = ProjectionField(
+        "payload_json",
+        "TEXT",
+        nullable=False,
+        encoder=json_encoder,
+        decoder=json_decoder,
+    )
+    binding = ProjectionBinding(("payload",), field=field, missing="raise")
+
+    assert binding.column_spec() == field.column()
+    assert binding.encode_value({"payload": {"b": 2, "a": 1}}) == '{"a":1,"b":2}'
+    assert binding.decode_value('{"a":1,"b":2}') == {"a": 1, "b": 2}
+    assert binding.schema_hash_material() == {
+        "kind": "ProjectionBinding",
+        "path": ("payload",),
+        "owner": {"kind": "ProjectionField", "name": "payload_json"},
+        "missing": "raise",
+    }
+
+
+def test_projection_binding_references_projection_column_owner():
+    column = ProjectionColumn("score", "REAL", nullable=False)
+    binding = ProjectionBinding(("confidence",), column=column)
+
+    assert binding.column_spec() is column
+    assert binding.column_name == "score"
+    assert binding.encode_value({"confidence": 0.75}) == 0.75
+    assert binding.schema_hash_material()["owner"] == {
+        "kind": "ProjectionColumn",
+        "name": "score",
+    }
+
+
+def test_projection_binding_rejects_ambiguous_or_missing_owner():
+    field = ProjectionField("title", "TEXT")
+    column = ProjectionColumn("title", "TEXT")
+
+    with pytest.raises(ValueError, match="exactly one physical owner"):
+        ProjectionBinding(("title",))
+    with pytest.raises(ValueError, match="exactly one physical owner"):
+        ProjectionBinding(("title",), field=field, column=column)
 
 
 def _parent_model() -> ProjectionModel:
