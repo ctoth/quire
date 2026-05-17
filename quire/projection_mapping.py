@@ -51,19 +51,20 @@ JSON_CODEC = ProjectionCodec("json", "TEXT", json_encoder, json_decoder)
 class ProjectionBinding:
     path: tuple[str, ...]
     field: ProjectionField | None = None
-    column: ProjectionColumn | None = None
+    projection_column_owner: ProjectionColumn | None = None
+    read_name: str | None = None
     missing: str = "none"
     default: Any = None
 
     def __post_init__(self) -> None:
-        owner_count = sum(owner is not None for owner in (self.field, self.column))
+        owner_count = sum(owner is not None for owner in (self.field, self.projection_column_owner))
         if owner_count != 1:
             raise ValueError("ProjectionBinding must reference exactly one physical owner")
 
     @property
     def projection_column(self) -> ProjectionColumn:
-        if self.column is not None:
-            return self.column
+        if self.projection_column_owner is not None:
+            return self.projection_column_owner
         if self.field is None:
             raise ValueError("ProjectionBinding has no physical owner")
         return self.field.column()
@@ -96,6 +97,7 @@ class ProjectionBinding:
             "kind": type(self).__name__,
             "path": self.path,
             "owner": owner,
+            "read_name": self.read_name,
             "missing": self.missing,
         }
 
@@ -113,7 +115,6 @@ class ScalarPath:
     default_sql: str | None = None
     check_sql: str | None = None
     missing: str = "none"
-    decode_columns: tuple[str, ...] = ()
 
     def column_spec(self) -> ProjectionColumn:
         return ProjectionColumn(
@@ -151,7 +152,6 @@ class ScalarPath:
             "missing": self.missing,
             "default_sql": self.default_sql,
             "check_sql": self.check_sql,
-            "decode_columns": self.decode_columns,
             "codec": self.codec.schema_hash_material(),
         }
 
@@ -229,7 +229,7 @@ class DerivedPath:
         }
 
 
-ProjectionPath = ScalarPath | JsonPath | EnumPath | ReferencePath
+ProjectionPath = ScalarPath | JsonPath | EnumPath | ReferencePath | ProjectionBinding
 
 
 @dataclass(frozen=True)
@@ -244,7 +244,8 @@ class CompositePath:
         raw_values = self.encoder(value)
         row: dict[str, object] = {}
         for field in self.fields:
-            row[field.column] = field.codec.encode(raw_values.get(field.column))
+            column = _column_name_for(field)
+            row[column] = _encode_projection_value(field, raw_values.get(column))
         return row
 
     def decode_value(self, row: Mapping[str, object]) -> Any:
@@ -252,11 +253,11 @@ class CompositePath:
         for field in self.fields:
             column = _decode_column_for(field, row)
             if column is not None:
-                values[field.column] = field.decode_value(row[column])
+                values[_column_name_for(field)] = field.decode_value(row[column])
             elif field.missing == "raise":
-                raise KeyError(field.column)
+                raise KeyError(_column_name_for(field))
             else:
-                values[field.column] = field.default
+                values[_column_name_for(field)] = field.default
         return self.decoder(values)
 
     def schema_hash_material(self) -> Mapping[str, Any]:
@@ -300,7 +301,7 @@ class RepeatedPath:
         for item in values:
             row_values = {self.parent_fk: parent_value}
             for field in self.fields:
-                row_values[field.column] = field.encode_value(item)
+                row_values[_column_name_for(field)] = field.encode_value(item)
             rows.append(ProjectionRow(self.table, row_values))
         return tuple(rows)
 
@@ -320,7 +321,9 @@ class RepeatedPath:
                     raise KeyError(self.parent_fk)
                 _assign_path(item_data, self.item_parent_path, row_map[self.parent_fk])
             for field in self.fields:
-                _assign_path(item_data, field.path, field.decode_value(row_map.get(field.column)))
+                column = _decode_column_for(field, row_map)
+                raw_value = row_map.get(column) if column is not None else None
+                _assign_path(item_data, field.path, field.decode_value(raw_value))
             decoded.append(_construct(self.item_type, item_data) if self.item_type is not None else item_data)
         return tuple(decoded)
 
@@ -362,7 +365,7 @@ class ProjectionModel(Generic[ResultT]):
             if isinstance(field, CompositePath):
                 row.update(field.encode_values(source))
                 continue
-            row[field.column] = field.encode_value(source)
+            row[_column_name_for(field)] = field.encode_value(source)
         return row
 
     def to_mapping(self, source: object) -> Mapping[str, object]:
@@ -377,14 +380,14 @@ class ProjectionModel(Generic[ResultT]):
             column
             for field in self.fields
             if not isinstance(field, RepeatedPath | DerivedPath | CompositePath)
-            for column in (field.column, *field.decode_columns)
+            for column in _read_names_for(field)
         }
         known.update(
             decoded_column
             for field in self.fields
             if isinstance(field, CompositePath)
             for column in field.fields
-            for decoded_column in (column.column, *column.decode_columns)
+            for decoded_column in _read_names_for(column)
         )
         known.update(
             key
@@ -409,7 +412,7 @@ class ProjectionModel(Generic[ResultT]):
             elif (column := _decode_column_for(field, row)) is not None:
                 _assign_path(data, field.path, field.decode_value(row[column]))
             elif field.missing == "raise":
-                raise KeyError(field.column)
+                raise KeyError(_column_name_for(field))
             else:
                 _assign_path(data, field.path, field.default)
         if extras and self.attribute_bucket is not None:
@@ -450,7 +453,7 @@ class ProjectionModel(Generic[ResultT]):
         indexes = self.indexes + tuple(
             ProjectionIndex(f"idx_{self.table}_{field.column}", (field.column,))
             for field in self.fields
-            if not isinstance(field, RepeatedPath | DerivedPath | CompositePath) and field.indexed
+            if isinstance(field, ScalarPath) and field.indexed
         )
         tables = [
             ProjectionTable(
@@ -493,8 +496,28 @@ def _stable_field_material(field: ProjectionSpec) -> Mapping[str, Any]:
     return dict(field.schema_hash_material())
 
 
-def _decode_column_for(field: ScalarPath, row: Mapping[str, object]) -> str | None:
-    for column in (field.column, *field.decode_columns):
+def _column_name_for(field: ProjectionPath) -> str:
+    if isinstance(field, ProjectionBinding):
+        return field.column_name
+    return field.column
+
+
+def _encode_projection_value(field: ProjectionPath, value: Any) -> Any:
+    if isinstance(field, ProjectionBinding):
+        return field.projection_column.encode(value)
+    return field.codec.encode(value)
+
+
+def _read_names_for(field: ProjectionPath) -> tuple[str, ...]:
+    if isinstance(field, ProjectionBinding):
+        if field.read_name is None or field.read_name == field.column_name:
+            return (field.column_name,)
+        return (field.read_name, field.column_name)
+    return (field.column,)
+
+
+def _decode_column_for(field: ProjectionPath, row: Mapping[str, object]) -> str | None:
+    for column in _read_names_for(field):
         if column in row:
             return column
     return None

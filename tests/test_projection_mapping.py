@@ -539,13 +539,14 @@ def test_projection_binding_references_projection_field_owner():
         "kind": "ProjectionBinding",
         "path": ("payload",),
         "owner": {"kind": "ProjectionField", "name": "payload_json"},
+        "read_name": None,
         "missing": "raise",
     }
 
 
 def test_projection_binding_references_projection_column_owner():
     column = ProjectionColumn("score", "REAL", nullable=False)
-    binding = ProjectionBinding(("confidence",), column=column)
+    binding = ProjectionBinding(("confidence",), projection_column_owner=column)
 
     assert binding.column_spec() is column
     assert binding.column_name == "score"
@@ -563,7 +564,35 @@ def test_projection_binding_rejects_ambiguous_or_missing_owner():
     with pytest.raises(ValueError, match="exactly one physical owner"):
         ProjectionBinding(("title",))
     with pytest.raises(ValueError, match="exactly one physical owner"):
-        ProjectionBinding(("title",), field=field, column=column)
+        ProjectionBinding(("title",), field=field, projection_column_owner=column)
+
+
+def test_projection_binding_decodes_declared_read_name_without_scalar_aliases():
+    title = ProjectionField("title", "TEXT")
+    model = ProjectionModel(
+        name="alias",
+        table="alias",
+        result_type=FlatRecord,
+        fields=(
+            ScalarPath(("id",), "id"),
+            ProjectionBinding(("title",), field=title, read_name="label"),
+        ),
+    )
+
+    assert model.to_row(FlatRecord("r1", "Intro")) == {"id": "r1", "title": "Intro"}
+    assert model.from_row({"id": "r1", "label": "Intro"}) == FlatRecord("r1", "Intro")
+    binding_material = next(
+        field
+        for field in model.schema_hash_material()["fields"]
+        if field["kind"] == "ProjectionBinding"
+    )
+    assert binding_material == {
+        "kind": "ProjectionBinding",
+        "path": ("title",),
+        "owner": {"kind": "ProjectionField", "name": "title"},
+        "read_name": "label",
+        "missing": "none",
+    }
 
 
 def _parent_model() -> ProjectionModel:
