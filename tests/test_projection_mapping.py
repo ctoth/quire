@@ -391,16 +391,16 @@ def test_query_plan_declares_joined_columns_without_ignored_row_keys():
         base_table=core,
         base_alias="core",
         selections=(
-            ProjectionSelectedColumn("core", core.columns[0]),
-            ProjectionSelectedColumn("source", source.columns[1], read_name="joined_source_id"),
+            ProjectionSelectedColumn("core", core.column("id")),
+            ProjectionSelectedColumn("source", source.column("source_id"), read_name="joined_source_id"),
         ),
         joins=(
             ProjectionJoin(
                 table=source,
                 alias="source",
                 left_alias="core",
-                left_column=core.columns[1],
-                right_column=source.columns[0],
+                left_column=core.column("source_slug"),
+                right_column=source.column("slug"),
             ),
         ),
     )

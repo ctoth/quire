@@ -329,6 +329,12 @@ class ProjectionTable:
     def column_names(self) -> tuple[str, ...]:
         return tuple(column.name for column in self.columns)
 
+    def column(self, name: str) -> ProjectionColumn:
+        for column in self.columns:
+            if column.name == name:
+                return column
+        raise KeyError(name)
+
     @property
     def insert_columns(self) -> tuple[ProjectionColumn, ...]:
         return tuple(column for column in self.columns if column.insertable)
