@@ -10,6 +10,14 @@ from quire.documents.schema import (
     load_document_dir,
     to_document_builtins,
 )
+from quire.documents.batch import (
+    DocumentBatchSpec,
+    LoadedBatchItem,
+    decode_document_batch_bytes,
+    load_document_batch,
+    load_document_batch_dir,
+    render_document_batch,
+)
 from quire.documents.codecs import (
     DEFAULT_DOCUMENT_CODEC,
     DocumentCodec,
@@ -35,16 +43,19 @@ from quire.documents.codecs import (
 from quire.documents.loaded import LoadedDocument
 
 __all__ = [
+    "DocumentBatchSpec",
     "DocumentSchemaError",
     "DocumentStruct",
     "DEFAULT_DOCUMENT_CODEC",
     "DocumentCodec",
+    "LoadedBatchItem",
     "LoadedDocument",
     "coerce_json_mapping",
     "coerce_text_document",
     "convert_document",
     "convert_document_value",
     "decode_document",
+    "decode_document_batch_bytes",
     "decode_document_bytes",
     "decode_document_path",
     "decode_json_mapping",
@@ -58,9 +69,12 @@ __all__ = [
     "encode_yaml_value",
     "identity_json_mapping",
     "identity_text_document",
+    "load_document_batch",
+    "load_document_batch_dir",
     "load_document",
     "load_document_dir",
     "render_json_mapping",
+    "render_document_batch",
     "render_document",
     "render_yaml_value",
     "to_document_builtins",
