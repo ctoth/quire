@@ -96,13 +96,13 @@ from quire.projections import (
 from quire.projection_mapping import (
     EnumPath,
     JsonPath,
+    ProjectionAttachedRows,
     ProjectionBinding,
     ProjectionCodec,
     ProjectionComponent,
     ProjectionModel,
     ProjectionRenderView,
     ReferencePath,
-    RepeatedPath,
     ScalarPath,
 )
 from quire.references import (
@@ -199,6 +199,7 @@ __all__ = [
     "NotesRef",
     "PRIMARY_LOGICAL_ID_FIELD",
     "PROVENANCE_JSON_FIELD",
+    "ProjectionAttachedRows",
     "ProjectionBuildStep",
     "ProjectionBinding",
     "ProjectionCatalogColumn",
@@ -219,7 +220,6 @@ __all__ = [
     "ProjectionSchemaError",
     "ProjectionTable",
     "ReferencePath",
-    "RepeatedPath",
     "RefName",
     "ReferenceKey",
     "ReferenceIndex",

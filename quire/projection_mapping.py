@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from enum import Enum
 from typing import Any, Generic, TypeVar, get_args, get_origin, get_type_hints
@@ -269,7 +269,7 @@ class ProjectionComponent:
 
 
 @dataclass(frozen=True)
-class RepeatedPath:
+class ProjectionAttachedRows:
     path: tuple[str, ...]
     table: str
     fields: tuple[ProjectionPath, ...]
@@ -277,8 +277,15 @@ class RepeatedPath:
     parent_path: tuple[str, ...] = ("id",)
     item_parent_path: tuple[str, ...] | None = None
     item_type: type[Any] | None = None
-    decode_key: str | None = None
     fetch: str = "parent_keyed_select"
+
+    def __post_init__(self) -> None:
+        if len(self.path) != 1:
+            raise ValueError("Attached projection rows require a top-level attachment path")
+
+    @property
+    def attachment_key(self) -> str:
+        return self.path[0]
 
     def child_table(self, parent_table: str) -> ProjectionTable:
         columns = (ProjectionColumn(self.parent_fk, "TEXT", nullable=False),) + tuple(
@@ -309,7 +316,7 @@ class RepeatedPath:
         if raw_rows is None:
             return ()
         if not isinstance(raw_rows, Sequence) or isinstance(raw_rows, str):
-            raise TypeError(f"Repeated path {'.'.join(self.path)} expects a row sequence")
+            raise TypeError(f"Attached rows {'.'.join(self.path)} expects a row sequence")
         decoded: list[Any] = []
         for raw_row in raw_rows:
             row_map = raw_row.values if isinstance(raw_row, ProjectionRow) else raw_row
@@ -329,19 +336,18 @@ class RepeatedPath:
 
     def schema_hash_material(self) -> Mapping[str, Any]:
         return {
-            "kind": "RepeatedPath",
+            "kind": "ProjectionAttachedRows",
             "path": self.path,
             "table": self.table,
             "parent_fk": self.parent_fk,
             "parent_path": self.parent_path,
             "item_parent_path": self.item_parent_path,
-            "decode_key": self.decode_key,
             "fetch": self.fetch,
             "fields": tuple(_stable_field_material(field) for field in self.fields),
         }
 
 
-ProjectionSpec = ProjectionPath | ProjectionComponent | RepeatedPath | ProjectionRenderView
+ProjectionSpec = ProjectionPath | ProjectionComponent | ProjectionAttachedRows | ProjectionRenderView
 
 
 @dataclass(frozen=True)
@@ -360,7 +366,7 @@ class ProjectionModel(Generic[ResultT]):
     def to_row(self, source: object) -> Mapping[str, object]:
         row: dict[str, object] = {}
         for field in self.fields:
-            if isinstance(field, RepeatedPath | ProjectionRenderView):
+            if isinstance(field, ProjectionAttachedRows | ProjectionRenderView):
                 continue
             if isinstance(field, ProjectionComponent):
                 row.update(field.encode_values(source))
@@ -379,7 +385,7 @@ class ProjectionModel(Generic[ResultT]):
         known = {
             column
             for field in self.fields
-            if not isinstance(field, RepeatedPath | ProjectionRenderView | ProjectionComponent)
+            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent)
             for column in _read_names_for(field)
         }
         known.update(
@@ -392,8 +398,8 @@ class ProjectionModel(Generic[ResultT]):
         known.update(
             key
             for field in self.fields
-            if isinstance(field, RepeatedPath)
-            for key in _repeated_row_keys(field)
+            if isinstance(field, ProjectionAttachedRows)
+            for key in (field.attachment_key,)
         )
         known.update(field.output_key for field in self.fields if isinstance(field, ProjectionRenderView))
         ignored = set(self.ignored_columns)
@@ -403,8 +409,8 @@ class ProjectionModel(Generic[ResultT]):
 
         data: dict[str, Any] = {}
         for field in self.fields:
-            if isinstance(field, RepeatedPath):
-                _assign_path(data, field.path, field.decode_rows(row.get(field.decode_key or field.table)))
+            if isinstance(field, ProjectionAttachedRows):
+                _assign_path(data, field.path, field.decode_rows(row.get(field.attachment_key)))
             elif isinstance(field, ProjectionComponent):
                 _assign_path(data, field.path, field.decode_value(row))
             elif isinstance(field, ProjectionRenderView):
@@ -430,15 +436,35 @@ class ProjectionModel(Generic[ResultT]):
     def child_rows(self, source: object) -> tuple[ProjectionRow, ...]:
         rows: list[ProjectionRow] = []
         for field in self.fields:
-            if isinstance(field, RepeatedPath):
+            if isinstance(field, ProjectionAttachedRows):
                 rows.extend(field.encode_rows(source))
+        return tuple(rows)
+
+    def attach_child_rows(
+        self,
+        parent_rows: Sequence[Mapping[str, object]],
+        child_rows_by_table: Mapping[str, Sequence[Mapping[str, object] | ProjectionRow]],
+    ) -> tuple[Mapping[str, object], ...]:
+        rows = [dict(parent_row) for parent_row in parent_rows]
+        for field in self.fields:
+            if not isinstance(field, ProjectionAttachedRows):
+                continue
+            parent_column = _parent_column_for_path(self.fields, field.parent_path)
+            grouped = _group_attached_rows(field, child_rows_by_table.get(field.table, ()))
+            for row in rows:
+                if parent_column not in row:
+                    raise KeyError(parent_column)
+                parent_value = row[parent_column]
+                if not isinstance(parent_value, Hashable):
+                    raise TypeError(f"Attached row parent key {parent_column} must be hashable")
+                row[field.attachment_key] = tuple(grouped.get(parent_value, ()))
         return tuple(rows)
 
     def projection_tables(self) -> tuple[ProjectionTable, ...]:
         columns = tuple(
             field.column_spec()
             for field in self.fields
-            if not isinstance(field, RepeatedPath | ProjectionRenderView | ProjectionComponent)
+            if not isinstance(field, ProjectionAttachedRows | ProjectionRenderView | ProjectionComponent)
         ) + tuple(
             column.column_spec()
             for field in self.fields
@@ -468,7 +494,7 @@ class ProjectionModel(Generic[ResultT]):
             )
         ]
         for field in self.fields:
-            if isinstance(field, RepeatedPath):
+            if isinstance(field, ProjectionAttachedRows):
                 tables.append(field.child_table(self.table))
         return tuple(tables)
 
@@ -523,10 +549,33 @@ def _decode_column_for(field: ProjectionPath, row: Mapping[str, object]) -> str 
     return None
 
 
-def _repeated_row_keys(field: RepeatedPath) -> tuple[str, ...]:
-    if field.decode_key is None:
-        return (field.table,)
-    return (field.table, field.decode_key)
+def _parent_column_for_path(fields: tuple[ProjectionSpec, ...], path: tuple[str, ...]) -> str:
+    for field in fields:
+        if isinstance(field, ProjectionComponent):
+            for binding in field.bindings:
+                if binding.path == path:
+                    return _column_name_for(binding)
+        elif not isinstance(field, ProjectionAttachedRows | ProjectionRenderView) and field.path == path:
+            return _column_name_for(field)
+    raise KeyError(".".join(path))
+
+
+def _group_attached_rows(
+    field: ProjectionAttachedRows,
+    raw_rows: Sequence[Mapping[str, object] | ProjectionRow],
+) -> dict[Hashable, list[Mapping[str, object]]]:
+    grouped: dict[Hashable, list[Mapping[str, object]]] = {}
+    for raw_row in raw_rows:
+        row_map = raw_row.values if isinstance(raw_row, ProjectionRow) else raw_row
+        if not isinstance(row_map, Mapping):
+            raise TypeError("Attached child row must be a mapping or ProjectionRow")
+        if field.parent_fk not in row_map:
+            raise KeyError(field.parent_fk)
+        parent_value = row_map[field.parent_fk]
+        if not isinstance(parent_value, Hashable):
+            raise TypeError(f"Attached row child key {field.parent_fk} must be hashable")
+        grouped.setdefault(parent_value, []).append(row_map)
+    return grouped
 
 
 def _read_path(source: object, path: tuple[str, ...], *, default: Any = None) -> Any:

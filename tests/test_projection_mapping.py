@@ -8,13 +8,13 @@ import pytest
 from quire.projection_mapping import (
     EnumPath,
     JsonPath,
+    ProjectionAttachedRows,
     ProjectionBinding,
     ProjectionCodec,
     ProjectionComponent,
     ProjectionModel,
     ProjectionRenderView,
     ReferencePath,
-    RepeatedPath,
     ScalarPath,
 )
 from quire.projections import ProjectionColumn, ProjectionField, ProjectionIndex, ProjectionRow, json_decoder, json_encoder
@@ -190,13 +190,13 @@ def test_repeated_path_expands_into_child_rows_with_parent_keys():
     )
 
 
-def test_repeated_path_decodes_children_into_typed_tuple():
+def test_attached_rows_decodes_children_into_typed_tuple():
     model = _parent_model()
 
     result = model.from_row(
         {
             "id": "p1",
-            "parent_link": (
+            "links": (
                 {"parent_id": "p1", "concept_id": "c1", "role": "target"},
                 {"parent_id": "p1", "concept_id": "c2", "role": "support"},
             ),
@@ -206,17 +206,16 @@ def test_repeated_path_decodes_children_into_typed_tuple():
     assert result == Parent("p1", (Link("c1", "target", "p1"), Link("c2", "support", "p1")))
 
 
-def test_repeated_path_decodes_declared_attached_row_key():
+def test_attached_rows_schema_material_declares_attachment_boundary():
     model = ProjectionModel(
         name="parent",
         table="parent",
         result_type=Parent,
         fields=(
             ScalarPath(("id",), "id"),
-            RepeatedPath(
+            ProjectionAttachedRows(
                 path=("links",),
                 table="parent_link",
-                decode_key="links",
                 parent_fk="parent_id",
                 item_parent_path=("parent_id",),
                 item_type=Link,
@@ -234,8 +233,27 @@ def test_repeated_path_decodes_declared_attached_row_key():
 
     assert result == Parent("p1", (Link("c1", "target", "p1"),))
     assert any(
-        field.get("decode_key") == "links"
+        field.get("kind") == "ProjectionAttachedRows" and field.get("path") == ("links",)
         for field in model.schema_hash_material()["fields"]
+    )
+
+
+def test_projection_model_attaches_child_rows_by_declared_parent_path():
+    model = _parent_model()
+
+    rows = model.attach_child_rows(
+        ({"id": "p1"}, {"id": "p2"}),
+        {
+            "parent_link": (
+                {"parent_id": "p2", "concept_id": "c2", "role": "support"},
+                {"parent_id": "p1", "concept_id": "c1", "role": "target"},
+            )
+        },
+    )
+
+    assert rows == (
+        {"id": "p1", "links": ({"parent_id": "p1", "concept_id": "c1", "role": "target"},)},
+        {"id": "p2", "links": ({"parent_id": "p2", "concept_id": "c2", "role": "support"},)},
     )
 
 
@@ -608,7 +626,7 @@ def _parent_model() -> ProjectionModel:
         result_type=Parent,
         fields=(
             ScalarPath(("id",), "id"),
-            RepeatedPath(
+            ProjectionAttachedRows(
                 path=("links",),
                 table="parent_link",
                 parent_fk="parent_id",
