@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, cast
 
 import msgspec
 
@@ -94,9 +95,10 @@ def test_family_charter_composes_with_existing_family_and_reference_apis() -> No
     assert schema.model_path == "test_charters_schema_ir.Claim"
     assert schema.semantic_metadata["owner"] == "propstore.claims"
     assert schema.lifecycle_states == ("authored", "checked", "canonical")
-    assert schema.field("concept_id").foreign_key is not None
-    assert schema.field("concept_id").foreign_key.target_family == "concepts"
-    assert schema.field("concept_id").index is True
+    concept_field = schema.field("concept_id")
+    assert concept_field.foreign_key is not None
+    assert concept_field.foreign_key.target_family == "concepts"
+    assert concept_field.index is True
     assert schema.field("trust").json_value_object is True
     assert schema.field("draft_note").source_local_only is True
     assert schema.field("canonical_rank").canonical_only is True
@@ -134,5 +136,8 @@ def test_schema_catalog_payload_and_hash_are_stable() -> None:
 
     assert first_catalog.payload() == second_catalog.payload()
     assert first_catalog.schema_hash() == second_catalog.schema_hash()
-    assert first_catalog.payload()["objects"][0]["family"]["artifact_family"] == "claim_artifact"
+    payload = first_catalog.payload()
+    objects = cast(tuple[dict[str, Any], ...], payload["objects"])
+    family_payload = cast(dict[str, object], objects[0]["family"])
+    assert family_payload["artifact_family"] == "claim_artifact"
     assert first_catalog.schema_hash().startswith("sha256:")
