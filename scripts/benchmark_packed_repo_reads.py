@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any, Callable, cast
 
 import msgspec
 
@@ -55,6 +56,10 @@ def make_family() -> ArtifactFamily[Owner, str, DemoDoc]:
     )
 
 
+def close_backend_repo(backend: object) -> None:
+    cast(Any, backend).raw_repo.close()
+
+
 def seed_family(
     root: Path,
     *,
@@ -73,16 +78,16 @@ def seed_family(
             raise RuntimeError("seed did not create a master head")
         return commit
     finally:
-        backend.raw_repo.close()
+        cast(Any, backend.raw_repo).close()
 
 
 def count_loose_objects(root: Path) -> int:
     backend = GitStore.open(root)
     try:
-        object_store = backend.raw_repo.object_store
+        object_store = cast(Any, backend.raw_repo.object_store)
         return sum(1 for _ in object_store._iter_loose_objects())
     finally:
-        backend.raw_repo.close()
+        cast(Any, backend.raw_repo).close()
 
 
 def count_pack_files(root: Path) -> int:
@@ -95,11 +100,12 @@ def count_pack_files(root: Path) -> int:
 def pack_repo(root: Path) -> int:
     backend = GitStore.open(root)
     try:
-        packed = backend.raw_repo.object_store.pack_loose_objects()
-        backend.raw_repo.object_store._update_pack_cache()
+        object_store = cast(Any, backend.raw_repo.object_store)
+        packed = object_store.pack_loose_objects()
+        object_store._update_pack_cache()
         return packed
     finally:
-        backend.raw_repo.close()
+        cast(Any, backend.raw_repo).close()
 
 
 def open_store(root: Path) -> tuple[DocumentFamilyStore[Owner], ArtifactFamily[Owner, str, DemoDoc]]:
@@ -123,7 +129,7 @@ def repeated_point_loads(root: Path) -> None:
         if loaded != expected:
             raise RuntimeError(f"unexpected repeated-load result: {loaded!r}")
     finally:
-        store.backend.raw_repo.close()
+        close_backend_repo(store._require_backend())
 
 
 def unique_point_loads(root: Path) -> None:
@@ -138,7 +144,7 @@ def unique_point_loads(root: Path) -> None:
         if loaded != expected:
             raise RuntimeError(f"unexpected unique-load result: {loaded!r}")
     finally:
-        store.backend.raw_repo.close()
+        close_backend_repo(store._require_backend())
 
 
 def family_scan_iter_handles(root: Path) -> None:
@@ -151,7 +157,7 @@ def family_scan_iter_handles(root: Path) -> None:
         if total != expected:
             raise RuntimeError(f"unexpected iter_handles total: {total}")
     finally:
-        store.backend.raw_repo.close()
+        close_backend_repo(store._require_backend())
 
 
 def family_scan_pinned_iter_and_require(root: Path) -> None:
@@ -165,10 +171,10 @@ def family_scan_pinned_iter_and_require(root: Path) -> None:
         if total != expected:
             raise RuntimeError(f"unexpected pinned scan total: {total}")
     finally:
-        store.backend.raw_repo.close()
+        close_backend_repo(store._require_backend())
 
 
-def measure(name: str, root: Path, workload) -> Measurement:
+def measure(name: str, root: Path, workload: Callable[[Path], None]) -> Measurement:
     samples: list[float] = []
     for _ in range(ROUNDS):
         started = perf_counter()
