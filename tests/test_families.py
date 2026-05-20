@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, cast
 
 import msgspec
 import pytest
@@ -217,7 +218,7 @@ def test_family_declaration_builds_common_placement_shapes_like_explicit_definit
             contract_version=version,
             artifact_name=f"artifact_{index}",
             doc_type=DemoDocument,
-            placement=placement,
+            placement=cast(Any, placement),
         )
         explicit = FamilyDefinition(
             key=f"family-{index}",
@@ -227,7 +228,7 @@ def test_family_declaration_builds_common_placement_shapes_like_explicit_definit
                 name=f"artifact_{index}",
                 contract_version=version,
                 doc_type=DemoDocument,
-                placement=placement,
+                placement=cast(Any, placement),
             ),
         )
 
@@ -433,8 +434,10 @@ def test_family_reference_index_resolves_generated_identity_fields(generated: di
     )
 
     index = family.reference_index_from_records(
-        IdentifiedDocument(artifact_id, aliases)
-        for artifact_id, aliases in generated.items()
+        tuple(
+            IdentifiedDocument(artifact_id, aliases)
+            for artifact_id, aliases in generated.items()
+        )
     )
 
     for artifact_id in generated:
@@ -538,7 +541,12 @@ def test_registry_selects_families_by_predicate_and_metadata() -> None:
         ),
     )
 
-    assert tuple(family.name for family in registry.select(lambda family: family.metadata_value("rank", default=100) < 30)) == (
+    assert tuple(
+        family.name
+        for family in registry.select(
+            lambda family: cast(int, family.metadata_value("rank", default=100)) < 30
+        )
+    ) == (
         "claims",
         "concepts",
     )
@@ -667,7 +675,7 @@ def test_duplicate_detection_does_not_rescan_collected_duplicates() -> None:
 
     duplicates = _duplicates(values)
 
-    assert [item.value for item in duplicates] == [str(index) for index in range(50)]
+    assert [cast(CountingKey, item).value for item in duplicates] == [str(index) for index in range(50)]
     assert CountingKey.comparisons < 150
 
 
