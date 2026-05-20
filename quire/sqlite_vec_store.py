@@ -614,7 +614,9 @@ class SqlAlchemyVecEntityStore:
         self,
         model_identity: EmbeddingModelIdentity,
         created_at: str,
+        dimensions: int | None = None,
     ) -> None:
+        model_dimensions = self._model_dimensions_argument(dimensions)
         self._conn.execute(
             text(
                 f"""
@@ -632,19 +634,28 @@ class SqlAlchemyVecEntityStore:
                 "model_name": model_identity.model_name,
                 "model_version": model_identity.model_version,
                 "content_digest": model_identity.content_digest,
-                "dimensions": self.cache.dimensions,
+                "dimensions": model_dimensions,
                 "created_at": created_at,
             },
         )
-        self.ensure_vec_table(model_identity.identity_hash)
+        self.ensure_vec_table(model_identity.identity_hash, dimensions=model_dimensions)
 
-    def ensure_vec_table(self, model_identity_hash: str) -> None:
-        table_name = self._table_name(model_identity_hash)
+    def ensure_vec_table(
+        self,
+        model_identity_hash: str,
+        *,
+        dimensions: int | None = None,
+    ) -> None:
+        model_dimensions = self._dimensions_for_model(model_identity_hash, dimensions)
+        table_name = self._table_name(
+            model_identity_hash,
+            dimensions=model_dimensions,
+        )
         if _table_exists(self._conn, table_name):
             return
         self._conn.exec_driver_sql(
             f"CREATE VIRTUAL TABLE {_quote_identifier(table_name)} "
-            f"USING vec0({_vec_column(self.cache.embedding_column)} float[{self.cache.dimensions}])"
+            f"USING vec0({_vec_column(self.cache.embedding_column)} float[{model_dimensions}])"
         )
 
     def save_embedding(
@@ -729,14 +740,61 @@ class SqlAlchemyVecEntityStore:
         ).mappings()
         return [dict(row) for row in rows]
 
-    def _table_name(self, model_identity_hash: str) -> str:
+    def _table_name(
+        self,
+        model_identity_hash: str,
+        *,
+        dimensions: int | None = None,
+    ) -> str:
+        model_dimensions = self._dimensions_for_model(model_identity_hash, dimensions)
         return _render_dynamic_name(
             self.cache.table,
             {
                 "model_identity_hash": model_identity_hash,
-                "dimensions": str(self.cache.dimensions),
+                "dimensions": str(model_dimensions),
             },
         )
+
+    def _model_dimensions_argument(self, dimensions: int | None) -> int:
+        if self.cache.dimensions is not None:
+            if dimensions is not None and dimensions != self.cache.dimensions:
+                raise ValueError(
+                    "Vector cache dimensions do not match the charter declaration."
+                )
+            return self.cache.dimensions
+        if dimensions is None:
+            raise ValueError("Model-dimensioned vector caches require dimensions.")
+        if dimensions <= 0:
+            raise ValueError("Vector cache dimensions must be positive.")
+        return dimensions
+
+    def _dimensions_for_model(
+        self,
+        model_identity_hash: str,
+        dimensions: int | None = None,
+    ) -> int:
+        if dimensions is not None:
+            return self._model_dimensions_argument(dimensions)
+        if self.cache.dimensions is not None:
+            return self.cache.dimensions
+        row = self._conn.execute(
+            text(
+                f"""
+                SELECT dimensions
+                FROM {_quote_identifier(EMBEDDING_MODEL_TABLE)}
+                WHERE model_identity_hash = :model_identity_hash
+                """
+            ),
+            {"model_identity_hash": model_identity_hash},
+        ).first()
+        if row is None:
+            raise ValueError(
+                f"Embedding model {model_identity_hash!r} is not registered."
+            )
+        model_dimensions = int(row[0])
+        if model_dimensions <= 0:
+            raise ValueError("Vector cache dimensions must be positive.")
+        return model_dimensions
 
 
 class SqlAlchemyVecSnapshotStore:

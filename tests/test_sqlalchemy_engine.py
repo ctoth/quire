@@ -568,6 +568,67 @@ def test_vector_cache_create_insert_search_snapshot_and_restore(tmp_path: Path) 
     assert rows[0]["entity_id"] == "entity:near"
 
 
+def test_vector_cache_can_use_model_registered_dimensions(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_model_dimension_vector_catalog())
+    cache = schema.vector_cache("model_dimension_entity_embeddings")
+    identity = DemoEmbeddingIdentity()
+    store_path = tmp_path / "dynamic-vectors.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+    validate_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add_all(
+            (
+                VectorEntity("entity:near", 1, "hash-near", "near text"),
+                VectorEntity("entity:far", 2, "hash-far", "far text"),
+            )
+        )
+        session.commit()
+        vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
+        with pytest.raises(ValueError):
+            vector_store.prepare_model(identity, created_at="2026-05-20T00:00:00Z")
+        vector_store.prepare_model(
+            identity,
+            created_at="2026-05-20T00:00:00Z",
+            dimensions=4,
+        )
+        vector_store.save_embedding(
+            model_identity=identity,
+            entity_id="entity:near",
+            seq=1,
+            content_hash="hash-near",
+            vector_blob=_serialize_float32([0.1, 0.2, 0.3, 0.4]),
+            embedded_at="2026-05-20T00:00:01Z",
+        )
+        vector_store.save_embedding(
+            model_identity=identity,
+            entity_id="entity:far",
+            seq=2,
+            content_hash="hash-far",
+            vector_blob=_serialize_float32([0.9, 0.9, 0.9, 0.9]),
+            embedded_at="2026-05-20T00:00:02Z",
+        )
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
+        rows = vector_store.similar_entities(
+            model_identity=identity,
+            query_vector=_serialize_float32([0.1, 0.2, 0.31, 0.4]),
+            k=1,
+        )
+        snapshot = SqlAlchemyVecSnapshotStore(
+            session.session.connection(),
+            tuple(schema.vector_caches.values()),
+        ).extract()
+        models = SqlAlchemyVecRegistry(session.session.connection()).get_registered_models()
+
+    assert rows[0]["entity_id"] == "entity:near"
+    assert snapshot is not None
+    assert models[0]["dimensions"] == 4
+    assert snapshot.models[0]["dimensions"] == 4
+
+
 def _catalog() -> Any:
     return charter_catalog(*_charters())
 
@@ -708,6 +769,31 @@ def _vector_catalog() -> Any:
                     "entity_embeddings",
                     table="entity_vec_{model_identity_hash}",
                     dimensions=3,
+                    entity_id_field="id",
+                    source_seq_field="seq",
+                    source_content_hash_field="content_hash",
+                ),
+            ),
+        )
+    )
+
+
+def _model_dimension_vector_catalog() -> Any:
+    entities = _family("model_dimension_vector_entities", VectorEntity)
+    return charter_catalog(
+        FamilyCharter(
+            family=entities,
+            model=VectorEntity,
+            fields=(
+                CharterField("id", str, primary_key=True, nullable=False),
+                CharterField("seq", int, nullable=False, unique=True),
+                CharterField("content_hash", str, nullable=False),
+                CharterField("text", str, nullable=False),
+            ),
+            vector_caches=(
+                CharterVectorCache(
+                    "model_dimension_entity_embeddings",
+                    table="entity_vec_{model_identity_hash}_{dimensions}",
                     entity_id_field="id",
                     source_seq_field="seq",
                     source_content_hash_field="content_hash",

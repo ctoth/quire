@@ -122,7 +122,7 @@ class SchemaVectorCache:
     name: str
     family_name: str
     table: str
-    dimensions: int
+    dimensions: int | None = None
     entity_id_field: str = "id"
     source_seq_field: str = "seq"
     source_content_hash_field: str = "content_hash"
