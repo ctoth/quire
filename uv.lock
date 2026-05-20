@@ -321,6 +321,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "sqlalchemy-fts5" },
+    { name = "sqlite-vec" },
 ]
 
 [package.optional-dependencies]
@@ -349,6 +350,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "sqlalchemy-fts5", git = "https://github.com/ctoth/sqlalchemy-fts5?rev=ac6d05968f2f3bcf61c20a09efa41de4a605560d" },
+    { name = "sqlite-vec", specifier = ">=0.1" },
 ]
 provides-extras = ["dev"]
 

@@ -90,6 +90,60 @@ class SchemaIndex:
 
 
 @dataclass(frozen=True)
+class SchemaFtsIndex:
+    name: str
+    family_name: str
+    entity_id_field: str
+    fields: tuple[str, ...]
+    tokenize: str | None = None
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "entity_id_field": self.entity_id_field,
+            "family_name": self.family_name,
+            "fields": self.fields,
+            "metadata": dict(sorted(self.metadata.items())),
+            "name": self.name,
+            "tokenize": self.tokenize,
+        }
+
+
+@dataclass(frozen=True)
+class SchemaVectorCache:
+    name: str
+    family_name: str
+    table: str
+    dimensions: int
+    entity_id_field: str = "id"
+    source_seq_field: str = "seq"
+    source_content_hash_field: str = "content_hash"
+    status_table: str | None = None
+    embedding_column: str = "embedding"
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    @property
+    def status_table_name(self) -> str:
+        if self.status_table is not None:
+            return self.status_table
+        return f"{self.name}_embedding_status"
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "dimensions": self.dimensions,
+            "embedding_column": self.embedding_column,
+            "entity_id_field": self.entity_id_field,
+            "family_name": self.family_name,
+            "metadata": dict(sorted(self.metadata.items())),
+            "name": self.name,
+            "source_content_hash_field": self.source_content_hash_field,
+            "source_seq_field": self.source_seq_field,
+            "status_table": self.status_table_name,
+            "table": self.table,
+        }
+
+
+@dataclass(frozen=True)
 class SchemaRelationship:
     name: str
     target_family: str
@@ -121,6 +175,8 @@ class SchemaObject:
     fields: tuple[SchemaField, ...]
     lifecycle_states: tuple[str, ...] = ()
     indexes: tuple[SchemaIndex, ...] = ()
+    fts_indexes: tuple[SchemaFtsIndex, ...] = ()
+    vector_caches: tuple[SchemaVectorCache, ...] = ()
     relationships: tuple[SchemaRelationship, ...] = ()
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
 
@@ -138,6 +194,7 @@ class SchemaObject:
                 "name": self.family_name,
             },
             "fields": tuple(field.payload() for field in _sort_by_name(self.fields)),
+            "fts_indexes": tuple(index.payload() for index in _sort_by_name(self.fts_indexes)),
             "indexes": tuple(index.payload() for index in _sort_by_name(self.indexes)),
             "lifecycle_states": self.lifecycle_states,
             "model": self.model_path,
@@ -147,6 +204,7 @@ class SchemaObject:
                 for relationship in _sort_by_name(self.relationships)
             ),
             "semantic_metadata": dict(sorted(self.semantic_metadata.items())),
+            "vector_caches": tuple(cache.payload() for cache in _sort_by_name(self.vector_caches)),
         }
 
 

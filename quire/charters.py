@@ -10,10 +10,12 @@ from quire.references import ForeignKeySpec
 from quire.schema_catalog import SchemaCatalog
 from quire.schema_ir import (
     SchemaField,
+    SchemaFtsIndex,
     SchemaForeignKey,
     SchemaIndex,
     SchemaObject,
     SchemaRelationship,
+    SchemaVectorCache,
     python_type_path,
 )
 from quire.sql_types import python_type_to_sql
@@ -82,6 +84,52 @@ class CharterIndex:
 
 
 @dataclass(frozen=True)
+class CharterFtsIndex:
+    name: str
+    entity_id_field: str
+    fields: tuple[str, ...]
+    tokenize: str | None = None
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def to_schema_fts_index(self, family_name: str) -> SchemaFtsIndex:
+        return SchemaFtsIndex(
+            name=self.name,
+            family_name=family_name,
+            entity_id_field=self.entity_id_field,
+            fields=self.fields,
+            tokenize=self.tokenize,
+            metadata=self.metadata,
+        )
+
+
+@dataclass(frozen=True)
+class CharterVectorCache:
+    name: str
+    table: str
+    dimensions: int
+    entity_id_field: str = "id"
+    source_seq_field: str = "seq"
+    source_content_hash_field: str = "content_hash"
+    status_table: str | None = None
+    embedding_column: str = "embedding"
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def to_schema_vector_cache(self, family_name: str) -> SchemaVectorCache:
+        return SchemaVectorCache(
+            name=self.name,
+            family_name=family_name,
+            table=self.table,
+            dimensions=self.dimensions,
+            entity_id_field=self.entity_id_field,
+            source_seq_field=self.source_seq_field,
+            source_content_hash_field=self.source_content_hash_field,
+            status_table=self.status_table,
+            embedding_column=self.embedding_column,
+            metadata=self.metadata,
+        )
+
+
+@dataclass(frozen=True)
 class CharterRelationship:
     name: str
     target_family: str
@@ -110,6 +158,8 @@ class FamilyCharter:
     fields: tuple[CharterField, ...]
     lifecycle_states: tuple[str, ...] = ()
     indexes: tuple[CharterIndex, ...] = ()
+    fts_indexes: tuple[CharterFtsIndex, ...] = ()
+    vector_caches: tuple[CharterVectorCache, ...] = ()
     relationships: tuple[CharterRelationship, ...] = ()
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
 
@@ -123,6 +173,14 @@ class FamilyCharter:
             fields=tuple(field.to_schema_field() for field in self.fields),
             lifecycle_states=self.lifecycle_states,
             indexes=tuple(index.to_schema_index() for index in self.indexes),
+            fts_indexes=tuple(
+                index.to_schema_fts_index(self.family.name)
+                for index in self.fts_indexes
+            ),
+            vector_caches=tuple(
+                cache.to_schema_vector_cache(self.family.name)
+                for cache in self.vector_caches
+            ),
             relationships=tuple(
                 relationship.to_schema_relationship()
                 for relationship in self.relationships

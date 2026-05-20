@@ -25,9 +25,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import clear_mappers, registry, relationship
 from sqlalchemy.sql.type_api import TypeEngine
 from sqlalchemy.types import TypeDecorator
+from sqlalchemy_fts5 import FTS5Table
 
 from quire.schema_catalog import SchemaCatalog
-from quire.schema_ir import SchemaField, SchemaObject
+from quire.schema_ir import SchemaField, SchemaFtsIndex, SchemaObject, SchemaVectorCache
 from quire.sql_types import SqlTypeSpec
 
 __all__ = [
@@ -87,6 +88,9 @@ class SqlAlchemySchema:
     metadata: MetaData
     mapper_registry: registry
     tables: Mapping[str, Table]
+    fts_tables: Mapping[str, Table]
+    fts_indexes: Mapping[str, SchemaFtsIndex]
+    vector_caches: Mapping[str, SchemaVectorCache]
     models_by_family: Mapping[str, type[Any]]
     catalog_hash: str
 
@@ -102,6 +106,28 @@ class SqlAlchemySchema:
         except KeyError as exc:
             raise KeyError(f"unknown SQLAlchemy schema model {family_name!r}") from exc
 
+    def fts_table(self, index_name: str) -> Table:
+        try:
+            return self.fts_tables[index_name]
+        except KeyError as exc:
+            raise KeyError(f"unknown SQLAlchemy FTS index {index_name!r}") from exc
+
+    def fts_index(self, index_name: str) -> SchemaFtsIndex:
+        try:
+            return self.fts_indexes[index_name]
+        except KeyError as exc:
+            raise KeyError(f"unknown SQLAlchemy FTS index {index_name!r}") from exc
+
+    def vector_cache(self, cache_name: str) -> SchemaVectorCache:
+        try:
+            return self.vector_caches[cache_name]
+        except KeyError as exc:
+            raise KeyError(f"unknown SQLAlchemy vector cache {cache_name!r}") from exc
+
+    @property
+    def has_vector_caches(self) -> bool:
+        return bool(self.vector_caches)
+
 
 def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
     clear_mappers()
@@ -111,6 +137,12 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
         schema_object.family_name: _table_from_schema_object(metadata, schema_object)
         for schema_object in catalog.objects
     }
+    fts_indexes = _fts_indexes_from_catalog(catalog)
+    fts_tables = {
+        name: _fts_table_from_index(metadata, index)
+        for name, index in fts_indexes.items()
+    }
+    vector_caches = _vector_caches_from_catalog(catalog)
     models_by_family = {
         schema_object.family_name: _load_type(schema_object.model_path)
         for schema_object in catalog.objects
@@ -120,6 +152,9 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
         metadata=metadata,
         mapper_registry=mapper_registry,
         tables=MappingProxyType(tables),
+        fts_tables=MappingProxyType(fts_tables),
+        fts_indexes=MappingProxyType(fts_indexes),
+        vector_caches=MappingProxyType(vector_caches),
         models_by_family=MappingProxyType(models_by_family),
         catalog_hash=catalog.schema_hash(),
     )
@@ -148,6 +183,53 @@ def _table_from_schema_object(metadata: MetaData, schema_object: SchemaObject) -
         if not index.unique:
             Index(index.name, *(table.c[field] for field in index.fields))
     return table
+
+
+def _fts_indexes_from_catalog(catalog: SchemaCatalog) -> dict[str, SchemaFtsIndex]:
+    indexes: dict[str, SchemaFtsIndex] = {}
+    for schema_object in catalog.objects:
+        field_names = {field.name for field in schema_object.fields}
+        for index in schema_object.fts_indexes:
+            missing = {index.entity_id_field, *index.fields} - field_names
+            if missing:
+                joined = ", ".join(sorted(missing))
+                raise ValueError(
+                    f"FTS index {index.name!r} references unknown field(s): {joined}."
+                )
+            if index.name in indexes:
+                raise ValueError(f"duplicate FTS index name {index.name!r}.")
+            indexes[index.name] = index
+    return indexes
+
+
+def _fts_table_from_index(metadata: MetaData, index: SchemaFtsIndex) -> Table:
+    return FTS5Table(
+        index.name,
+        metadata,
+        columns=[index.entity_id_field, *index.fields],
+        tokenize=index.tokenize,
+    )
+
+
+def _vector_caches_from_catalog(catalog: SchemaCatalog) -> dict[str, SchemaVectorCache]:
+    caches: dict[str, SchemaVectorCache] = {}
+    for schema_object in catalog.objects:
+        field_names = {field.name for field in schema_object.fields}
+        for cache in schema_object.vector_caches:
+            missing = {
+                cache.entity_id_field,
+                cache.source_seq_field,
+                cache.source_content_hash_field,
+            } - field_names
+            if missing:
+                joined = ", ".join(sorted(missing))
+                raise ValueError(
+                    f"Vector cache {cache.name!r} references unknown field(s): {joined}."
+                )
+            if cache.name in caches:
+                raise ValueError(f"duplicate vector cache name {cache.name!r}.")
+            caches[cache.name] = cache
+    return caches
 
 
 def _column_from_schema_field(schema_object: SchemaObject, field: SchemaField) -> Column[Any]:

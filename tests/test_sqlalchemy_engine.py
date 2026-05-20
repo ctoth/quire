@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -12,7 +13,9 @@ from sqlalchemy.exc import OperationalError
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import (
     CharterField,
+    CharterFtsIndex,
     CharterRelationship,
+    CharterVectorCache,
     FamilyCharter,
     charter_catalog,
 )
@@ -21,11 +24,22 @@ from quire.references import ForeignKeySpec
 from quire.sqlalchemy_schema import build_sqlalchemy_schema
 from quire.sqlalchemy_store import (
     create_sqlalchemy_store,
+    populate_fts_index,
     readonly_session,
+    search_fts_index,
     validate_sqlalchemy_store,
     writable_session,
 )
+from quire.sqlite_vec_store import (
+    SqlAlchemyVecEntityStore,
+    SqlAlchemyVecRegistry,
+    SqlAlchemyVecSnapshotStore,
+)
 from quire.versions import VersionId
+
+
+def _serialize_float32(vector: list[float]) -> bytes:
+    return struct.pack(f"{len(vector)}f", *vector)
 
 
 @dataclass(frozen=True)
@@ -74,6 +88,55 @@ class ClaimConceptLink:
         self.role = role
         self.ordinal = ordinal
         self.binding_name = binding_name
+
+
+class SearchConcept:
+    def __init__(
+        self,
+        id: str,
+        label: str,
+        symbol: str,
+        aliases: str,
+        normalized_text: str,
+    ) -> None:
+        self.id = id
+        self.label = label
+        self.symbol = symbol
+        self.aliases = aliases
+        self.normalized_text = normalized_text
+
+
+class SearchClaim:
+    def __init__(
+        self,
+        id: str,
+        text_payload: str,
+        equation_text: str,
+        provenance_text: str,
+        rendered_text: str,
+    ) -> None:
+        self.id = id
+        self.text_payload = text_payload
+        self.equation_text = equation_text
+        self.provenance_text = provenance_text
+        self.rendered_text = rendered_text
+
+
+class VectorEntity:
+    def __init__(self, id: str, seq: int, content_hash: str, text: str) -> None:
+        self.id = id
+        self.seq = seq
+        self.content_hash = content_hash
+        self.text = text
+
+
+@dataclass(frozen=True)
+class DemoEmbeddingIdentity:
+    provider: str = "demo"
+    model_name: str = "demo-model"
+    model_version: str = "1"
+    content_digest: str = "demo-content"
+    identity_hash: str = "demo-hash"
 
 
 def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> None:
@@ -141,8 +204,221 @@ def test_schema_hash_changes_when_charter_shape_changes() -> None:
     assert base.catalog_hash != changed.catalog_hash
 
 
+def test_fts_declarations_create_populate_and_query_with_sessions(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_search_catalog())
+    store_path = tmp_path / "search.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+    validate_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add_all(
+            (
+                SearchConcept(
+                    "concept:mass",
+                    "Mass",
+                    "m",
+                    "inertial mass gravitational mass",
+                    "measure of matter resistance to acceleration",
+                ),
+                SearchConcept(
+                    "concept:force",
+                    "Force",
+                    "F",
+                    "interaction push pull",
+                    "cause of acceleration",
+                ),
+                SearchClaim(
+                    "claim:newton-2",
+                    "Force equals mass times acceleration.",
+                    "F = m a",
+                    "Newton mechanics source",
+                    "A net force accelerates mass.",
+                ),
+                SearchClaim(
+                    "claim:energy",
+                    "Energy is conserved in an isolated system.",
+                    "dE/dt = 0",
+                    "conservation law source",
+                    "Total energy remains constant.",
+                ),
+            )
+        )
+        session.commit()
+        populate_fts_index(session, "concept_search")
+        populate_fts_index(session, "claim_search")
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        concept_hits = search_fts_index(session, "concept_search", "inertial")
+        claim_hits = search_fts_index(session, "claim_search", "accelerates")
+
+    assert [(hit.entity_id, isinstance(hit.rank, float)) for hit in concept_hits] == [
+        ("concept:mass", True)
+    ]
+    assert [(hit.entity_id, isinstance(hit.rank, float)) for hit in claim_hits] == [
+        ("claim:newton-2", True)
+    ]
+
+
+def test_vector_cache_create_insert_search_snapshot_and_restore(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_vector_catalog())
+    cache = schema.vector_cache("entity_embeddings")
+    identity = DemoEmbeddingIdentity()
+    store_path = tmp_path / "vectors.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+    validate_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add_all(
+            (
+                VectorEntity("entity:near", 1, "hash-near", "near text"),
+                VectorEntity("entity:far", 2, "hash-far", "far text"),
+            )
+        )
+        session.commit()
+        vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
+        vector_store.prepare_model(identity, created_at="2026-05-20T00:00:00Z")
+        vector_store.save_embedding(
+            model_identity=identity,
+            entity_id="entity:near",
+            seq=1,
+            content_hash="hash-near",
+            vector_blob=_serialize_float32([0.1, 0.2, 0.3]),
+            embedded_at="2026-05-20T00:00:01Z",
+        )
+        vector_store.save_embedding(
+            model_identity=identity,
+            entity_id="entity:far",
+            seq=2,
+            content_hash="hash-far",
+            vector_blob=_serialize_float32([0.9, 0.9, 0.9]),
+            embedded_at="2026-05-20T00:00:02Z",
+        )
+        assert vector_store.vector_for(identity, 1) == _serialize_float32([0.1, 0.2, 0.3])
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
+        rows = vector_store.similar_entities(
+            model_identity=identity,
+            query_vector=_serialize_float32([0.1, 0.2, 0.31]),
+            k=1,
+        )
+        snapshot = SqlAlchemyVecSnapshotStore(
+            session.session.connection(),
+            tuple(schema.vector_caches.values()),
+        ).extract()
+        models = SqlAlchemyVecRegistry(session.session.connection()).get_registered_models()
+
+    assert rows[0]["entity_id"] == "entity:near"
+    assert snapshot is not None
+    assert models[0]["model_identity_hash"] == identity.identity_hash
+
+    restored_path = tmp_path / "restored.sqlite"
+    create_sqlalchemy_store(restored_path, schema)
+    with writable_session(restored_path, schema) as session:
+        session.add_all(
+            (
+                VectorEntity("entity:near", 10, "hash-near", "near text"),
+                VectorEntity("entity:far", 20, "hash-far", "far text"),
+            )
+        )
+        session.commit()
+        report = SqlAlchemyVecSnapshotStore(
+            session.session.connection(),
+            tuple(schema.vector_caches.values()),
+        ).restore(snapshot)
+        session.commit()
+
+    assert report.restored == 2
+    with readonly_session(restored_path, schema) as session:
+        vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
+        rows = vector_store.similar_entities(
+            model_identity=identity,
+            query_vector=_serialize_float32([0.1, 0.2, 0.31]),
+            k=1,
+        )
+    assert rows[0]["entity_id"] == "entity:near"
+
+
 def _catalog() -> Any:
     return charter_catalog(*_charters())
+
+
+def _search_catalog() -> Any:
+    concepts = _family("search_concepts", SearchConcept)
+    claims = _family("search_claims", SearchClaim)
+    return charter_catalog(
+        FamilyCharter(
+            family=concepts,
+            model=SearchConcept,
+            fields=(
+                CharterField("id", str, primary_key=True, nullable=False),
+                CharterField("label", str, nullable=False),
+                CharterField("symbol", str, nullable=False),
+                CharterField("aliases", str, nullable=False),
+                CharterField("normalized_text", str, nullable=False),
+            ),
+            fts_indexes=(
+                CharterFtsIndex(
+                    "concept_search",
+                    entity_id_field="id",
+                    fields=("label", "symbol", "aliases", "normalized_text"),
+                    tokenize="porter unicode61",
+                ),
+            ),
+        ),
+        FamilyCharter(
+            family=claims,
+            model=SearchClaim,
+            fields=(
+                CharterField("id", str, primary_key=True, nullable=False),
+                CharterField("text_payload", str, nullable=False),
+                CharterField("equation_text", str, nullable=False),
+                CharterField("provenance_text", str, nullable=False),
+                CharterField("rendered_text", str, nullable=False),
+            ),
+            fts_indexes=(
+                CharterFtsIndex(
+                    "claim_search",
+                    entity_id_field="id",
+                    fields=(
+                        "text_payload",
+                        "equation_text",
+                        "provenance_text",
+                        "rendered_text",
+                    ),
+                    tokenize="porter unicode61",
+                ),
+            ),
+        ),
+    )
+
+
+def _vector_catalog() -> Any:
+    entities = _family("vector_entities", VectorEntity)
+    return charter_catalog(
+        FamilyCharter(
+            family=entities,
+            model=VectorEntity,
+            fields=(
+                CharterField("id", str, primary_key=True, nullable=False),
+                CharterField("seq", int, nullable=False, unique=True),
+                CharterField("content_hash", str, nullable=False),
+                CharterField("text", str, nullable=False),
+            ),
+            vector_caches=(
+                CharterVectorCache(
+                    "entity_embeddings",
+                    table="entity_vec_{model_identity_hash}",
+                    dimensions=3,
+                    entity_id_field="id",
+                    source_seq_field="seq",
+                    source_content_hash_field="content_hash",
+                ),
+            ),
+        )
+    )
 
 
 def _charters(
