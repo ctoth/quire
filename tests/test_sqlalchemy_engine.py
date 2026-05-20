@@ -24,6 +24,7 @@ from quire.references import ForeignKeySpec
 from quire.sqlalchemy_schema import build_sqlalchemy_schema
 from quire.sqlalchemy_store import (
     create_sqlalchemy_store,
+    FtsQuerySyntaxError,
     populate_fts_index,
     readonly_session,
     search_fts_index,
@@ -314,6 +315,24 @@ def test_fts_declarations_create_populate_and_query_with_sessions(tmp_path: Path
     assert [(hit.entity_id, isinstance(hit.rank, float)) for hit in claim_hits] == [
         ("claim:newton-2", True)
     ]
+
+
+def test_fts_search_classifies_query_syntax_errors(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_search_catalog())
+    store_path = tmp_path / "search.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add(SearchConcept("concept:mass", "Mass", "m", "", "measure"))
+        session.commit()
+        populate_fts_index(session, "concept_search")
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        with pytest.raises(FtsQuerySyntaxError) as exc_info:
+            search_fts_index(session, "concept_search", '"unterminated')
+
+    assert exc_info.value.query == '"unterminated'
 
 
 def test_fts_source_query_can_populate_joined_index_with_custom_key(tmp_path: Path) -> None:

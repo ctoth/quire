@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import Connection, Engine, create_engine, delete, event, insert, inspect, select, text
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy_fts5 import FTS5Match, fts5_bm25
 
@@ -17,6 +18,7 @@ from quire.sqlalchemy_schema import SqlAlchemySchema
 
 __all__ = [
     "DerivedSession",
+    "FtsQuerySyntaxError",
     "FtsSearchHit",
     "create_sqlalchemy_store",
     "populate_fts_index",
@@ -48,6 +50,17 @@ class FtsSearchHit:
     entity_id: str
     rank: float
     values: RowMapping
+
+
+class FtsQuerySyntaxError(ValueError):
+    def __init__(self, query: str) -> None:
+        super().__init__("FTS query is not valid syntax.")
+        self.query = query
+
+
+def _is_fts_query_syntax_error(exc: OperationalError) -> bool:
+    message = str(exc).casefold()
+    return "fts5: syntax error" in message or "unterminated string" in message
 
 
 def create_sqlalchemy_store(path: str | PathLike[str], schema: SqlAlchemySchema) -> None:
@@ -162,7 +175,12 @@ def search_fts_index(
     )
     if limit is not None:
         stmt = stmt.limit(limit)
-    rows = derived.session.execute(stmt).mappings()
+    try:
+        rows = derived.session.execute(stmt).mappings()
+    except OperationalError as exc:
+        if _is_fts_query_syntax_error(exc):
+            raise FtsQuerySyntaxError(query) from exc
+        raise
     return tuple(
         FtsSearchHit(
             entity_id=str(row[index.entity_id_field]),
