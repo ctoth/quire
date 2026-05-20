@@ -46,6 +46,10 @@ class RichRecord:
     aliases: tuple[str, ...] = ()
 
 
+def _rich_aliases(record: RichRecord) -> tuple[str, ...]:
+    return record.aliases
+
+
 class ConceptDoc(msgspec.Struct):
     artifact_id: str
     aliases: tuple[str, ...] = ()
@@ -136,7 +140,7 @@ def test_family_reference_index_resolves_declarative_field_and_format_keys() -> 
             ReferenceKey.field("artifact_id"),
             ReferenceKey.field("logical_ids[].value"),
             ReferenceKey.format("{namespace}:{value}", from_field="logical_ids[]"),
-            lambda record: record.aliases,
+            _rich_aliases,
         ),
     )
 
@@ -191,7 +195,7 @@ def test_family_reference_index_reports_duplicate_key_ambiguity_at_build_time() 
         FamilyReferenceIndex.from_records(
             records,
             artifact_id=lambda record: record.artifact_id,
-            keys=(lambda record: record.aliases,),
+            keys=(_rich_aliases,),
         )
 
     assert exc_info.value.reference == "shared"
@@ -202,7 +206,7 @@ def test_family_reference_index_deduplicates_repeated_keys_for_same_artifact() -
     index = FamilyReferenceIndex.from_records(
         (RichRecord("claim:1", aliases=("same", "same")),),
         artifact_id=lambda record: record.artifact_id,
-        keys=(ReferenceKey.field("artifact_id"), lambda record: record.aliases),
+        keys=(ReferenceKey.field("artifact_id"), _rich_aliases),
     )
 
     assert index.require_id("same") == "claim:1"
@@ -218,7 +222,7 @@ def test_family_reference_index_rejects_alias_colliding_with_another_artifact_id
         FamilyReferenceIndex.from_records(
             records,
             artifact_id=lambda record: record.artifact_id,
-            keys=(lambda record: record.aliases,),
+            keys=(_rich_aliases,),
         )
 
     assert exc_info.value.reference == "claim:1"
@@ -244,7 +248,7 @@ def test_family_reference_index_resolves_generated_unique_aliases(alias_map: dic
     index = FamilyReferenceIndex.from_records(
         records,
         artifact_id=lambda record: record.artifact_id,
-        keys=(lambda record: record.aliases,),
+        keys=(_rich_aliases,),
     )
 
     for artifact_id, aliases in alias_map.items():
@@ -276,7 +280,7 @@ def test_family_reference_index_rejects_generated_duplicate_aliases(first_id: st
         FamilyReferenceIndex.from_records(
             records,
             artifact_id=lambda record: record.artifact_id,
-            keys=(lambda record: record.aliases,),
+            keys=(_rich_aliases,),
         )
 
 
@@ -297,7 +301,7 @@ def test_family_reference_index_rejects_generated_alias_artifact_id_collisions(
         FamilyReferenceIndex.from_records(
             records,
             artifact_id=lambda record: record.artifact_id,
-            keys=(lambda record: record.aliases,),
+            keys=(_rich_aliases,),
         )
 
 
