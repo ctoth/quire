@@ -100,6 +100,12 @@ class SqlAlchemySchema:
         except KeyError as exc:
             raise KeyError(f"unknown SQLAlchemy schema table {family_name!r}") from exc
 
+    def schema_object(self, family_name: str) -> SchemaObject:
+        for schema_object in self.catalog.objects:
+            if schema_object.family_name == family_name:
+                return schema_object
+        raise KeyError(f"unknown SQLAlchemy schema family {family_name!r}")
+
     def model(self, family_name: str) -> type[Any]:
         try:
             return self.models_by_family[family_name]
@@ -127,6 +133,30 @@ class SqlAlchemySchema:
     @property
     def has_vector_caches(self) -> bool:
         return bool(self.vector_caches)
+
+    def construct(self, family_name: str, values: Mapping[str, object]) -> object:
+        schema_object = self.schema_object(family_name)
+        field_names = {field.name for field in schema_object.fields}
+        unknown = set(values) - field_names
+        if unknown:
+            joined = ", ".join(sorted(unknown))
+            raise ValueError(f"unknown field(s) for family {family_name!r}: {joined}.")
+        missing = {
+            field.name
+            for field in schema_object.fields
+            if (
+                field.name not in values
+                and not field.nullable
+                and field.default is None
+                and field.default_sql is None
+                and not field.generated
+            )
+        }
+        if missing:
+            joined = ", ".join(sorted(missing))
+            raise ValueError(f"missing required field(s) for family {family_name!r}: {joined}.")
+        model = self.model(family_name)
+        return model(**dict(values))
 
 
 def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:

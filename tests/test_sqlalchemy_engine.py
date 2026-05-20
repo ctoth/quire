@@ -206,6 +206,74 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
             session.commit()
 
 
+def test_session_constructs_and_routes_objects_from_charter_fields(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_catalog())
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        source = session.add_family(
+            "sources",
+            {
+                "id": "source:1",
+                "metadata": "reserved field survives",
+                "trust": SourceTrust(0.9, "curated"),
+            },
+        )
+        assert isinstance(source, Source)
+        session.add_family_all(
+            "concepts",
+            (
+                {"id": "concept:mass", "label": "Mass"},
+                {"id": "concept:force", "label": "Force"},
+            ),
+        )
+        session.add_family(
+            "claims",
+            {
+                "id": "claim:1",
+                "source_id": "source:1",
+                "text": "Mass is invariant.",
+                "status": ClaimStatus.ACCEPTED,
+            },
+        )
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        claim = session.get(Claim, "claim:1")
+        assert claim is not None
+        assert claim.status is ClaimStatus.ACCEPTED
+        assert claim.source.trust == SourceTrust(0.9, "curated")
+
+
+def test_session_constructor_rejects_unknown_and_missing_fields(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_catalog())
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        with pytest.raises(ValueError, match="unknown field"):
+            session.construct(
+                "claims",
+                {
+                    "id": "claim:1",
+                    "source_id": "source:1",
+                    "text": "Mass is invariant.",
+                    "status": ClaimStatus.ACCEPTED,
+                    "old_status_alias": "accepted",
+                },
+            )
+        with pytest.raises(ValueError, match="missing required field"):
+            session.construct(
+                "claims",
+                {
+                    "id": "claim:1",
+                    "source_id": "source:1",
+                    "status": ClaimStatus.ACCEPTED,
+                },
+            )
+
+
 def test_schema_catalog_validation_detects_missing_columns(tmp_path: Path) -> None:
     schema = build_sqlalchemy_schema(_catalog())
     store_path = tmp_path / "broken.sqlite"

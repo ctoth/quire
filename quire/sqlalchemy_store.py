@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from os import PathLike
@@ -43,6 +43,23 @@ class DerivedSession:
 
     def close(self) -> None:
         self.session.close()
+
+    def construct(self, family_name: str, values: Mapping[str, object]) -> object:
+        return self.schema.construct(family_name, values)
+
+    def add_family(self, family_name: str, values: Mapping[str, object]) -> object:
+        entity = self.construct(family_name, values)
+        self.session.add(entity)
+        return entity
+
+    def add_family_all(
+        self,
+        family_name: str,
+        values: Iterable[Mapping[str, object]],
+    ) -> tuple[object, ...]:
+        entities = tuple(self.construct(family_name, item) for item in values)
+        self.session.add_all(entities)
+        return entities
 
 
 @dataclass(frozen=True)
