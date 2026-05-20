@@ -122,6 +122,26 @@ class SearchClaim:
         self.rendered_text = rendered_text
 
 
+class JoinedSearchClaim:
+    def __init__(self, id: str, seq: int) -> None:
+        self.id = id
+        self.seq = seq
+
+
+class JoinedSearchClaimTextPayload:
+    def __init__(
+        self,
+        claim_id: str,
+        statement: str,
+        conditions_cel: str,
+        expression: str,
+    ) -> None:
+        self.claim_id = claim_id
+        self.statement = statement
+        self.conditions_cel = conditions_cel
+        self.expression = expression
+
+
 class VectorEntity:
     def __init__(self, id: str, seq: int, content_hash: str, text: str) -> None:
         self.id = id
@@ -260,6 +280,43 @@ def test_fts_declarations_create_populate_and_query_with_sessions(tmp_path: Path
     ]
 
 
+def test_fts_source_query_can_populate_joined_index_with_custom_key(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_joined_search_catalog())
+    store_path = tmp_path / "joined-search.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+    validate_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add_all(
+            (
+                JoinedSearchClaim("claim:gravity", 1),
+                JoinedSearchClaimTextPayload(
+                    "claim:gravity",
+                    "Gravity curves spacetime.",
+                    '["relativity", "orbit"]',
+                    "G m_1 m_2 / r^2",
+                ),
+                JoinedSearchClaim("claim:energy", 2),
+                JoinedSearchClaimTextPayload(
+                    "claim:energy",
+                    "Energy is conserved.",
+                    '["conservation"]',
+                    "dE/dt = 0",
+                ),
+            )
+        )
+        session.commit()
+        populate_fts_index(session, "claim_search_joined")
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        statement_hits = search_fts_index(session, "claim_search_joined", "spacetime")
+        condition_hits = search_fts_index(session, "claim_search_joined", "orbit")
+
+    assert [hit.entity_id for hit in statement_hits] == ["claim:gravity"]
+    assert [hit.entity_id for hit in condition_hits] == ["claim:gravity"]
+
+
 def test_vector_cache_create_insert_search_snapshot_and_restore(tmp_path: Path) -> None:
     schema = build_sqlalchemy_schema(_vector_catalog())
     cache = schema.vector_cache("entity_embeddings")
@@ -390,6 +447,57 @@ def _search_catalog() -> Any:
                     ),
                     tokenize="porter unicode61",
                 ),
+            ),
+        ),
+    )
+
+
+def _joined_search_catalog() -> Any:
+    claims = _family("joined_search_claims", JoinedSearchClaim)
+    payloads = _family(
+        "joined_search_claim_text_payload",
+        JoinedSearchClaimTextPayload,
+    )
+    return charter_catalog(
+        FamilyCharter(
+            family=claims,
+            model=JoinedSearchClaim,
+            fields=(
+                CharterField("id", str, primary_key=True, nullable=False),
+                CharterField("seq", int, nullable=False),
+            ),
+            fts_indexes=(
+                CharterFtsIndex(
+                    "claim_search_joined",
+                    entity_id_field="claim_id",
+                    fields=("statement", "conditions", "expression"),
+                    source_query="""
+                        SELECT
+                            c.id AS claim_id,
+                            COALESCE(t.statement, '') AS statement,
+                            COALESCE(
+                                (
+                                    SELECT group_concat(value, ' ')
+                                    FROM json_each(t.conditions_cel)
+                                ),
+                                ''
+                            ) AS conditions,
+                            COALESCE(t.expression, '') AS expression
+                        FROM joined_search_claims c
+                        JOIN joined_search_claim_text_payload t ON t.claim_id = c.id
+                        ORDER BY c.seq
+                    """,
+                ),
+            ),
+        ),
+        FamilyCharter(
+            family=payloads,
+            model=JoinedSearchClaimTextPayload,
+            fields=(
+                CharterField("claim_id", str, primary_key=True, nullable=False),
+                CharterField("statement", str, nullable=False),
+                CharterField("conditions_cel", str, nullable=False),
+                CharterField("expression", str, nullable=False),
             ),
         ),
     )

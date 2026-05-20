@@ -190,12 +190,13 @@ def _fts_indexes_from_catalog(catalog: SchemaCatalog) -> dict[str, SchemaFtsInde
     for schema_object in catalog.objects:
         field_names = {field.name for field in schema_object.fields}
         for index in schema_object.fts_indexes:
-            missing = {index.entity_id_field, *index.fields} - field_names
-            if missing:
-                joined = ", ".join(sorted(missing))
-                raise ValueError(
-                    f"FTS index {index.name!r} references unknown field(s): {joined}."
-                )
+            if index.source_query is None:
+                missing = {index.entity_id_field, *index.fields} - field_names
+                if missing:
+                    joined = ", ".join(sorted(missing))
+                    raise ValueError(
+                        f"FTS index {index.name!r} references unknown field(s): {joined}."
+                    )
             if index.name in indexes:
                 raise ValueError(f"duplicate FTS index name {index.name!r}.")
             indexes[index.name] = index

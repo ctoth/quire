@@ -96,7 +96,12 @@ class SchemaFtsIndex:
     entity_id_field: str
     fields: tuple[str, ...]
     tokenize: str | None = None
+    source_query: str | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
+
+    @property
+    def column_names(self) -> tuple[str, ...]:
+        return (self.entity_id_field, *self.fields)
 
     def payload(self) -> dict[str, object]:
         return {
@@ -105,6 +110,7 @@ class SchemaFtsIndex:
             "fields": self.fields,
             "metadata": dict(sorted(self.metadata.items())),
             "name": self.name,
+            "source_query": self.source_query,
             "tokenize": self.tokenize,
         }
 

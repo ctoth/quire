@@ -89,6 +89,7 @@ class CharterFtsIndex:
     entity_id_field: str
     fields: tuple[str, ...]
     tokenize: str | None = None
+    source_query: str | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def to_schema_fts_index(self, family_name: str) -> SchemaFtsIndex:
@@ -98,6 +99,7 @@ class CharterFtsIndex:
             entity_id_field=self.entity_id_field,
             fields=self.fields,
             tokenize=self.tokenize,
+            source_query=self.source_query,
             metadata=self.metadata,
         )
 

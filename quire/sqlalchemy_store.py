@@ -125,12 +125,20 @@ def readonly_session(
 def populate_fts_index(derived: DerivedSession, index_name: str) -> None:
     index = derived.schema.fts_index(index_name)
     fts_table = derived.schema.fts_table(index_name)
-    source_table = derived.schema.table(index.family_name)
-    columns = (index.entity_id_field, *index.fields)
-    rows = derived.session.execute(
-        select(*(source_table.c[column] for column in columns))
-    ).mappings()
     derived.session.execute(delete(fts_table))
+    if index.source_query is not None:
+        columns = ", ".join(_quote_identifier(column) for column in index.column_names)
+        derived.session.execute(
+            text(
+                f"INSERT INTO {_quote_identifier(index.name)} ({columns}) "
+                f"{index.source_query}"
+            )
+        )
+        return
+    source_table = derived.schema.table(index.family_name)
+    rows = derived.session.execute(
+        select(*(source_table.c[column] for column in index.column_names))
+    ).mappings()
     derived.session.execute(insert(fts_table), [dict(row) for row in rows])
 
 
@@ -261,3 +269,7 @@ def _schema_hash_from_row(row: RowMapping) -> str:
     if not isinstance(value, str):
         raise ValueError("Unsupported SQLAlchemy store: invalid schema catalog hash.")
     return value
+
+
+def _quote_identifier(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
