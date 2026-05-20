@@ -142,6 +142,13 @@ class JoinedSearchClaimTextPayload:
         self.expression = expression
 
 
+class AliasWithoutDatabasePrimaryKey:
+    def __init__(self, owner_id: str, alias_name: str, source: str) -> None:
+        self.owner_id = owner_id
+        self.alias_name = alias_name
+        self.source = source
+
+
 class VectorEntity:
     def __init__(self, id: str, seq: int, content_hash: str, text: str) -> None:
         self.id = id
@@ -222,6 +229,35 @@ def test_schema_hash_changes_when_charter_shape_changes() -> None:
     )
 
     assert base.catalog_hash != changed.catalog_hash
+
+
+def test_mapper_supports_tables_without_database_primary_keys(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_no_database_primary_key_catalog())
+    alias_table = schema.table("alias_without_database_primary_key")
+    assert not alias_table.primary_key.columns
+
+    store_path = tmp_path / "no-primary-key.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+    with writable_session(store_path, schema) as session:
+        session.add_all(
+            (
+                AliasWithoutDatabasePrimaryKey("concept:mass", "mass", "label"),
+                AliasWithoutDatabasePrimaryKey("concept:mass", "m", "symbol"),
+            )
+        )
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        rows = (
+            session.query(AliasWithoutDatabasePrimaryKey)
+            .order_by(text("owner_id"), text("alias_name"))
+            .all()
+        )
+
+    assert [(row.owner_id, row.alias_name, row.source) for row in rows] == [
+        ("concept:mass", "m", "symbol"),
+        ("concept:mass", "mass", "label"),
+    ]
 
 
 def test_fts_declarations_create_populate_and_query_with_sessions(tmp_path: Path) -> None:
@@ -500,6 +536,24 @@ def _joined_search_catalog() -> Any:
                 CharterField("expression", str, nullable=False),
             ),
         ),
+    )
+
+
+def _no_database_primary_key_catalog() -> Any:
+    aliases = _family(
+        "alias_without_database_primary_key",
+        AliasWithoutDatabasePrimaryKey,
+    )
+    return charter_catalog(
+        FamilyCharter(
+            family=aliases,
+            model=AliasWithoutDatabasePrimaryKey,
+            fields=(
+                CharterField("owner_id", str, nullable=False),
+                CharterField("alias_name", str, nullable=False),
+                CharterField("source", str, nullable=False),
+            ),
+        )
     )
 
 

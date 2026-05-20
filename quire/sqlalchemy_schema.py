@@ -312,7 +312,10 @@ def _map_models(schema: SqlAlchemySchema) -> None:
             if foreign_key_column is not None:
                 relationship_kwargs["foreign_keys"] = (foreign_key_column,)
             properties[rel.name] = relationship(target_model, **relationship_kwargs)
-        schema.mapper_registry.map_imperatively(model, table, properties=properties)
+        mapper_kwargs: dict[str, Any] = {"properties": properties}
+        if not table.primary_key.columns:
+            mapper_kwargs["primary_key"] = tuple(table.c)
+        schema.mapper_registry.map_imperatively(model, table, **mapper_kwargs)
 
 
 def _relationship_foreign_key_column(
