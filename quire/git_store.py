@@ -9,7 +9,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 from urllib.parse import quote
 
 from dulwich.index import build_index_from_tree
@@ -20,9 +20,6 @@ from dulwich.repo import BaseRepo, MemoryRepo, Repo
 from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
 from quire.refs import RefName
 from quire.tree_path import GitTreePath
-
-
-TPath = TypeVar("TPath", str, Path)
 
 
 @dataclass(frozen=True)
@@ -271,7 +268,7 @@ class HeadBoundTransaction:
 
     def commit_files(
         self,
-        changes: Mapping[TPath, bytes],
+        changes: Mapping[Any, bytes],
         message: str,
     ) -> str:
         return self.commit_batch(changes, [], message)
@@ -285,7 +282,7 @@ class HeadBoundTransaction:
 
     def commit_batch(
         self,
-        adds: Mapping[TPath, bytes],
+        adds: Mapping[Any, bytes],
         deletes: Sequence[str | Path],
         message: str,
     ) -> str:
@@ -555,7 +552,7 @@ class GitStore:
 
     def commit_files(
         self,
-        changes: Mapping[TPath, bytes],
+        changes: Mapping[Any, bytes],
         message: str,
         *,
         branch: str | None = None,
@@ -577,7 +574,7 @@ class GitStore:
 
     def commit_batch(
         self,
-        adds: Mapping[TPath, bytes],
+        adds: Mapping[Any, bytes],
         deletes: Sequence[str | Path],
         message: str,
         *,
@@ -1117,7 +1114,7 @@ class GitStore:
 
     def _commit(
         self,
-        adds: Mapping[TPath, bytes],
+        adds: Mapping[Any, bytes],
         deletes: Sequence[str | Path],
         message: str,
         branch: str | None,
