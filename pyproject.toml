@@ -38,6 +38,7 @@ dependencies = [
     "msgspec>=0.19.0",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0",
+    "sqlalchemy-fts5",
 ]
 
 [project.urls]
@@ -71,3 +72,6 @@ packages = ["quire"]
 [tool.pytest.ini_options]
 timeout = 300
 timeout_method = "thread"
+
+[tool.uv.sources]
+sqlalchemy-fts5 = { git = "https://github.com/ctoth/sqlalchemy-fts5", rev = "ac6d05968f2f3bcf61c20a09efa41de4a605560d" }
