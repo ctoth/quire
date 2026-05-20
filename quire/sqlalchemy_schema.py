@@ -22,7 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import registry, relationship
+from sqlalchemy.orm import clear_mappers, registry, relationship
 from sqlalchemy.sql.type_api import TypeEngine
 from sqlalchemy.types import TypeDecorator
 
@@ -104,6 +104,7 @@ class SqlAlchemySchema:
 
 
 def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
+    clear_mappers()
     metadata = MetaData()
     mapper_registry = registry(metadata=metadata)
     tables = {
