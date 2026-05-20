@@ -82,6 +82,16 @@ class DerivedStoreHandle:
     def open_readonly(self) -> sqlite3.Connection:
         return connect_sqlite_store_readonly(self.path)
 
+    def readonly_session(self, schema: Any) -> Any:
+        from quire.sqlalchemy_store import readonly_session
+
+        return readonly_session(self.path, schema)
+
+    def writable_session(self, schema: Any) -> Any:
+        from quire.sqlalchemy_store import writable_session
+
+        return writable_session(self.path, schema)
+
 
 @dataclass(frozen=True)
 class DerivedStoreGcReport:
