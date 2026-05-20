@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 import msgspec
 import pytest
@@ -148,7 +149,7 @@ def test_prepare_has_no_git_side_effects():
 
 
 def test_document_store_backend_extends_read_only_backend_protocol():
-    assert ReadOnlyDocumentStoreBackend in DocumentStoreBackend.__mro__
+    assert ReadOnlyDocumentStoreBackend in cast(Any, DocumentStoreBackend).__mro__
 
 
 def test_delete_removes_document_from_branch():
@@ -353,24 +354,42 @@ def test_custom_codecs_override_defaults():
     store.save(family, "example", DemoDocument("alpha"), message="save custom")
 
     assert store.require(family, "example") == DemoDocument("alpha")
-    assert store.render(DemoDocument("beta"), family) == "name=beta"
-    assert store.payload(DemoDocument("beta"), family) == {"custom_name": "beta"}
+    assert store.render(DemoDocument("beta"), cast(Any, family)) == "name=beta"
+    assert store.payload(DemoDocument("beta"), cast(Any, family)) == {"custom_name": "beta"}
 
 
 def test_store_uses_single_document_codec_for_default_operations():
     events: list[str] = []
+
+    def convert_custom(payload: object, document_type: type[DemoDocument], *, source: str) -> DemoDocument:
+        events.append(f"convert:{source}")
+        return document_type(**cast(dict[str, object], payload))
+
+    def decode_custom(payload: bytes, document_type: type[DemoDocument], *, source: str) -> DemoDocument:
+        events.append(f"decode:{source}")
+        return document_type(payload.decode("utf-8").split("=", 1)[1])
+
+    def encode_custom(document: object) -> bytes:
+        typed = cast(DemoDocument, document)
+        events.append(f"encode:{typed.name}")
+        return f"name={typed.name}".encode("utf-8")
+
+    def render_custom(document: object) -> str:
+        typed = cast(DemoDocument, document)
+        events.append(f"render:{typed.name}")
+        return f"name={typed.name}"
+
+    def payload_custom(document: object) -> dict[str, object]:
+        typed = cast(DemoDocument, document)
+        events.append(f"payload:{typed.name}")
+        return {"name": typed.name}
+
     codec = DocumentCodec(
-        convert_document=lambda payload, document_type, *, source: (
-            events.append(f"convert:{source}") or document_type(**payload)
-        ),
-        decode_document=lambda payload, document_type, *, source: (
-            events.append(f"decode:{source}") or document_type(payload.decode("utf-8").split("=", 1)[1])
-        ),
-        encode_document=lambda document: (
-            events.append(f"encode:{document.name}") or f"name={document.name}".encode("utf-8")
-        ),
-        render_document=lambda document: events.append(f"render:{document.name}") or f"name={document.name}",
-        document_to_payload=lambda document: events.append(f"payload:{document.name}") or {"name": document.name},
+        convert_document=convert_custom,
+        decode_document=decode_custom,
+        encode_document=encode_custom,
+        render_document=render_custom,
+        document_to_payload=payload_custom,
     )
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory(), codec=codec)
     family = _demo_family()
