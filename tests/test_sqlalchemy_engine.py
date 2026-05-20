@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
@@ -120,8 +121,8 @@ def test_schema_catalog_validation_detects_missing_columns(tmp_path: Path) -> No
     create_sqlalchemy_store(store_path, schema)
 
     with writable_session(store_path, schema) as session:
-        session.execute(schema.table("sources").delete())
-        session.execute(schema.table("sources").drop(schema.metadata))
+        session.execute(text("DROP TABLE sources"))
+        session.commit()
 
     with pytest.raises(ValueError, match="missing table"):
         validate_sqlalchemy_store(store_path, schema)
