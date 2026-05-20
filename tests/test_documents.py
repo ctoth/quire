@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from quire.documents import (
@@ -118,14 +120,29 @@ def test_source_label_uses_as_posix_for_tree_path(tmp_path):
 
 
 def test_document_codec_can_group_custom_document_operations():
+    def convert_custom(payload: object, document_type: type[ExampleDocument], *, source: str) -> ExampleDocument:
+        return document_type(**cast(dict[str, object], payload))
+
+    def decode_custom(payload: bytes, document_type: type[ExampleDocument], *, source: str) -> ExampleDocument:
+        raw_items = (item.split("=", 1) for item in payload.decode("utf-8").splitlines())
+        return document_type(**dict(raw_items))
+
+    def encode_custom(document: object) -> bytes:
+        typed = cast(ExampleDocument, document)
+        return f"name={typed.name}\nvalue={typed.value}".encode("utf-8")
+
+    def render_custom(document: object) -> str:
+        return f"name={cast(ExampleDocument, document).name}"
+
+    def payload_custom(document: object) -> dict[str, object]:
+        return {"custom": cast(ExampleDocument, document).name}
+
     codec = DocumentCodec(
-        convert_document=lambda payload, document_type, *, source: document_type(**payload),
-        decode_document=lambda payload, document_type, *, source: document_type(
-            **dict(item.split("=", 1) for item in payload.decode("utf-8").splitlines())
-        ),
-        encode_document=lambda document: f"name={document.name}\nvalue={document.value}".encode("utf-8"),
-        render_document=lambda document: f"name={document.name}",
-        document_to_payload=lambda document: {"custom": document.name},
+        convert_document=convert_custom,
+        decode_document=decode_custom,
+        encode_document=encode_custom,
+        render_document=render_custom,
+        document_to_payload=payload_custom,
     )
     document = ExampleDocument(name="demo", value="3")  # type: ignore[arg-type]
 
