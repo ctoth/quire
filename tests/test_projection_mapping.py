@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, cast
 
 import pytest
 
@@ -239,9 +240,10 @@ def test_attached_rows_schema_material_declares_attachment_boundary():
     )
 
     assert result == Parent("p1", (Link("c1", "target", "p1"),))
+    fields = cast(tuple[dict[str, Any], ...], model.schema_hash_material()["fields"])
     assert any(
         field.get("kind") == "ProjectionAttachedRows" and field.get("path") == ("links",)
-        for field in model.schema_hash_material()["fields"]
+        for field in fields
     )
 
 
@@ -761,9 +763,10 @@ def test_projection_binding_decodes_declared_read_name_without_scalar_aliases():
         "r1",
         "Canonical",
     )
+    fields = cast(tuple[dict[str, Any], ...], model.schema_hash_material()["fields"])
     binding_material = next(
         field
-        for field in model.schema_hash_material()["fields"]
+        for field in fields
         if field["kind"] == "ProjectionBinding"
     )
     assert binding_material == {
