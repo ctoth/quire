@@ -90,6 +90,28 @@ class SchemaIndex:
 
 
 @dataclass(frozen=True)
+class SchemaRelationship:
+    name: str
+    target_family: str
+    foreign_key: str | None = None
+    back_populates: str | None = None
+    uselist: bool = True
+    association_object: bool = False
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "association_object": self.association_object,
+            "back_populates": self.back_populates,
+            "foreign_key": self.foreign_key,
+            "metadata": dict(sorted(self.metadata.items())),
+            "name": self.name,
+            "target_family": self.target_family,
+            "uselist": self.uselist,
+        }
+
+
+@dataclass(frozen=True)
 class SchemaObject:
     name: str
     family_name: str
@@ -99,6 +121,7 @@ class SchemaObject:
     fields: tuple[SchemaField, ...]
     lifecycle_states: tuple[str, ...] = ()
     indexes: tuple[SchemaIndex, ...] = ()
+    relationships: tuple[SchemaRelationship, ...] = ()
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
 
     def field(self, name: str) -> SchemaField:
@@ -119,6 +142,10 @@ class SchemaObject:
             "lifecycle_states": self.lifecycle_states,
             "model": self.model_path,
             "name": self.name,
+            "relationships": tuple(
+                relationship.payload()
+                for relationship in _sort_by_name(self.relationships)
+            ),
             "semantic_metadata": dict(sorted(self.semantic_metadata.items())),
         }
 
