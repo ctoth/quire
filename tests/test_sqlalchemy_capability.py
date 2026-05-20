@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import (
@@ -62,7 +62,7 @@ class GenericJsonValue(TypeDecorator[Any]):
             return None
         import json
 
-        payload = asdict(value) if is_dataclass(value) else value
+        payload = getattr(value, "__dict__", value) if is_dataclass(value) else value
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     def process_result_value(self, value: object, dialect: object) -> object | None:
@@ -148,7 +148,7 @@ class ProofTable:
 def _table_from_ir(metadata: MetaData, declaration: ProofTable) -> Table:
     columns: list[Column[Any]] = []
     for field_def in declaration.fields:
-        sql_type: object
+        sql_type: Any
         if field_def.json_value_type is not None:
             sql_type = GenericJsonValue(field_def.json_value_type)
         elif field_def.enum_type is not None:
@@ -157,7 +157,7 @@ def _table_from_ir(metadata: MetaData, declaration: ProofTable) -> Table:
             sql_type = Integer()
         else:
             sql_type = Text()
-        args: list[object] = [field_def.name, sql_type]
+        args: list[Any] = [field_def.name, sql_type]
         if field_def.foreign_key is not None:
             args.append(ForeignKey(field_def.foreign_key))
         columns.append(
@@ -300,20 +300,23 @@ def test_imperative_mapping_generated_tables_reserved_metadata_relationships_and
         assert tables["source"].c["metadata"].info == {"python_type": "dict"}
 
         with Session(engine) as session:
-            loaded = session.scalars(select(Source).where(Source.id == "src:one")).one()
-            loaded_claim = session.scalars(select(Claim).where(Claim.id == "claim:one")).one()
+            source_model = cast(Any, Source)
+            claim_model = cast(Any, Claim)
+            loaded = session.scalars(select(Source).where(source_model.id == "src:one")).one()
+            loaded_claim = session.scalars(select(Claim).where(claim_model.id == "claim:one")).one()
+            loaded_claim_relationships = cast(Any, loaded_claim)
 
             assert loaded.metadata == {"rank": 1, "title": "Proof Source"}
             assert loaded.origin is SourceOrigin.PAPER
             assert loaded.trust == SourceTrust(score=0.92, method="reviewed")
-            assert loaded_claim.source is loaded
-            assert loaded_claim.concept_links[0].concept.label == "water"
+            assert loaded_claim_relationships.source is loaded
+            assert loaded_claim_relationships.concept_links[0].concept.label == "water"
             assert loaded_claim.concept_links[0].role is ClaimConceptRole.OUTPUT
             assert loaded_claim.concept_links[0].ordinal == 0
             assert loaded_claim.concept_links[0].binding_name == "subject"
             assert hasattr(loaded_claim, "_sa_instance_state")
-        assert SourceTrust.__dataclass_params__.frozen is True
-        assert not Source.__dataclass_params__.frozen
+        assert cast(Any, SourceTrust).__dataclass_params__.frozen is True
+        assert not cast(Any, Source).__dataclass_params__.frozen
     finally:
         mapper_registry.dispose()
 
