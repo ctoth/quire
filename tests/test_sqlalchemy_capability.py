@@ -11,6 +11,7 @@ from sqlalchemy import (
     Column,
     ForeignKey,
     Index,
+    Integer,
     MetaData,
     Table,
     Text,
@@ -152,8 +153,10 @@ def _table_from_ir(metadata: MetaData, declaration: ProofTable) -> Table:
             sql_type = GenericJsonValue(field_def.json_value_type)
         elif field_def.enum_type is not None:
             sql_type = GenericEnumText(field_def.enum_type)
+        elif field_def.python_type is int:
+            sql_type = Integer()
         else:
-            sql_type = Text() if field_def.python_type is str else field_def.python_type
+            sql_type = Text()
         args: list[object] = [field_def.name, sql_type]
         if field_def.foreign_key is not None:
             args.append(ForeignKey(field_def.foreign_key))
