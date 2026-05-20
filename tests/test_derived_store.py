@@ -52,6 +52,15 @@ from quire.sqlite_vec_store import (
 )
 
 
+@dataclass(frozen=True)
+class DemoEmbeddingIdentity:
+    provider: str = "demo"
+    model_name: str = "demo-model"
+    model_version: str = "1"
+    content_digest: str = "demo-content"
+    identity_hash: str = "missing"
+
+
 def _serialize_float32(vector: list[float]) -> bytes:
     return struct.pack(f"{len(vector)}f", *vector)
 
@@ -887,12 +896,6 @@ def test_sqlite_vec_store_spec_uses_projection_primitives_for_status_and_names()
         assert spec.vector_projection.projection_name(
             {"model_identity_hash": "abc123", "dimensions": "3"}
         ) == "page_vec_abc123"
-        assert store.existing_content_hashes(
-            type(
-                "Identity",
-                (),
-                {"identity_hash": "missing"},
-            )()
-        ) == {}
+        assert store.existing_content_hashes(DemoEmbeddingIdentity()) == {}
     finally:
         conn.close()
