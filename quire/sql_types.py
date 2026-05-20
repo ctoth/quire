@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from quire.schema_ir import python_type_path
 
@@ -41,8 +41,13 @@ def python_type_to_sql(
             python_type=python_type_path(python_type),
             value_object_type=python_type_path(python_type),
         )
-    if enum_type is not None or issubclass(python_type, Enum):
-        resolved_enum = enum_type or python_type
+    if enum_type is not None:
+        resolved_enum = enum_type
+    elif issubclass(python_type, Enum):
+        resolved_enum = cast(type[Enum], python_type)
+    else:
+        resolved_enum = None
+    if resolved_enum is not None:
         return SqlTypeSpec(
             storage_kind="enum",
             ddl_name="TEXT",
