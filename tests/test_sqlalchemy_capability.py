@@ -303,15 +303,15 @@ def test_imperative_mapping_generated_tables_reserved_metadata_relationships_and
             loaded = session.scalars(select(Source).where(Source.id == "src:one")).one()
             loaded_claim = session.scalars(select(Claim).where(Claim.id == "claim:one")).one()
 
-        assert loaded.metadata == {"rank": 1, "title": "Proof Source"}
-        assert loaded.origin is SourceOrigin.PAPER
-        assert loaded.trust == SourceTrust(score=0.92, method="reviewed")
-        assert loaded_claim.source is loaded
-        assert loaded_claim.concept_links[0].concept.label == "water"
-        assert loaded_claim.concept_links[0].role is ClaimConceptRole.OUTPUT
-        assert loaded_claim.concept_links[0].ordinal == 0
-        assert loaded_claim.concept_links[0].binding_name == "subject"
-        assert hasattr(loaded_claim, "_sa_instance_state")
+            assert loaded.metadata == {"rank": 1, "title": "Proof Source"}
+            assert loaded.origin is SourceOrigin.PAPER
+            assert loaded.trust == SourceTrust(score=0.92, method="reviewed")
+            assert loaded_claim.source is loaded
+            assert loaded_claim.concept_links[0].concept.label == "water"
+            assert loaded_claim.concept_links[0].role is ClaimConceptRole.OUTPUT
+            assert loaded_claim.concept_links[0].ordinal == 0
+            assert loaded_claim.concept_links[0].binding_name == "subject"
+            assert hasattr(loaded_claim, "_sa_instance_state")
         assert SourceTrust.__dataclass_params__.frozen is True
         assert not Source.__dataclass_params__.frozen
     finally:
