@@ -363,7 +363,7 @@ def test_store_uses_single_document_codec_for_default_operations():
 
     def convert_custom(payload: object, document_type: type[DemoDocument], *, source: str) -> DemoDocument:
         events.append(f"convert:{source}")
-        return document_type(**cast(dict[str, object], payload))
+        return document_type(**cast(dict[str, Any], payload))
 
     def decode_custom(payload: bytes, document_type: type[DemoDocument], *, source: str) -> DemoDocument:
         events.append(f"decode:{source}")
