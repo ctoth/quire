@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -121,11 +121,11 @@ def test_source_label_uses_as_posix_for_tree_path(tmp_path):
 
 def test_document_codec_can_group_custom_document_operations():
     def convert_custom(payload: object, document_type: type[ExampleDocument], *, source: str) -> ExampleDocument:
-        return document_type(**cast(dict[str, object], payload))
+        return document_type(**cast(dict[str, Any], payload))
 
     def decode_custom(payload: bytes, document_type: type[ExampleDocument], *, source: str) -> ExampleDocument:
         raw_items = (item.split("=", 1) for item in payload.decode("utf-8").splitlines())
-        return document_type(**dict(raw_items))
+        return document_type(**cast(dict[str, Any], dict(raw_items)))
 
     def encode_custom(document: object) -> bytes:
         typed = cast(ExampleDocument, document)
