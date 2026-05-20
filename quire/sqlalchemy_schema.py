@@ -341,6 +341,13 @@ def _map_models(schema: SqlAlchemySchema) -> None:
             )
             if foreign_key_column is not None:
                 relationship_kwargs["foreign_keys"] = (foreign_key_column,)
+            order_by_columns = _relationship_order_by_columns(
+                table,
+                target_table,
+                rel.order_by,
+            )
+            if order_by_columns:
+                relationship_kwargs["order_by"] = order_by_columns
             properties[rel.name] = relationship(target_model, **relationship_kwargs)
         mapper_kwargs: dict[str, Any] = {"properties": properties}
         if not table.primary_key.columns:
@@ -360,6 +367,25 @@ def _relationship_foreign_key_column(
     if foreign_key_name in target_table.c:
         return target_table.c[foreign_key_name]
     return None
+
+
+def _relationship_order_by_columns(
+    source_table: Table,
+    target_table: Table,
+    order_by: tuple[str, ...],
+) -> tuple[Column[Any], ...]:
+    columns: list[Column[Any]] = []
+    for field_name in order_by:
+        if field_name in target_table.c:
+            columns.append(target_table.c[field_name])
+        elif field_name in source_table.c:
+            columns.append(source_table.c[field_name])
+        else:
+            raise KeyError(
+                f"relationship order_by field {field_name!r} is not present "
+                f"on {source_table.name!r} or {target_table.name!r}"
+            )
+    return tuple(columns)
 
 
 def _load_type(path: str) -> type[Any]:

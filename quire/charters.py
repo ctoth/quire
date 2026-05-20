@@ -139,6 +139,7 @@ class CharterRelationship:
     back_populates: str | None = None
     uselist: bool = True
     association_object: bool = False
+    order_by: tuple[str, ...] = ()
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def to_schema_relationship(self) -> SchemaRelationship:
@@ -149,6 +150,7 @@ class CharterRelationship:
             back_populates=self.back_populates,
             uselist=self.uselist,
             association_object=self.association_object,
+            order_by=self.order_by,
             metadata=self.metadata,
         )
 

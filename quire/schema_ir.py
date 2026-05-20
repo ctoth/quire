@@ -157,6 +157,7 @@ class SchemaRelationship:
     back_populates: str | None = None
     uselist: bool = True
     association_object: bool = False
+    order_by: tuple[str, ...] = ()
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def payload(self) -> dict[str, object]:
@@ -166,6 +167,7 @@ class SchemaRelationship:
             "foreign_key": self.foreign_key,
             "metadata": dict(sorted(self.metadata.items())),
             "name": self.name,
+            "order_by": self.order_by,
             "target_family": self.target_family,
             "uselist": self.uselist,
         }

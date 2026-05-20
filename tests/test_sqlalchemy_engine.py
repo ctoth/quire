@@ -187,9 +187,11 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
     with writable_session(store_path, schema) as session:
         source = Source("source:1", "reserved field survives", SourceTrust(0.9, "curated"))
         concept = Concept("concept:mass", "Mass")
+        force = Concept("concept:force", "Force")
         claim = Claim("claim:1", "source:1", "Mass is invariant.", ClaimStatus.ACCEPTED)
+        force_link = ClaimConceptLink("claim:1", "concept:force", "related", 1, "f")
         link = ClaimConceptLink("claim:1", "concept:mass", "subject", 0, "m")
-        session.add_all((source, concept, claim, link))
+        session.add_all((source, concept, force, claim, force_link, link))
         session.commit()
 
     with readonly_session(store_path, schema) as session:
@@ -200,8 +202,9 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
         assert claim.source.trust == SourceTrust(0.9, "curated")
         assert claim.concept_links[0].concept.label == "Mass"
         assert claim.concept_links[0].binding_name == "m"
+        assert [link.binding_name for link in claim.concept_links] == ["m", "f"]
 
-        session.add(Concept("concept:force", "Force"))
+        session.add(Concept("concept:energy", "Energy"))
         with pytest.raises(OperationalError):
             session.commit()
 
@@ -745,6 +748,7 @@ def _charters(
                     foreign_key="claim_id",
                     back_populates="claim",
                     association_object=True,
+                    order_by=("ordinal",),
                 ),
             ),
         ),
