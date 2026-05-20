@@ -175,6 +175,8 @@ class FamilyCharter:
             artifact_contract_version=str(self.family.artifact_family.contract_version),
             model_path=python_type_path(self.model),
             fields=tuple(field.to_schema_field() for field in self.fields),
+            identity_field=self.family.identity_field,
+            reference_keys=self.family.reference_keys,
             lifecycle_states=self.lifecycle_states,
             indexes=tuple(index.to_schema_index() for index in self.indexes),
             fts_indexes=tuple(

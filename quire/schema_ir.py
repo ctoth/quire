@@ -4,6 +4,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from quire.references import ReferenceKey
+
 
 def python_type_path(python_type: type[Any]) -> str:
     return f"{python_type.__module__}.{python_type.__qualname__}"
@@ -181,6 +183,8 @@ class SchemaObject:
     artifact_contract_version: str
     model_path: str
     fields: tuple[SchemaField, ...]
+    identity_field: str | None = None
+    reference_keys: tuple[ReferenceKey, ...] = ()
     lifecycle_states: tuple[str, ...] = ()
     indexes: tuple[SchemaIndex, ...] = ()
     fts_indexes: tuple[SchemaFtsIndex, ...] = ()
@@ -199,7 +203,9 @@ class SchemaObject:
             "family": {
                 "artifact_contract_version": self.artifact_contract_version,
                 "artifact_family": self.artifact_family_name,
+                "identity_field": self.identity_field,
                 "name": self.family_name,
+                "reference_keys": tuple(key.contract_body() for key in self.reference_keys),
             },
             "fields": tuple(field.payload() for field in _sort_by_name(self.fields)),
             "fts_indexes": tuple(index.payload() for index in _sort_by_name(self.fts_indexes)),

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
@@ -20,7 +20,7 @@ from quire.charters import (
     charter_catalog,
 )
 from quire.families import FamilyDefinition
-from quire.references import ForeignKeySpec
+from quire.references import ForeignKeySpec, ReferenceKey
 from quire.sqlalchemy_schema import build_sqlalchemy_schema
 from quire.sqlalchemy_store import (
     create_sqlalchemy_store,
@@ -247,6 +247,50 @@ def test_session_constructs_and_routes_objects_from_charter_fields(tmp_path: Pat
         assert claim is not None
         assert claim.status is ClaimStatus.ACCEPTED
         assert claim.source.trust == SourceTrust(0.9, "curated")
+
+
+def test_schema_resolves_family_references_from_charter_metadata(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(_catalog())
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add_family(
+            "sources",
+            {
+                "id": "source:1",
+                "metadata": "reserved field survives",
+                "trust": SourceTrust(0.9, "curated"),
+            },
+        )
+        session.add_family_all(
+            "concepts",
+            (
+                {"id": "concept:mass", "label": "Mass"},
+                {"id": "concept:force", "label": "Force"},
+            ),
+        )
+        session.add_family(
+            "claims",
+            {
+                "id": "claim:1",
+                "source_id": "source:1",
+                "text": "Mass is invariant.",
+                "status": ClaimStatus.ACCEPTED,
+            },
+        )
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        assert schema.model("concepts") is Concept
+        assert schema.identity_field("concepts") == "id"
+        assert schema.resolve_reference_id(session, "concepts", "Mass") == "concept:mass"
+        assert schema.require_reference_id(session, "concepts", "Force") == "concept:force"
+
+        claim_model = schema.model("claims")
+        claim_records = session.execute(select(claim_model)).scalars()
+        claim_index = schema.reference_index_from_records("claims", claim_records)
+        assert claim_index.resolve_id("claim:1") == "claim:1"
 
 
 def test_session_constructor_rejects_unknown_and_missing_fields(tmp_path: Path) -> None:
@@ -679,7 +723,7 @@ def _charters(
 ) -> tuple[FamilyCharter, ...]:
     sources = _family("sources", Source)
     claims = _family("claims", Claim)
-    concepts = _family("concepts", Concept)
+    concepts = _family("concepts", Concept, reference_keys=(ReferenceKey.field("label"),))
     links = _family("claim_concept_links", ClaimConceptLink)
 
     source_fields = [
@@ -799,7 +843,12 @@ def _charters(
     )
 
 
-def _family(name: str, model: type[object]) -> FamilyDefinition[Any, Any, Any, Any]:
+def _family(
+    name: str,
+    model: type[object],
+    *,
+    reference_keys: tuple[ReferenceKey, ...] = (),
+) -> FamilyDefinition[Any, Any, Any, Any]:
     return FamilyDefinition(
         key=name,
         name=name,
@@ -811,6 +860,7 @@ def _family(name: str, model: type[object]) -> FamilyDefinition[Any, Any, Any, A
             placement=FlatYamlPlacement(name, str),
         ),
         identity_field="id",
+        reference_keys=reference_keys,
     )
 
 

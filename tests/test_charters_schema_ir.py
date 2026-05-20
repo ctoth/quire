@@ -9,7 +9,7 @@ import msgspec
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, FamilyCharter, charter_catalog
 from quire.families import FamilyDefinition
-from quire.references import ForeignKeySpec
+from quire.references import ForeignKeySpec, ReferenceKey
 from quire.schema_catalog import SchemaCatalog
 from quire.sql_types import python_type_to_sql
 from quire.versions import VersionId
@@ -59,6 +59,7 @@ def _claim_family() -> FamilyDefinition[object, DemoFamily, str, ClaimDoc]:
             placement=FlatYamlPlacement("claims", str),
         ),
         identity_field="artifact_id",
+        reference_keys=(ReferenceKey.field("concept_id"),),
         foreign_keys=(foreign_key,),
         metadata={"semantic": True, "import_order": 20},
     )
@@ -92,6 +93,8 @@ def test_family_charter_composes_with_existing_family_and_reference_apis() -> No
     assert schema.family_name == "claims"
     assert schema.artifact_family_name == "claim_artifact"
     assert schema.artifact_contract_version == "2026.05.20"
+    assert schema.identity_field == "artifact_id"
+    assert schema.reference_keys == (ReferenceKey.field("concept_id"),)
     assert schema.model_path == "test_charters_schema_ir.Claim"
     assert schema.semantic_metadata["owner"] == "propstore.claims"
     assert schema.lifecycle_states == ("authored", "checked", "canonical")
@@ -140,4 +143,8 @@ def test_schema_catalog_payload_and_hash_are_stable() -> None:
     objects = cast(tuple[dict[str, Any], ...], payload["objects"])
     family_payload = cast(dict[str, object], objects[0]["family"])
     assert family_payload["artifact_family"] == "claim_artifact"
+    assert family_payload["identity_field"] == "artifact_id"
+    assert family_payload["reference_keys"] == (
+        {"kind": "field", "field": "concept_id"},
+    )
     assert first_catalog.schema_hash().startswith("sha256:")

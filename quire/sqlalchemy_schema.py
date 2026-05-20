@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -20,6 +20,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    select,
     text,
 )
 from sqlalchemy.orm import clear_mappers, registry, relationship
@@ -29,6 +30,7 @@ from sqlalchemy_fts5 import FTS5Table
 
 from quire.schema_catalog import SchemaCatalog
 from quire.schema_ir import SchemaField, SchemaFtsIndex, SchemaObject, SchemaVectorCache
+from quire.references import FamilyReferenceIndex, MissingReferenceError, ReferenceKey
 from quire.sql_types import SqlTypeSpec
 
 __all__ = [
@@ -111,6 +113,50 @@ class SqlAlchemySchema:
             return self.models_by_family[family_name]
         except KeyError as exc:
             raise KeyError(f"unknown SQLAlchemy schema model {family_name!r}") from exc
+
+    def identity_field(self, family_name: str) -> str:
+        schema_object = self.schema_object(family_name)
+        if schema_object.identity_field is not None:
+            return schema_object.identity_field
+        primary_keys = tuple(field.name for field in schema_object.fields if field.primary_key)
+        if len(primary_keys) == 1:
+            return primary_keys[0]
+        raise ValueError(f"family {family_name!r} has no single identity field")
+
+    def reference_index_from_records(
+        self,
+        family_name: str,
+        records: Iterable[object],
+    ) -> FamilyReferenceIndex[object]:
+        schema_object = self.schema_object(family_name)
+        identity_key = ReferenceKey.field(self.identity_field(family_name))
+        return FamilyReferenceIndex.from_records(
+            records,
+            family=family_name,
+            artifact_id=lambda record: next(iter(identity_key(record)), None),
+            keys=schema_object.reference_keys,
+        )
+
+    def resolve_reference_id(
+        self,
+        session: object,
+        family_name: str,
+        reference: object,
+    ) -> str | None:
+        model = self.model(family_name)
+        records = cast(Any, session).execute(select(model)).scalars()
+        return self.reference_index_from_records(family_name, records).resolve_id(reference)
+
+    def require_reference_id(
+        self,
+        session: object,
+        family_name: str,
+        reference: str,
+    ) -> str:
+        resolved = self.resolve_reference_id(session, family_name, reference)
+        if resolved is None:
+            raise MissingReferenceError(reference)
+        return resolved
 
     def fts_table(self, index_name: str) -> Table:
         try:
