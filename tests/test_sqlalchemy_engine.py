@@ -81,7 +81,7 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
     source_table = schema.table("sources")
     assert "metadata" in source_table.c
     assert "ix_sources_metadata" in {index.name for index in source_table.indexes}
-    assert {column.name for column in schema.table("claims").foreign_keys} == {"source_id"}
+    assert {foreign_key.parent.name for foreign_key in schema.table("claims").foreign_keys} == {"source_id"}
     assert {
         constraint.name
         for constraint in schema.table("claim_concept_links").constraints
