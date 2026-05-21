@@ -25,6 +25,10 @@ from quire.sql_types import python_type_to_sql
 class FamilyModel:
     """Base for charter-mapped family models with behavior but no field shape."""
 
+    def __init__(self, **values: object) -> None:
+        for key, value in values.items():
+            setattr(self, key, value)
+
 
 @dataclass(frozen=True)
 class CharterField:
