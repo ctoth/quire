@@ -5,13 +5,6 @@ from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
 
-from quire.projections import (
-    ProjectionColumn,
-    ProjectionSchema,
-    ProjectionSchemaError,
-    ProjectionTable,
-)
-
 DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30_000
 DERIVED_STORE_META_KEY = "derived_store"
 
@@ -26,16 +19,6 @@ class SqliteConnectionPolicy:
 
 SQLITE_WRITE_POLICY = SqliteConnectionPolicy()
 SQLITE_READONLY_POLICY = SqliteConnectionPolicy(journal_mode=None, query_only=True)
-
-DERIVED_STORE_META_PROJECTION = ProjectionTable(
-    name="meta",
-    columns=(
-        ProjectionColumn("key", "TEXT", primary_key=True),
-        ProjectionColumn("schema_version", "INTEGER", nullable=False),
-    ),
-    if_not_exists=True,
-)
-
 
 def configure_sqlite_connection(
     conn: sqlite3.Connection,
@@ -79,8 +62,14 @@ def connect_sqlite_store_readonly(
 
 
 def create_derived_store_meta_table(conn: sqlite3.Connection) -> None:
-    for statement in DERIVED_STORE_META_PROJECTION.ddl_statements():
-        conn.execute(statement)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL
+        )
+        """
+    )
 
 
 def write_derived_store_schema_metadata(
@@ -126,21 +115,3 @@ def read_derived_store_schema_version(
     except (IndexError, TypeError):
         return int(row[0])
 
-
-def validate_derived_store_schema(
-    conn: sqlite3.Connection,
-    *,
-    schema: ProjectionSchema,
-    expected_version: int,
-    key: str = DERIVED_STORE_META_KEY,
-) -> None:
-    actual_version = read_derived_store_schema_version(conn, key=key)
-    if actual_version != expected_version:
-        raise ValueError(
-            "Unsupported derived store schema version: "
-            f"expected {expected_version}, found {actual_version}."
-        )
-    try:
-        schema.validate_connection(conn)
-    except ProjectionSchemaError as error:
-        raise ValueError(f"Unsupported derived store schema: {error}.") from error
