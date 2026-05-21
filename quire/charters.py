@@ -29,6 +29,9 @@ class FamilyModel:
         for key, value in values.items():
             setattr(self, key, value)
 
+    def __getattr__(self, name: str) -> Any:
+        raise AttributeError(name)
+
 
 @dataclass(frozen=True)
 class CharterField:
