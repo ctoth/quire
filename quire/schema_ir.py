@@ -176,6 +176,18 @@ class SchemaRelationship:
 
 
 @dataclass(frozen=True)
+class SchemaPolymorphicModel:
+    model_path: str
+    identity: str
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": self.identity,
+            "model": self.model_path,
+        }
+
+
+@dataclass(frozen=True)
 class SchemaObject:
     name: str
     family_name: str
@@ -190,6 +202,9 @@ class SchemaObject:
     fts_indexes: tuple[SchemaFtsIndex, ...] = ()
     vector_caches: tuple[SchemaVectorCache, ...] = ()
     relationships: tuple[SchemaRelationship, ...] = ()
+    polymorphic_on: str | None = None
+    polymorphic_identity: str | None = None
+    polymorphic_models: tuple[SchemaPolymorphicModel, ...] = ()
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
 
     def field(self, name: str) -> SchemaField:
@@ -217,6 +232,17 @@ class SchemaObject:
                 relationship.payload()
                 for relationship in _sort_by_name(self.relationships)
             ),
+            "polymorphic": {
+                "identity": self.polymorphic_identity,
+                "models": tuple(
+                    model.payload()
+                    for model in sorted(
+                        self.polymorphic_models,
+                        key=lambda model: model.identity,
+                    )
+                ),
+                "on": self.polymorphic_on,
+            },
             "semantic_metadata": dict(sorted(self.semantic_metadata.items())),
             "vector_caches": tuple(cache.payload() for cache in _sort_by_name(self.vector_caches)),
         }

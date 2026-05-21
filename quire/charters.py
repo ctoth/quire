@@ -14,6 +14,7 @@ from quire.schema_ir import (
     SchemaForeignKey,
     SchemaIndex,
     SchemaObject,
+    SchemaPolymorphicModel,
     SchemaRelationship,
     SchemaVectorCache,
     python_type_path,
@@ -156,6 +157,18 @@ class CharterRelationship:
 
 
 @dataclass(frozen=True)
+class CharterPolymorphicModel:
+    model: type[Any]
+    identity: str
+
+    def to_schema_polymorphic_model(self) -> SchemaPolymorphicModel:
+        return SchemaPolymorphicModel(
+            model_path=python_type_path(self.model),
+            identity=self.identity,
+        )
+
+
+@dataclass(frozen=True)
 class FamilyCharter:
     family: FamilyDefinition[Any, Any, Any, Any]
     model: type[Any]
@@ -165,6 +178,9 @@ class FamilyCharter:
     fts_indexes: tuple[CharterFtsIndex, ...] = ()
     vector_caches: tuple[CharterVectorCache, ...] = ()
     relationships: tuple[CharterRelationship, ...] = ()
+    polymorphic_on: str | None = None
+    polymorphic_identity: str | None = None
+    polymorphic_models: tuple[CharterPolymorphicModel, ...] = ()
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
 
     def to_schema_object(self) -> SchemaObject:
@@ -190,6 +206,12 @@ class FamilyCharter:
             relationships=tuple(
                 relationship.to_schema_relationship()
                 for relationship in self.relationships
+            ),
+            polymorphic_on=self.polymorphic_on,
+            polymorphic_identity=self.polymorphic_identity,
+            polymorphic_models=tuple(
+                model.to_schema_polymorphic_model()
+                for model in self.polymorphic_models
             ),
             semantic_metadata=self.semantic_metadata,
         )

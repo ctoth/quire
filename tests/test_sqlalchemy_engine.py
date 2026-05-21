@@ -14,6 +14,7 @@ from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import (
     CharterField,
     CharterFtsIndex,
+    CharterPolymorphicModel,
     CharterRelationship,
     CharterVectorCache,
     FamilyCharter,
@@ -171,6 +172,26 @@ class VectorEntity:
         self.text = text
 
 
+class RelationEdge:
+    def __init__(
+        self,
+        id: int,
+        relation_kind: str,
+        source_id: str,
+        target_id: str,
+    ) -> None:
+        self.id = id
+        self.relation_kind = relation_kind
+        self.source_id = source_id
+        self.target_id = target_id
+
+
+class Stance(RelationEdge): ...
+
+
+class ConceptRelation(RelationEdge): ...
+
+
 @dataclass(frozen=True)
 class DemoEmbeddingIdentity:
     provider: str = "demo"
@@ -312,6 +333,46 @@ def test_foreign_key_can_target_declared_non_id_field(tmp_path: Path) -> None:
         claim = session.get(SlugClaim, "claim:1")
         assert claim is not None
         assert claim.source.title == "Alpha Source"
+
+
+def test_polymorphic_charter_maps_subclasses_on_one_table(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(
+        charter_catalog(
+            FamilyCharter(
+                family=_family("relation_edge", RelationEdge),
+                model=RelationEdge,
+                fields=(
+                    CharterField("id", int, primary_key=True, nullable=False),
+                    CharterField("relation_kind", str, nullable=False),
+                    CharterField("source_id", str, nullable=False),
+                    CharterField("target_id", str, nullable=False),
+                ),
+                polymorphic_on="relation_kind",
+                polymorphic_identity="edge",
+                polymorphic_models=(
+                    CharterPolymorphicModel(Stance, "stance"),
+                    CharterPolymorphicModel(ConceptRelation, "concept_relation"),
+                ),
+            )
+        )
+    )
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add_all((
+            Stance(1, "stance", "claim:a", "claim:b"),
+            ConceptRelation(2, "concept_relation", "concept:a", "concept:b"),
+        ))
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        assert [type(edge) for edge in session.scalars(select(RelationEdge))] == [
+            Stance,
+            ConceptRelation,
+        ]
+        assert [edge.id for edge in session.scalars(select(Stance))] == [1]
+        assert schema.polymorphic_model("relation_edge", "stance") is Stance
 
 
 def test_session_constructs_and_routes_objects_from_charter_fields(tmp_path: Path) -> None:

@@ -94,6 +94,7 @@ class SqlAlchemySchema:
     fts_indexes: Mapping[str, SchemaFtsIndex]
     vector_caches: Mapping[str, SchemaVectorCache]
     models_by_family: Mapping[str, type[Any]]
+    polymorphic_models_by_family: Mapping[str, Mapping[str, type[Any]]]
     catalog_hash: str
 
     def table(self, family_name: str) -> Table:
@@ -113,6 +114,14 @@ class SqlAlchemySchema:
             return self.models_by_family[family_name]
         except KeyError as exc:
             raise KeyError(f"unknown SQLAlchemy schema model {family_name!r}") from exc
+
+    def polymorphic_model(self, family_name: str, identity: str) -> type[Any]:
+        try:
+            return self.polymorphic_models_by_family[family_name][identity]
+        except KeyError as exc:
+            raise KeyError(
+                f"unknown SQLAlchemy polymorphic model {family_name!r}/{identity!r}"
+            ) from exc
 
     def identity_field(self, family_name: str) -> str:
         schema_object = self.schema_object(family_name)
@@ -223,6 +232,13 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
         schema_object.family_name: _load_type(schema_object.model_path)
         for schema_object in catalog.objects
     }
+    polymorphic_models_by_family = {
+        schema_object.family_name: MappingProxyType({
+            model.identity: _load_type(model.model_path)
+            for model in schema_object.polymorphic_models
+        })
+        for schema_object in catalog.objects
+    }
     schema = SqlAlchemySchema(
         catalog=catalog,
         metadata=metadata,
@@ -232,6 +248,7 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
         fts_indexes=MappingProxyType(fts_indexes),
         vector_caches=MappingProxyType(vector_caches),
         models_by_family=MappingProxyType(models_by_family),
+        polymorphic_models_by_family=MappingProxyType(polymorphic_models_by_family),
         catalog_hash=catalog.schema_hash(),
     )
     _map_models(schema)
@@ -398,7 +415,30 @@ def _map_models(schema: SqlAlchemySchema) -> None:
         mapper_kwargs: dict[str, Any] = {"properties": properties}
         if not table.primary_key.columns:
             mapper_kwargs["primary_key"] = tuple(table.c)
+        if schema_object.polymorphic_on is not None:
+            if schema_object.polymorphic_on not in table.c:
+                raise KeyError(
+                    f"polymorphic field {schema_object.polymorphic_on!r} is not present "
+                    f"on {table.name!r}"
+                )
+            mapper_kwargs["polymorphic_on"] = table.c[schema_object.polymorphic_on]
+        elif schema_object.polymorphic_models:
+            raise ValueError(
+                f"family {schema_object.family_name!r} declares polymorphic models "
+                "without polymorphic_on"
+            )
+        if schema_object.polymorphic_identity is not None:
+            mapper_kwargs["polymorphic_identity"] = schema_object.polymorphic_identity
         schema.mapper_registry.map_imperatively(model, table, **mapper_kwargs)
+        for polymorphic_model in schema_object.polymorphic_models:
+            schema.mapper_registry.map_imperatively(
+                schema.polymorphic_model(
+                    schema_object.family_name,
+                    polymorphic_model.identity,
+                ),
+                inherits=model,
+                polymorphic_identity=polymorphic_model.identity,
+            )
 
 
 def _relationship_foreign_key_column(
