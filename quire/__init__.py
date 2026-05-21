@@ -17,6 +17,17 @@ from quire.artifacts import (
     encode_ref_value,
 )
 from quire.contracts import ContractEntry, ContractManifest, ContractManifestError, check_contract_manifest
+from quire.charters import (
+    CharterField,
+    CharterFtsIndex,
+    CharterIndex,
+    CharterPolymorphicModel,
+    CharterRelationship,
+    CharterVectorCache,
+    FamilyCharter,
+    FamilyModel,
+    charter_catalog,
+)
 from quire.derived_store import (
     DerivedStoreMaterialization,
     DerivedStoreBuildDiagnostic,
@@ -50,6 +61,7 @@ from quire.derived_runtime import (
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitGcReport, GitStore, GitStorePolicy, HeadMismatchError
 from quire.refs import RefName, single_field_ref_type, singleton_ref_type
+from quire.schema_catalog import SchemaCatalog
 from quire.notes import NotesRef, read_git_note, write_git_note
 from quire.references import (
     AmbiguousReferenceError,
@@ -100,6 +112,12 @@ __all__ = [
     "BoundFamily",
     "BoundFamilyRegistry",
     "BoundFamilyTransaction",
+    "CharterField",
+    "CharterFtsIndex",
+    "CharterIndex",
+    "CharterPolymorphicModel",
+    "CharterRelationship",
+    "CharterVectorCache",
     "ContractEntry",
     "ContractManifest",
     "ContractManifestError",
@@ -116,6 +134,8 @@ __all__ = [
     "EMBEDDING_MODEL_TABLE",
     "FamilyDefinition",
     "FamilyIdentityPolicy",
+    "FamilyCharter",
+    "FamilyModel",
     "FamilyReferenceIndex",
     "FamilyRegistry",
     "FilesystemTreePath",
@@ -139,6 +159,7 @@ __all__ = [
     "ReferenceIndex",
     "ReferenceResolution",
     "RestoreReport",
+    "SchemaCatalog",
     "SingletonFilePlacement",
     "SQLITE_READONLY_POLICY",
     "SQLITE_WRITE_POLICY",
@@ -157,6 +178,7 @@ __all__ = [
     "VecSnapshot",
     "canonical_json_bytes",
     "canonical_json_sha256",
+    "charter_catalog",
     "check_contract_manifest",
     "checkpoint_and_close_sqlite",
     "coerce_tree_path",
