@@ -4,7 +4,7 @@ import struct
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import select, text
@@ -79,7 +79,7 @@ class Claim:
 
 class BehavioralClaim(FamilyModel):
     def normalized_text(self) -> str:
-        return self.text.strip().casefold()
+        return cast(str, getattr(self, "text")).strip().casefold()
 
 
 class SlugSource:
