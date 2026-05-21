@@ -17,6 +17,7 @@ from quire.charters import (
     CharterPolymorphicModel,
     CharterRelationship,
     CharterVectorCache,
+    FamilyModel,
     FamilyCharter,
     charter_catalog,
 )
@@ -74,6 +75,11 @@ class Claim:
         self.source_id = source_id
         self.text = text
         self.status = status
+
+
+class BehavioralClaim(FamilyModel):
+    def normalized_text(self) -> str:
+        return self.text.strip().casefold()
 
 
 class SlugSource:
@@ -485,6 +491,38 @@ def test_session_constructor_rejects_unknown_and_missing_fields(tmp_path: Path) 
                     "status": ClaimStatus.ACCEPTED,
                 },
             )
+
+
+def test_family_model_subclass_uses_charter_fields_and_keeps_behavior(tmp_path: Path) -> None:
+    schema = build_sqlalchemy_schema(
+        charter_catalog(
+            FamilyCharter(
+                family=_family("behavioral_claims", BehavioralClaim),
+                model=BehavioralClaim,
+                fields=(
+                    CharterField("id", str, primary_key=True, nullable=False),
+                    CharterField("text", str, nullable=False),
+                ),
+            )
+        )
+    )
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        claim = session.add_family(
+            "behavioral_claims",
+            {"id": "claim:1", "text": "  Mass Is Invariant  "},
+        )
+        assert isinstance(claim, BehavioralClaim)
+        assert claim.normalized_text() == "mass is invariant"
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        claim = session.get(BehavioralClaim, "claim:1")
+        assert claim is not None
+        assert claim.text == "  Mass Is Invariant  "
+        assert claim.normalized_text() == "mass is invariant"
 
 
 def test_schema_catalog_validation_detects_missing_columns(tmp_path: Path) -> None:
