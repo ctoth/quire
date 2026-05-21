@@ -22,6 +22,10 @@ from quire.schema_ir import (
 from quire.sql_types import python_type_to_sql
 
 
+class FamilyModel:
+    """Base for charter-mapped family models with behavior but no field shape."""
+
+
 @dataclass(frozen=True)
 class CharterField:
     name: str
