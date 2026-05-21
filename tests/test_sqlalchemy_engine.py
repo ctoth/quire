@@ -495,6 +495,8 @@ def test_session_constructor_rejects_unknown_and_missing_fields(tmp_path: Path) 
 
 def test_family_model_subclass_uses_charter_fields_and_keeps_behavior(tmp_path: Path) -> None:
     pending = BehavioralClaim(id="claim:0", text="  Pre Mapping  ")
+    pending.note = "manual relationship-style assignment"
+    assert pending.note == "manual relationship-style assignment"
     assert pending.normalized_text() == "pre mapping"
 
     schema = build_sqlalchemy_schema(

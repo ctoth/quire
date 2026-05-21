@@ -32,6 +32,9 @@ class FamilyModel:
     def __getattr__(self, name: str) -> Any:
         raise AttributeError(name)
 
+    def __setattr__(self, name: str, value: object) -> None:
+        super().__setattr__(name, value)
+
 
 @dataclass(frozen=True)
 class CharterField:
