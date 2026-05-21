@@ -101,6 +101,7 @@ def test_family_charter_composes_with_existing_family_and_reference_apis() -> No
     concept_field = schema.field("concept_id")
     assert concept_field.foreign_key is not None
     assert concept_field.foreign_key.target_family == "concepts"
+    assert concept_field.foreign_key.target_field == "id"
     assert concept_field.index is True
     assert schema.field("trust").json_value_object is True
     assert schema.field("draft_note").source_local_only is True

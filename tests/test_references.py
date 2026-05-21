@@ -327,6 +327,7 @@ def test_foreign_key_spec_contract_body_is_stable() -> None:
         "source_family": "claim",
         "source_field": "concept",
         "target_family": "concept",
+        "target_field": "id",
         "required": True,
         "many": False,
     }

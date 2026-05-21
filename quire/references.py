@@ -60,6 +60,7 @@ class ForeignKeySpec:
     source_family: str
     source_field: str
     target_family: str
+    target_field: str = "id"
     required: bool = True
     many: bool = False
 
@@ -68,6 +69,7 @@ class ForeignKeySpec:
             "source_family": self.source_family,
             "source_field": self.source_field,
             "target_family": self.target_family,
+            "target_field": self.target_field,
             "required": self.required,
             "many": self.many,
         }

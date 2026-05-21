@@ -75,6 +75,19 @@ class Claim:
         self.status = status
 
 
+class SlugSource:
+    def __init__(self, slug: str, title: str) -> None:
+        self.slug = slug
+        self.title = title
+
+
+class SlugClaim:
+    def __init__(self, id: str, source_slug: str, text: str) -> None:
+        self.id = id
+        self.source_slug = source_slug
+        self.text = text
+
+
 class ClaimConceptLink:
     def __init__(
         self,
@@ -207,6 +220,98 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
         session.add(Concept("concept:energy", "Energy"))
         with pytest.raises(OperationalError):
             session.commit()
+
+
+def test_foreign_key_can_target_declared_non_id_field(tmp_path: Path) -> None:
+    version = VersionId("2026.05.18", allow_placeholder=False)
+    sources = FamilyDefinition(
+        key="slug_sources",
+        name="slug_sources",
+        contract_version=version,
+        artifact_family=ArtifactFamily(
+            name="slug_sources",
+            contract_version=version,
+            doc_type=SlugSource,
+            placement=FlatYamlPlacement("slug_sources", str),
+        ),
+        identity_field="slug",
+    )
+    claims = FamilyDefinition(
+        key="slug_claims",
+        name="slug_claims",
+        contract_version=version,
+        artifact_family=ArtifactFamily(
+            name="slug_claims",
+            contract_version=version,
+            doc_type=SlugClaim,
+            placement=FlatYamlPlacement("slug_claims", str),
+        ),
+        identity_field="id",
+    )
+    schema = build_sqlalchemy_schema(
+        charter_catalog(
+            FamilyCharter(
+                family=sources,
+                model=SlugSource,
+                fields=(
+                    CharterField("slug", str, primary_key=True, nullable=False),
+                    CharterField("title", str, nullable=False),
+                ),
+                relationships=(
+                    CharterRelationship(
+                        "claims",
+                        target_family="slug_claims",
+                        foreign_key="source_slug",
+                        back_populates="source",
+                    ),
+                ),
+            ),
+            FamilyCharter(
+                family=claims,
+                model=SlugClaim,
+                fields=(
+                    CharterField("id", str, primary_key=True, nullable=False),
+                    CharterField(
+                        "source_slug",
+                        str,
+                        nullable=False,
+                        foreign_key=ForeignKeySpec(
+                            name="slug_claim_source",
+                            contract_version=version,
+                            source_family="slug_claims",
+                            source_field="source_slug",
+                            target_family="slug_sources",
+                            target_field="slug",
+                        ),
+                    ),
+                    CharterField("text", str, nullable=False),
+                ),
+                relationships=(
+                    CharterRelationship(
+                        "source",
+                        target_family="slug_sources",
+                        foreign_key="source_slug",
+                        back_populates="claims",
+                        uselist=False,
+                    ),
+                ),
+            ),
+        )
+    )
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add_all((
+            SlugSource("alpha", "Alpha Source"),
+            SlugClaim("claim:1", "alpha", "Claim text"),
+        ))
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        claim = session.get(SlugClaim, "claim:1")
+        assert claim is not None
+        assert claim.source.title == "Alpha Source"
 
 
 def test_session_constructs_and_routes_objects_from_charter_fields(tmp_path: Path) -> None:

@@ -211,6 +211,7 @@ def _schema_foreign_key(spec: ForeignKeySpec) -> SchemaForeignKey:
         source_family=spec.source_family,
         source_field=spec.source_field,
         target_family=spec.target_family,
+        target_field=spec.target_field,
         required=spec.required,
         many=spec.many,
     )
