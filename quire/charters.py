@@ -130,6 +130,7 @@ class CharterField:
             local_id=self.local_id,
             local_id_policy=self.local_id_policy,
             contract_version=self.contract_version,
+            parse_python_type=self.python_type if self.parse_boundary == "json" else None,
             parse_boundary=self.parse_boundary,
             metadata=self.metadata,
         )
