@@ -5,9 +5,11 @@ import json
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
+from functools import cache
 from types import MappingProxyType
 from typing import Any, cast
 
+import msgspec
 from sqlalchemy import (
     Boolean,
     Column,
@@ -82,6 +84,31 @@ class JsonValueObject(TypeDecorator[Any]):
         if isinstance(payload, Mapping):
             return self.value_type(**payload)
         return payload
+
+
+@cache
+def _make_json_type_decorator(python_type: object) -> type[TypeDecorator[Any]]:
+    class JsonBoundary(TypeDecorator[Any]):
+        impl = Text
+        cache_ok = True
+
+        def process_bind_param(self, value: object, dialect: object) -> str | None:
+            if value is None:
+                return None
+            return msgspec.json.encode(value).decode("utf-8")
+
+        def process_result_value(self, value: object, dialect: object) -> object:
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return msgspec.json.decode(
+                    value.encode("utf-8"),
+                    type=cast(Any, python_type),
+                )
+            return msgspec.json.decode(value, type=cast(Any, python_type))
+
+    JsonBoundary.__name__ = f"JsonBoundary_{abs(hash(python_type))}"
+    return JsonBoundary
 
 
 @dataclass(frozen=True)
@@ -352,6 +379,13 @@ def _column_from_schema_field(schema_object: SchemaObject, field: SchemaField) -
 
 def _sqlalchemy_type(field: SchemaField) -> TypeEngine[Any]:
     sql_type = cast(SqlTypeSpec, field.sql_type)
+    if field.parse_boundary == "json":
+        if field.parse_python_type is None:
+            raise ValueError(
+                f"JSON parse-boundary field {field.name!r} is missing its authored "
+                "Python type."
+            )
+        return _make_json_type_decorator(field.parse_python_type)()
     if sql_type.sqlalchemy_type == "Text":
         return Text()
     if sql_type.sqlalchemy_type == "Integer":
