@@ -100,12 +100,7 @@ def _make_json_type_decorator(python_type: object) -> type[TypeDecorator[Any]]:
         def process_result_value(self, value: object, dialect: object) -> object:
             if value is None:
                 return None
-            if isinstance(value, str):
-                return msgspec.json.decode(
-                    value.encode("utf-8"),
-                    type=cast(Any, python_type),
-                )
-            return msgspec.json.decode(value, type=cast(Any, python_type))
+            return msgspec.json.decode(cast(Any, value), type=cast(Any, python_type))
 
     JsonBoundary.__name__ = f"JsonBoundary_{abs(hash(python_type))}"
     return JsonBoundary
