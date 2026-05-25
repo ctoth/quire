@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 import re
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import msgspec
 
@@ -30,8 +30,11 @@ from quire.schema_ir import (
     SchemaVectorCache,
     python_type_path,
 )
-from quire.sql_types import python_type_to_sql
+from quire.sql_types import is_optional_type, optional_inner_type, python_type_to_sql
 from quire.versions import VersionId
+
+
+_UNSPECIFIED_NULLABLE = object()
 
 
 class FamilyModel:
@@ -51,8 +54,8 @@ class FamilyModel:
 @dataclass(frozen=True)
 class CharterField:
     name: str
-    python_type: type[Any]
-    nullable: bool = True
+    python_type: object
+    nullable: bool | object = _UNSPECIFIED_NULLABLE
     primary_key: bool = False
     foreign_key: ForeignKeySpec | None = None
     index: bool = False
@@ -79,6 +82,13 @@ class CharterField:
     contract_version: VersionId | None = None
     parse_boundary: Literal["yaml", "json", "sqlite"] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
+    _nullable_explicit: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.nullable is _UNSPECIFIED_NULLABLE:
+            object.__setattr__(self, "nullable", True)
+        else:
+            object.__setattr__(self, "_nullable_explicit", True)
 
     def to_schema_field(self) -> SchemaField:
         sql_type = python_type_to_sql(
@@ -90,7 +100,7 @@ class CharterField:
             name=self.name,
             python_type=python_type_path(self.python_type),
             sql_type=sql_type,
-            nullable=self.nullable,
+            nullable=bool(self.nullable) or is_optional_type(self.python_type),
             primary_key=self.primary_key,
             foreign_key=(
                 None
@@ -262,7 +272,7 @@ class FamilyCharter:
         document_fields = _document_struct_fields(self.fields, state=state)
         document_type = msgspec.defstruct(
             _document_struct_name(self.family.name, state),
-            document_fields,
+            cast(Any, document_fields),
             module=self.model.__module__,
             forbid_unknown_fields=True,
         )
@@ -351,7 +361,7 @@ def _document_struct_fields(
     fields: tuple[CharterField, ...],
     *,
     state: str | None,
-) -> list[tuple[str, type[Any]] | tuple[str, type[Any], object]]:
+) -> list[tuple[str, object] | tuple[str, object, object]]:
     ordered_fields = sorted(
         (
             (index, charter_field)
@@ -363,14 +373,33 @@ def _document_struct_fields(
             item[0],
         ),
     )
-    struct_fields: list[tuple[str, type[Any]] | tuple[str, type[Any], object]] = []
+    struct_fields: list[tuple[str, object] | tuple[str, object, object]] = []
     for _index, charter_field in ordered_fields:
         name = charter_field.document_name or charter_field.name
-        if charter_field.default is None:
-            struct_fields.append((name, charter_field.python_type))
+        python_type = _document_python_type(charter_field)
+        if charter_field.default is None and _field_defaults_to_none(charter_field):
+            struct_fields.append((name, python_type, None))
+        elif charter_field.default is None:
+            struct_fields.append((name, python_type))
         else:
-            struct_fields.append((name, charter_field.python_type, charter_field.default))
+            struct_fields.append((name, python_type, charter_field.default))
     return struct_fields
+
+
+def _document_python_type(field: CharterField) -> object:
+    if is_optional_type(field.python_type):
+        return field.python_type
+    if bool(field.nullable) and field._nullable_explicit:
+        inner_type = optional_inner_type(field.python_type)
+        if isinstance(inner_type, type):
+            return inner_type | None
+    return field.python_type
+
+
+def _field_defaults_to_none(field: CharterField) -> bool:
+    return is_optional_type(field.python_type) or (
+        bool(field.nullable) and field._nullable_explicit
+    )
 
 
 def _field_matches_state(field: CharterField, state: str | None) -> bool:

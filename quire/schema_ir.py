@@ -2,14 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
 
 from quire.references import ReferenceKey
 from quire.versions import VersionId
 
 
-def python_type_path(python_type: type[Any]) -> str:
-    return f"{python_type.__module__}.{python_type.__qualname__}"
+def python_type_path(python_type: object) -> str:
+    origin = get_origin(python_type)
+    if origin is Union or origin is UnionType or isinstance(python_type, UnionType):
+        return " | ".join(python_type_path(arg) for arg in get_args(python_type))
+    if python_type is type(None):
+        return "None"
+    if isinstance(python_type, type):
+        return f"{python_type.__module__}.{python_type.__qualname__}"
+    return repr(python_type)
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, cast
+from types import UnionType
+from typing import Any, Union, cast, get_args, get_origin
 
 from quire.schema_ir import python_type_path
 
@@ -28,11 +29,12 @@ class SqlTypeSpec:
 
 
 def python_type_to_sql(
-    python_type: type[Any],
+    python_type: object,
     *,
     json_value_object: bool = False,
     enum_type: type[Enum] | None = None,
 ) -> SqlTypeSpec:
+    python_type = optional_inner_type(python_type)
     if json_value_object:
         return SqlTypeSpec(
             storage_kind="json",
@@ -43,7 +45,7 @@ def python_type_to_sql(
         )
     if enum_type is not None:
         resolved_enum = enum_type
-    elif issubclass(python_type, Enum):
+    elif isinstance(python_type, type) and issubclass(python_type, Enum):
         resolved_enum = cast(type[Enum], python_type)
     else:
         resolved_enum = None
@@ -68,7 +70,28 @@ def python_type_to_sql(
     return _scalar("text", "TEXT", "Text", python_type)
 
 
-def _scalar(storage_kind: str, ddl_name: str, sqlalchemy_type: str, python_type: type[Any]) -> SqlTypeSpec:
+def optional_inner_type(python_type: object) -> object:
+    args = _union_args(python_type)
+    if args is None:
+        return python_type
+    non_none_args = tuple(arg for arg in args if arg is not type(None))
+    if len(non_none_args) == 1 and len(non_none_args) != len(args):
+        return non_none_args[0]
+    return python_type
+
+
+def is_optional_type(python_type: object) -> bool:
+    return optional_inner_type(python_type) is not python_type
+
+
+def _union_args(python_type: object) -> tuple[object, ...] | None:
+    origin = get_origin(python_type)
+    if origin is Union or origin is UnionType or isinstance(python_type, UnionType):
+        return get_args(python_type)
+    return None
+
+
+def _scalar(storage_kind: str, ddl_name: str, sqlalchemy_type: str, python_type: object) -> SqlTypeSpec:
     return SqlTypeSpec(
         storage_kind=storage_kind,
         ddl_name=ddl_name,
