@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 import re
-from typing import Any, Literal, cast
+from typing import Any, Literal, Optional, cast
 
 import msgspec
 
@@ -91,14 +91,15 @@ class CharterField:
             object.__setattr__(self, "_nullable_explicit", True)
 
     def to_schema_field(self) -> SchemaField:
+        schema_python_type = str if self.parse_boundary == "json" else self.python_type
         sql_type = python_type_to_sql(
-            self.python_type,
-            json_value_object=self.json_value_object,
-            enum_type=self.enum_type,
+            schema_python_type,
+            json_value_object=False if self.parse_boundary == "json" else self.json_value_object,
+            enum_type=None if self.parse_boundary == "json" else self.enum_type,
         )
         return SchemaField(
             name=self.name,
-            python_type=python_type_path(self.python_type),
+            python_type=python_type_path(schema_python_type),
             sql_type=sql_type,
             nullable=bool(self.nullable) or is_optional_type(self.python_type),
             primary_key=self.primary_key,
@@ -285,6 +286,59 @@ class FamilyCharter:
             return cached
 
         document_type = self.generated_document(state)
+        json_blob_fields = _json_blob_document_fields(self.fields, state=state)
+
+        if json_blob_fields:
+
+            def json_blob_payload(document: object) -> object:
+                return _encode_json_blob_fields(
+                    document_to_payload(document),
+                    json_blob_fields,
+                )
+
+            def json_blob_encode(document: object) -> bytes:
+                return msgspec.yaml.encode(json_blob_payload(document))
+
+            def json_blob_render(document: object) -> str:
+                return json_blob_encode(document).decode("utf-8").rstrip()
+
+            def convert_generated_document(
+                payload: object,
+                _document_type: type[Any],
+                *,
+                source: str,
+            ) -> object:
+                return convert_document(
+                    _decode_json_blob_fields(payload, json_blob_fields),
+                    document_type,
+                    source=source,
+                )
+
+            def decode_generated_document(
+                payload: bytes,
+                _document_type: type[Any],
+                *,
+                source: str,
+            ) -> object:
+                try:
+                    decoded_payload = msgspec.yaml.decode(payload)
+                except msgspec.DecodeError as exc:
+                    raise ValueError(f"{source}: invalid YAML payload") from exc
+                return convert_generated_document(
+                    decoded_payload,
+                    document_type,
+                    source=source,
+                )
+
+            codec = DocumentCodec(
+                convert_document=convert_generated_document,
+                decode_document=decode_generated_document,
+                encode_document=json_blob_encode,
+                render_document=json_blob_render,
+                document_to_payload=json_blob_payload,
+            )
+            self._document_codec_cache[state] = codec
+            return codec
 
         def convert_generated_document(
             payload: object,
@@ -391,9 +445,18 @@ def _document_python_type(field: CharterField) -> object:
         return field.python_type
     if bool(field.nullable) and field._nullable_explicit:
         inner_type = optional_inner_type(field.python_type)
+        if field.parse_boundary == "json":
+            return _optional_document_python_type(inner_type)
         if isinstance(inner_type, type):
             return inner_type | None
     return field.python_type
+
+
+def _optional_document_python_type(python_type: object) -> object:
+    try:
+        return python_type | None  # type: ignore[operator]
+    except TypeError:
+        return Optional[python_type]  # type: ignore[index]
 
 
 def _field_defaults_to_none(field: CharterField) -> bool:
@@ -422,6 +485,54 @@ def _title_identifier_part(value: str) -> str:
         for part in re.split(r"[^0-9A-Za-z_]+", value)
         if part
     )
+
+
+def _json_blob_document_fields(
+    fields: tuple[CharterField, ...],
+    *,
+    state: str | None,
+) -> dict[str, object]:
+    return {
+        field.document_name or field.name: field.python_type
+        for field in fields
+        if field.document
+        and field.parse_boundary == "json"
+        and _field_matches_state(field, state)
+    }
+
+
+def _encode_json_blob_fields(
+    payload: object,
+    json_blob_fields: Mapping[str, object],
+) -> object:
+    if not isinstance(payload, Mapping):
+        return payload
+    encoded: dict[object, object] = dict(payload)
+    for name in json_blob_fields:
+        if name not in encoded or encoded[name] is None:
+            continue
+        encoded[name] = msgspec.json.encode(encoded[name]).decode("utf-8")
+    return encoded
+
+
+def _decode_json_blob_fields(
+    payload: object,
+    json_blob_fields: Mapping[str, object],
+) -> object:
+    if not isinstance(payload, Mapping):
+        return payload
+    decoded: dict[object, object] = dict(payload)
+    for name, python_type in json_blob_fields.items():
+        if name not in decoded or decoded[name] is None:
+            continue
+        value: object = decoded[name]
+        if isinstance(value, str):
+            decoded[name] = msgspec.json.decode(value.encode("utf-8"), type=python_type)
+        elif isinstance(value, bytes):
+            decoded[name] = msgspec.json.decode(value, type=python_type)
+        else:
+            decoded[name] = msgspec.convert(value, type=python_type, strict=True)
+    return decoded
 
 
 def _schema_foreign_key(spec: ForeignKeySpec) -> SchemaForeignKey:
