@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 import re
@@ -253,6 +253,7 @@ class FamilyCharter:
     polymorphic_models: tuple[CharterPolymorphicModel, ...] = ()
     document_contract_version: VersionId | None = None
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
+    validators: tuple[Callable[[msgspec.Struct], None], ...] = ()
     _generated_document_cache: dict[str | None, type[msgspec.Struct]] = field(
         default_factory=dict,
         init=False,
@@ -272,9 +273,17 @@ class FamilyCharter:
             return cached
 
         document_fields = _document_struct_fields(self.fields, state=state)
+        validators = self.validators
+
+        class _GeneratedDocumentValidatorMixin(msgspec.Struct):
+            def __post_init__(self) -> None:
+                for validator in validators:
+                    validator(self)
+
         document_type = msgspec.defstruct(
             _document_struct_name(self.family.name, state),
             cast(Any, document_fields),
+            bases=(_GeneratedDocumentValidatorMixin,),
             module=self.model.__module__,
             forbid_unknown_fields=True,
         )
