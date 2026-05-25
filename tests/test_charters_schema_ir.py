@@ -9,6 +9,7 @@ import msgspec
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, FamilyCharter, charter_catalog
 from quire.families import FamilyDefinition
+from quire.lifecycle import ConflictPolicy, FamilyState, FamilyTransition
 from quire.references import ForeignKeySpec, ReferenceKey
 from quire.schema_catalog import SchemaCatalog
 from quire.sql_types import python_type_to_sql
@@ -70,7 +71,19 @@ def test_family_charter_composes_with_existing_family_and_reference_apis() -> No
     charter = FamilyCharter(
         family=family,
         model=Claim,
-        lifecycle_states=("authored", "checked", "canonical"),
+        states=(
+            FamilyState("authored"),
+            FamilyState("checked"),
+            FamilyState("canonical"),
+        ),
+        transitions=(
+            FamilyTransition(
+                "approve",
+                source="checked",
+                target="canonical",
+                conflict_policy=ConflictPolicy.REPLACE,
+            ),
+        ),
         fields=(
             CharterField("artifact_id", str, primary_key=True, nullable=False),
             CharterField(
@@ -97,7 +110,12 @@ def test_family_charter_composes_with_existing_family_and_reference_apis() -> No
     assert schema.reference_keys == (ReferenceKey.field("concept_id"),)
     assert schema.model_path == "test_charters_schema_ir.Claim"
     assert schema.semantic_metadata["owner"] == "propstore.claims"
-    assert schema.lifecycle_states == ("authored", "checked", "canonical")
+    assert tuple(state.name for state in schema.states) == (
+        "authored",
+        "checked",
+        "canonical",
+    )
+    assert schema.transitions[0].name == "approve"
     concept_field = schema.field("concept_id")
     assert concept_field.foreign_key is not None
     assert concept_field.foreign_key.target_family == "concepts"

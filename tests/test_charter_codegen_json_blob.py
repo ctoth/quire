@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import Any, cast, get_type_hints
 
 import msgspec
 
@@ -90,7 +90,7 @@ def test_nullable_nested_struct_tuple_round_trips_as_json_blob() -> None:
 
     assert none_payload == {"id": "demo-none"}
     assert none_decoded == none_document
-    assert none_decoded.items is None
+    assert cast(Any, none_decoded).items is None
 
 
 def test_required_nested_struct_tuple_default_round_trips_as_json_blob() -> None:
@@ -114,7 +114,7 @@ def test_required_nested_struct_tuple_default_round_trips_as_json_blob() -> None
 
     assert payload == {"id": "demo", "items": '[{"value":3}]'}
     assert decoded == document
-    assert decoded.items == default_items
+    assert cast(Any, decoded).items == default_items
 
 
 def test_dict_round_trips_as_json_blob() -> None:
@@ -149,7 +149,7 @@ def test_json_blob_schema_projection_uses_str_python_type() -> None:
     schema_field = field.to_schema_field()
 
     assert schema_field.python_type == "builtins.str"
-    assert schema_field.sql_type.ddl_name == "TEXT"
+    assert cast(Any, schema_field.sql_type).ddl_name == "TEXT"
 
 
 def test_json_blob_sqlalchemy_round_trips_tuple_value(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
 from quire.documents.batch import DocumentBatchSpec
+from quire.lifecycle import FamilyState, FamilyTransition
 from quire.references import ReferenceKey
 from quire.versions import VersionId
 
@@ -242,7 +243,8 @@ class SchemaObject:
     fields: tuple[SchemaField, ...]
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
-    lifecycle_states: tuple[str, ...] = ()
+    states: tuple[FamilyState, ...] = ()
+    transitions: tuple[FamilyTransition, ...] = ()
     document_contract_version: VersionId | None = None
     batch_specs: tuple[DocumentBatchSpec[Any], ...] = ()
     indexes: tuple[SchemaIndex, ...] = ()
@@ -282,7 +284,6 @@ class SchemaObject:
             "fields": tuple(field.payload() for field in _sort_by_name(self.fields)),
             "fts_indexes": tuple(index.payload() for index in _sort_by_name(self.fts_indexes)),
             "indexes": tuple(index.payload() for index in _sort_by_name(self.indexes)),
-            "lifecycle_states": self.lifecycle_states,
             "model": self.model_path,
             "name": self.name,
             "relationships": tuple(
@@ -301,6 +302,11 @@ class SchemaObject:
                 "on": self.polymorphic_on,
             },
             "semantic_metadata": dict(sorted(self.semantic_metadata.items())),
+            "states": tuple(_state_payload(state) for state in _sort_by_name(self.states)),
+            "transitions": tuple(
+                _transition_payload(transition)
+                for transition in _sort_by_name(self.transitions)
+            ),
             "vector_caches": tuple(cache.payload() for cache in _sort_by_name(self.vector_caches)),
         }
 
@@ -314,3 +320,23 @@ def _payload(value: object) -> object:
 
 def _sort_by_name(items: Sequence[Any]) -> tuple[Any, ...]:
     return tuple(sorted(items, key=lambda item: item.name))
+
+
+def _state_payload(state: FamilyState) -> dict[str, object]:
+    return {
+        "document_label": state.document_label,
+        "name": state.name,
+        "terminal": state.terminal,
+    }
+
+
+def _transition_payload(transition: FamilyTransition) -> dict[str, object]:
+    return {
+        "conflict_policy": transition.conflict_policy.value,
+        "guard": transition.guard,
+        "materializer": transition.materializer,
+        "merge": transition.merge,
+        "name": transition.name,
+        "source": transition.source,
+        "target": transition.target,
+    }

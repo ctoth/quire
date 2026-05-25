@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, cast
 
 import msgspec
 import pytest
@@ -27,7 +28,7 @@ class Demo:
 
 
 def _raise_empty_claims(document: msgspec.Struct) -> None:
-    if not document.claims:
+    if not cast(Any, document).claims:
         raise ValueError("empty claims")
 
 
@@ -71,7 +72,7 @@ def test_generated_document_validator_accepts_non_empty_claims() -> None:
 
     document = document_type(id="demo-1", claims=("claim-1",))
 
-    assert document.claims == ("claim-1",)
+    assert cast(Any, document).claims == ("claim-1",)
 
 
 def test_generated_document_validator_runs_after_unknown_field_check() -> None:

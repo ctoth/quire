@@ -18,6 +18,11 @@ from quire.documents.codecs import (
 )
 from quire.documents.batch import DocumentBatchSpec
 from quire.families import FamilyDefinition
+from quire.lifecycle import (
+    FamilyState,
+    FamilyTransition,
+    validate_lifecycle_definition,
+)
 from quire.references import ForeignKeySpec
 from quire.schema_catalog import SchemaCatalog
 from quire.schema_ir import (
@@ -258,7 +263,8 @@ class FamilyCharter:
     family: FamilyDefinition[Any, Any, Any, Any]
     model: type[Any]
     fields: tuple[CharterField, ...]
-    lifecycle_states: tuple[str, ...] = ()
+    states: tuple[FamilyState, ...] = ()
+    transitions: tuple[FamilyTransition, ...] = ()
     indexes: tuple[CharterIndex, ...] = ()
     fts_indexes: tuple[CharterFtsIndex, ...] = ()
     vector_caches: tuple[CharterVectorCache, ...] = ()
@@ -282,6 +288,21 @@ class FamilyCharter:
         repr=False,
         compare=False,
     )
+
+    def __post_init__(self) -> None:
+        validate_lifecycle_definition(self.states, self.transitions)
+
+    def state(self, name: str) -> FamilyState:
+        for lifecycle_state in self.states:
+            if lifecycle_state.name == name:
+                return lifecycle_state
+        raise KeyError(name)
+
+    def transition(self, name: str) -> FamilyTransition:
+        for lifecycle_transition in self.transitions:
+            if lifecycle_transition.name == name:
+                return lifecycle_transition
+        raise KeyError(name)
 
     def generated_document(self, state: str | None = None) -> type[msgspec.Struct]:
         cached = self._generated_document_cache.get(state)
@@ -402,7 +423,8 @@ class FamilyCharter:
             fields=tuple(field.to_schema_field() for field in self.fields),
             identity_field=self.family.identity_field,
             reference_keys=self.family.reference_keys,
-            lifecycle_states=self.lifecycle_states,
+            states=self.states,
+            transitions=self.transitions,
             document_contract_version=self.document_contract_version,
             batch_specs=self.batch_specs,
             indexes=tuple(index.to_schema_index() for index in self.indexes),
