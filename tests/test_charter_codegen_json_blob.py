@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, get_type_hints
 
 import msgspec
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
-from quire.charters import CharterField, FamilyCharter
+from quire.charters import CharterField, FamilyCharter, charter_catalog
 from quire.families import FamilyDefinition
+from quire.sqlalchemy_schema import build_sqlalchemy_schema
+from quire.sqlalchemy_store import create_sqlalchemy_store, readonly_session, writable_session
 from quire.versions import VersionId
 
 
@@ -147,3 +150,53 @@ def test_json_blob_schema_projection_uses_str_python_type() -> None:
 
     assert schema_field.python_type == "builtins.str"
     assert schema_field.sql_type.ddl_name == "TEXT"
+
+
+def test_json_blob_sqlalchemy_round_trips_tuple_value(tmp_path: Path) -> None:
+    charter = _charter(
+        CharterField("id", str, primary_key=True, nullable=False),
+        CharterField(
+            "items",
+            tuple[Inner, ...],
+            parse_boundary="json",
+            nullable=True,
+        ),
+    )
+    schema = build_sqlalchemy_schema(charter_catalog(charter))
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add(Demo(id="demo", items=(Inner(1), Inner(2))))
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        record = session.get(Demo, "demo")
+
+    assert record is not None
+    assert record.items == (Inner(1), Inner(2))
+
+
+def test_json_blob_sqlalchemy_round_trips_none_value(tmp_path: Path) -> None:
+    charter = _charter(
+        CharterField("id", str, primary_key=True, nullable=False),
+        CharterField(
+            "items",
+            tuple[Inner, ...],
+            parse_boundary="json",
+            nullable=True,
+        ),
+    )
+    schema = build_sqlalchemy_schema(charter_catalog(charter))
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+
+    with writable_session(store_path, schema) as session:
+        session.add(Demo(id="demo", items=None))
+        session.commit()
+
+    with readonly_session(store_path, schema) as session:
+        record = session.get(Demo, "demo")
+
+    assert record is not None
+    assert record.items is None
