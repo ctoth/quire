@@ -349,17 +349,13 @@ def _vector_caches_from_catalog(catalog: SchemaCatalog) -> dict[str, SchemaVecto
 
 
 def _column_from_schema_field(schema_object: SchemaObject, field: SchemaField) -> Column[Any]:
-    foreign_key = (
-        None
-        if field.foreign_key is None
-        else ForeignKey(
-            f"{field.foreign_key.target_family}.{field.foreign_key.target_field}",
-            name=f"fk_{field.foreign_key.name}",
+    args: list[Any] = [
+        ForeignKey(
+            f"{foreign_key.target_family}.{foreign_key.target_field}",
+            name=f"fk_{foreign_key.name}",
         )
-    )
-    args: list[Any] = []
-    if foreign_key is not None:
-        args.append(foreign_key)
+        for foreign_key in _schema_field_foreign_keys(field)
+    ]
     kwargs: dict[str, Any] = {
         "nullable": field.nullable,
         "primary_key": field.primary_key,
@@ -370,6 +366,14 @@ def _column_from_schema_field(schema_object: SchemaObject, field: SchemaField) -
     if field.default_sql is not None:
         kwargs["server_default"] = text(field.default_sql)
     return Column(field.name, _sqlalchemy_type(field), *args, **kwargs)
+
+
+def _schema_field_foreign_keys(field: SchemaField) -> tuple[Any, ...]:
+    if field.foreign_keys:
+        return field.foreign_keys
+    if field.foreign_key is not None:
+        return (field.foreign_key,)
+    return ()
 
 
 def _sqlalchemy_type(field: SchemaField) -> TypeEngine[Any]:

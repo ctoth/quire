@@ -28,6 +28,7 @@ from quire.charters import (
     FamilyModel,
     charter_catalog,
 )
+from quire.documents.batch import DocumentBatchSpec
 from quire.derived_store import (
     DerivedStoreMaterialization,
     DerivedStoreBuildDiagnostic,
@@ -125,6 +126,7 @@ __all__ = [
     "DEFAULT_SQLITE_BUSY_TIMEOUT_MS",
     "DERIVED_STORE_META_KEY",
     "DocumentFamilyStore",
+    "DocumentBatchSpec",
     "DerivedStoreGcReport",
     "DerivedStoreBuildDiagnostic",
     "DerivedStoreBuildError",

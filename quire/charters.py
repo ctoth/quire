@@ -16,6 +16,7 @@ from quire.documents.codecs import (
     encode_document,
     render_document,
 )
+from quire.documents.batch import DocumentBatchSpec
 from quire.families import FamilyDefinition
 from quire.references import ForeignKeySpec
 from quire.schema_catalog import SchemaCatalog
@@ -58,6 +59,7 @@ class CharterField:
     nullable: bool | object = _UNSPECIFIED_NULLABLE
     primary_key: bool = False
     foreign_key: ForeignKeySpec | None = None
+    foreign_keys: tuple[ForeignKeySpec, ...] = ()
     index: bool = False
     unique: bool = False
     generated: bool = False
@@ -89,6 +91,10 @@ class CharterField:
             object.__setattr__(self, "nullable", True)
         else:
             object.__setattr__(self, "_nullable_explicit", True)
+        if self.foreign_key is not None and self.foreign_keys:
+            raise ValueError(
+                "CharterField.foreign_key and CharterField.foreign_keys are mutually exclusive"
+            )
 
     def to_schema_field(self) -> SchemaField:
         schema_python_type = str if self.parse_boundary == "json" else self.python_type
@@ -107,6 +113,15 @@ class CharterField:
                 None
                 if self.foreign_key is None
                 else _schema_foreign_key(self.foreign_key)
+            ),
+            foreign_keys=(
+                tuple(_schema_foreign_key(foreign_key) for foreign_key in self.foreign_keys)
+                if self.foreign_keys
+                else (
+                    ()
+                    if self.foreign_key is None
+                    else (_schema_foreign_key(self.foreign_key),)
+                )
             ),
             index=self.index,
             unique=self.unique,
@@ -247,6 +262,7 @@ class FamilyCharter:
     indexes: tuple[CharterIndex, ...] = ()
     fts_indexes: tuple[CharterFtsIndex, ...] = ()
     vector_caches: tuple[CharterVectorCache, ...] = ()
+    batch_specs: tuple[DocumentBatchSpec[Any], ...] = ()
     relationships: tuple[CharterRelationship, ...] = ()
     polymorphic_on: str | None = None
     polymorphic_identity: str | None = None
@@ -388,6 +404,7 @@ class FamilyCharter:
             reference_keys=self.family.reference_keys,
             lifecycle_states=self.lifecycle_states,
             document_contract_version=self.document_contract_version,
+            batch_specs=self.batch_specs,
             indexes=tuple(index.to_schema_index() for index in self.indexes),
             fts_indexes=tuple(
                 index.to_schema_fts_index(self.family.name)

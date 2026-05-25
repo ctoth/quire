@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
+from quire.documents.batch import DocumentBatchSpec
 from quire.references import ReferenceKey
 from quire.versions import VersionId
 
@@ -50,6 +51,7 @@ class SchemaField:
     nullable: bool = True
     primary_key: bool = False
     foreign_key: SchemaForeignKey | None = None
+    foreign_keys: tuple[SchemaForeignKey, ...] = ()
     index: bool = False
     unique: bool = False
     generated: bool = False
@@ -89,6 +91,7 @@ class SchemaField:
             "document_order": self.document_order,
             "enum_values": self.enum_values,
             "foreign_key": None if self.foreign_key is None else self.foreign_key.payload(),
+            "foreign_keys": tuple(foreign_key.payload() for foreign_key in self.foreign_keys),
             "generated": self.generated,
             "graph_metadata": self.graph_metadata,
             "graph_node_label": self.graph_node_label,
@@ -241,6 +244,7 @@ class SchemaObject:
     reference_keys: tuple[ReferenceKey, ...] = ()
     lifecycle_states: tuple[str, ...] = ()
     document_contract_version: VersionId | None = None
+    batch_specs: tuple[DocumentBatchSpec[Any], ...] = ()
     indexes: tuple[SchemaIndex, ...] = ()
     fts_indexes: tuple[SchemaFtsIndex, ...] = ()
     vector_caches: tuple[SchemaVectorCache, ...] = ()
@@ -266,6 +270,15 @@ class SchemaObject:
                 "name": self.family_name,
                 "reference_keys": tuple(key.contract_body() for key in self.reference_keys),
             },
+            "batch_specs": tuple(
+                {
+                    "batch_name": spec.batch_name,
+                    "item_type": python_type_path(spec.item_type),
+                    "items_field": spec.items_field,
+                    "inherited_item_fields": spec.inherited_item_fields,
+                }
+                for spec in self.batch_specs
+            ),
             "fields": tuple(field.payload() for field in _sort_by_name(self.fields)),
             "fts_indexes": tuple(index.payload() for index in _sort_by_name(self.fts_indexes)),
             "indexes": tuple(index.payload() for index in _sort_by_name(self.indexes)),
