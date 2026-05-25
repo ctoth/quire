@@ -72,6 +72,7 @@ class SchemaField:
     local_id: bool = False
     local_id_policy: str | None = None
     contract_version: VersionId | None = None
+    parse_python_type: object | None = field(default=None, repr=False, compare=False)
     parse_boundary: Literal["yaml", "json", "sqlite"] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
