@@ -3,8 +3,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from typing import Any, Literal
 
+import msgspec
+
+from quire.documents.codecs import (
+    DocumentCodec,
+    convert_document,
+    decode_document,
+    document_to_payload,
+    encode_document,
+    render_document,
+)
 from quire.families import FamilyDefinition
 from quire.references import ForeignKeySpec
 from quire.schema_catalog import SchemaCatalog
@@ -230,6 +241,66 @@ class FamilyCharter:
     polymorphic_models: tuple[CharterPolymorphicModel, ...] = ()
     document_contract_version: VersionId | None = None
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
+    _generated_document_cache: dict[str | None, type[msgspec.Struct]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _document_codec_cache: dict[str | None, DocumentCodec] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def generated_document(self, state: str | None = None) -> type[msgspec.Struct]:
+        cached = self._generated_document_cache.get(state)
+        if cached is not None:
+            return cached
+
+        document_fields = _document_struct_fields(self.fields, state=state)
+        document_type = msgspec.defstruct(
+            _document_struct_name(self.family.name, state),
+            document_fields,
+            module=self.model.__module__,
+            forbid_unknown_fields=True,
+        )
+        self._generated_document_cache[state] = document_type
+        return document_type
+
+    def document_codec(self, state: str | None = None) -> DocumentCodec:
+        cached = self._document_codec_cache.get(state)
+        if cached is not None:
+            return cached
+
+        document_type = self.generated_document(state)
+
+        def convert_generated_document(
+            payload: object,
+            _document_type: type[Any],
+            *,
+            source: str,
+        ) -> object:
+            return convert_document(payload, document_type, source=source)
+
+        def decode_generated_document(
+            payload: bytes,
+            _document_type: type[Any],
+            *,
+            source: str,
+        ) -> object:
+            return decode_document(payload, document_type, source=source)
+
+        codec = DocumentCodec(
+            convert_document=convert_generated_document,
+            decode_document=decode_generated_document,
+            encode_document=encode_document,
+            render_document=render_document,
+            document_to_payload=document_to_payload,
+        )
+        self._document_codec_cache[state] = codec
+        return codec
 
     def to_schema_object(self) -> SchemaObject:
         return SchemaObject(
@@ -273,6 +344,54 @@ def charter_catalog(
     return SchemaCatalog(
         objects=tuple(charter.to_schema_object() for charter in charters),
         metadata={} if metadata is None else metadata,
+    )
+
+
+def _document_struct_fields(
+    fields: tuple[CharterField, ...],
+    *,
+    state: str | None,
+) -> list[tuple[str, type[Any]] | tuple[str, type[Any], object]]:
+    ordered_fields = sorted(
+        (
+            (index, charter_field)
+            for index, charter_field in enumerate(fields)
+            if charter_field.document and _field_matches_state(charter_field, state)
+        ),
+        key=lambda item: (
+            item[1].document_order if item[1].document_order is not None else item[0],
+            item[0],
+        ),
+    )
+    struct_fields: list[tuple[str, type[Any]] | tuple[str, type[Any], object]] = []
+    for _index, charter_field in ordered_fields:
+        name = charter_field.document_name or charter_field.name
+        if charter_field.default is None:
+            struct_fields.append((name, charter_field.python_type))
+        else:
+            struct_fields.append((name, charter_field.python_type, charter_field.default))
+    return struct_fields
+
+
+def _field_matches_state(field: CharterField, state: str | None) -> bool:
+    return field.states is None or state is None or state in field.states
+
+
+def _document_struct_name(family_name: str, state: str | None) -> str:
+    parts = [family_name]
+    if state is not None:
+        parts.append(state)
+    name = "".join(_title_identifier_part(part) for part in parts)
+    if not name or not (name[0].isalpha() or name[0] == "_"):
+        name = f"Family{name}"
+    return f"{name}Document"
+
+
+def _title_identifier_part(value: str) -> str:
+    return "".join(
+        part[:1].upper() + part[1:]
+        for part in re.split(r"[^0-9A-Za-z_]+", value)
+        if part
     )
 
 
