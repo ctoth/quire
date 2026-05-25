@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from quire.families import FamilyDefinition
 from quire.references import ForeignKeySpec
@@ -20,6 +20,7 @@ from quire.schema_ir import (
     python_type_path,
 )
 from quire.sql_types import python_type_to_sql
+from quire.versions import VersionId
 
 
 class FamilyModel:
@@ -54,6 +55,18 @@ class CharterField:
     vector_dimensions: int | None = None
     source_local_only: bool = False
     canonical_only: bool = False
+    document: bool = True
+    document_name: str | None = None
+    document_order: int | None = None
+    states: frozenset[str] | None = None
+    artifact: bool = False
+    artifact_name: str | None = None
+    graph_node_label: bool = False
+    graph_metadata: bool = False
+    local_id: bool = False
+    local_id_policy: str | None = None
+    contract_version: VersionId | None = None
+    parse_boundary: Literal["yaml", "json", "sqlite"] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def to_schema_field(self) -> SchemaField:
@@ -84,6 +97,18 @@ class CharterField:
             vector_dimensions=self.vector_dimensions,
             source_local_only=self.source_local_only,
             canonical_only=self.canonical_only,
+            document=self.document,
+            document_name=self.document_name,
+            document_order=self.document_order,
+            states=self.states,
+            artifact=self.artifact,
+            artifact_name=self.artifact_name,
+            graph_node_label=self.graph_node_label,
+            graph_metadata=self.graph_metadata,
+            local_id=self.local_id,
+            local_id_policy=self.local_id_policy,
+            contract_version=self.contract_version,
+            parse_boundary=self.parse_boundary,
             metadata=self.metadata,
         )
 
@@ -155,6 +180,10 @@ class CharterRelationship:
     uselist: bool = True
     association_object: bool = False
     order_by: tuple[str, ...] = ()
+    artifact_dependency: bool = False
+    graph_edge: bool = False
+    graph_edge_kind: str | None = None
+    states: frozenset[str] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def to_schema_relationship(self) -> SchemaRelationship:
@@ -166,6 +195,10 @@ class CharterRelationship:
             uselist=self.uselist,
             association_object=self.association_object,
             order_by=self.order_by,
+            artifact_dependency=self.artifact_dependency,
+            graph_edge=self.graph_edge,
+            graph_edge_kind=self.graph_edge_kind,
+            states=self.states,
             metadata=self.metadata,
         )
 
@@ -195,6 +228,7 @@ class FamilyCharter:
     polymorphic_on: str | None = None
     polymorphic_identity: str | None = None
     polymorphic_models: tuple[CharterPolymorphicModel, ...] = ()
+    document_contract_version: VersionId | None = None
     semantic_metadata: Mapping[str, object] = field(default_factory=dict)
 
     def to_schema_object(self) -> SchemaObject:
@@ -208,6 +242,7 @@ class FamilyCharter:
             identity_field=self.family.identity_field,
             reference_keys=self.family.reference_keys,
             lifecycle_states=self.lifecycle_states,
+            document_contract_version=self.document_contract_version,
             indexes=tuple(index.to_schema_index() for index in self.indexes),
             fts_indexes=tuple(
                 index.to_schema_fts_index(self.family.name)

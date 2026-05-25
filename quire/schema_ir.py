@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from quire.references import ReferenceKey
+from quire.versions import VersionId
 
 
 def python_type_path(python_type: type[Any]) -> str:
@@ -52,26 +53,50 @@ class SchemaField:
     vector_dimensions: int | None = None
     source_local_only: bool = False
     canonical_only: bool = False
+    document: bool = True
+    document_name: str | None = None
+    document_order: int | None = None
+    states: frozenset[str] | None = None
+    artifact: bool = False
+    artifact_name: str | None = None
+    graph_node_label: bool = False
+    graph_metadata: bool = False
+    local_id: bool = False
+    local_id_policy: str | None = None
+    contract_version: VersionId | None = None
+    parse_boundary: Literal["yaml", "json", "sqlite"] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def payload(self) -> dict[str, object]:
         return {
+            "artifact": self.artifact,
+            "artifact_name": self.artifact_name,
             "canonical_only": self.canonical_only,
+            "contract_version": self.contract_version,
             "default": self.default,
             "default_sql": self.default_sql,
+            "document": self.document,
+            "document_name": self.document_name,
+            "document_order": self.document_order,
             "enum_values": self.enum_values,
             "foreign_key": None if self.foreign_key is None else self.foreign_key.payload(),
             "generated": self.generated,
+            "graph_metadata": self.graph_metadata,
+            "graph_node_label": self.graph_node_label,
             "index": self.index,
             "json_value_object": self.json_value_object,
+            "local_id": self.local_id,
+            "local_id_policy": self.local_id_policy,
             "metadata": dict(sorted(self.metadata.items())),
             "name": self.name,
             "nullable": self.nullable,
+            "parse_boundary": self.parse_boundary,
             "primary_key": self.primary_key,
             "python_type": self.python_type,
             "search": self.search,
             "source_local_only": self.source_local_only,
             "sql_type": _payload(self.sql_type),
+            "states": self.states,
             "unique": self.unique,
             "vector_dimensions": self.vector_dimensions,
         }
@@ -160,16 +185,24 @@ class SchemaRelationship:
     uselist: bool = True
     association_object: bool = False
     order_by: tuple[str, ...] = ()
+    artifact_dependency: bool = False
+    graph_edge: bool = False
+    graph_edge_kind: str | None = None
+    states: frozenset[str] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def payload(self) -> dict[str, object]:
         return {
             "association_object": self.association_object,
+            "artifact_dependency": self.artifact_dependency,
             "back_populates": self.back_populates,
             "foreign_key": self.foreign_key,
+            "graph_edge": self.graph_edge,
+            "graph_edge_kind": self.graph_edge_kind,
             "metadata": dict(sorted(self.metadata.items())),
             "name": self.name,
             "order_by": self.order_by,
+            "states": self.states,
             "target_family": self.target_family,
             "uselist": self.uselist,
         }
@@ -198,6 +231,7 @@ class SchemaObject:
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
     lifecycle_states: tuple[str, ...] = ()
+    document_contract_version: VersionId | None = None
     indexes: tuple[SchemaIndex, ...] = ()
     fts_indexes: tuple[SchemaFtsIndex, ...] = ()
     vector_caches: tuple[SchemaVectorCache, ...] = ()
@@ -218,6 +252,7 @@ class SchemaObject:
             "family": {
                 "artifact_contract_version": self.artifact_contract_version,
                 "artifact_family": self.artifact_family_name,
+                "document_contract_version": self.document_contract_version,
                 "identity_field": self.identity_field,
                 "name": self.family_name,
                 "reference_keys": tuple(key.contract_body() for key in self.reference_keys),
