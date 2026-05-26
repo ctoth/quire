@@ -14,6 +14,7 @@ from quire.artifacts import (
     SubdirFixedFilePlacement,
     TemplateFilePlacement,
     UnscannablePlacementError,
+    batch_artifact_family,
     encode_ref_value,
 )
 from quire.contracts import ContractEntry, ContractManifest, ContractManifestError, check_contract_manifest
@@ -225,6 +226,7 @@ __all__ = [
     "document_batch_codec",
     "create_vector_cache_schema",
     "build_reference_lookup",
+    "batch_artifact_family",
     "encode_ref_value",
     "extend_reference_lookup",
     "finalize_reference_lookup",

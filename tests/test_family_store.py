@@ -13,8 +13,9 @@ from quire.artifacts import (
     FlatYamlPlacement,
     HashScatteredYamlPlacement,
     ReadOnlyDocumentStoreBackend,
+    batch_artifact_family,
 )
-from quire.documents import DocumentCodec
+from quire.documents import DocumentBatchSpec, DocumentCodec
 from quire.family_store import DocumentFamilyStore, DocumentStoreBackend
 from quire.git_store import GitStore
 from quire.versions import VersionId
@@ -22,6 +23,11 @@ from quire.versions import VersionId
 
 class DemoDocument(msgspec.Struct):
     name: str
+
+
+class BatchDemoDocument(msgspec.Struct):
+    name: str
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -356,6 +362,39 @@ def test_custom_codecs_override_defaults():
     assert store.require(family, "example") == DemoDocument("alpha")
     assert store.render(DemoDocument("beta"), cast(Any, family)) == "name=beta"
     assert store.payload(DemoDocument("beta"), cast(Any, family)) == {"custom_name": "beta"}
+
+
+def test_batch_artifact_family_wires_batch_callbacks_and_scan_type():
+    batch_spec = DocumentBatchSpec(
+        batch_name="batch_demos",
+        item_type=BatchDemoDocument,
+        items_field="demos",
+        inherited_item_fields=("source",),
+    )
+    family = batch_artifact_family(
+        name="batch-demos",
+        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        placement=FlatYamlPlacement("batch-demos", str),
+        batch_spec=batch_spec,
+    )
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    document = (
+        BatchDemoDocument(name="alpha", source="paper-a"),
+        BatchDemoDocument(name="beta", source="paper-a"),
+    )
+
+    store.save(family, "examples", document, message="save batch")
+
+    assert family.doc_type is tuple
+    assert family.scan_type is BatchDemoDocument
+    assert store.require(family, "examples") == document
+    assert store.payload(document, cast(Any, family)) == {
+        "source": "paper-a",
+        "demos": [
+            {"name": "alpha"},
+            {"name": "beta"},
+        ],
+    }
 
 
 def test_store_uses_single_document_codec_for_default_operations():

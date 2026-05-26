@@ -10,6 +10,7 @@ from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast, ru
 
 import msgspec
 
+from quire.documents.batch import DocumentBatchSpec, document_batch_codec
 from quire.versions import VersionId
 
 TRef = TypeVar("TRef")
@@ -17,6 +18,7 @@ TDoc = TypeVar("TDoc")
 TOwner = TypeVar("TOwner")
 TPlacementOwner = TypeVar("TPlacementOwner", contravariant=True)
 TPlacementRef = TypeVar("TPlacementRef")
+TBatchDocument = TypeVar("TBatchDocument")
 
 BranchPolicy: TypeAlias = Literal["owner", "primary", "current", "fixed", "template"]
 CollisionSuffix: TypeAlias = Literal["none", "sha256"]
@@ -1018,3 +1020,24 @@ class ArtifactFamily(Generic[TOwner, TRef, TDoc]):
             "doc_type": f"{self.doc_type.__module__}.{self.doc_type.__qualname__}",
             "placement": self.placement.contract_body(),
         }
+
+
+def batch_artifact_family(
+    *,
+    name: str,
+    contract_version: VersionId,
+    placement: ArtifactPlacementPolicy[TOwner, TRef],
+    batch_spec: DocumentBatchSpec[TBatchDocument],
+) -> ArtifactFamily[TOwner, TRef, tuple[TBatchDocument, ...]]:
+    codec = document_batch_codec(batch_spec)
+    return ArtifactFamily(
+        name=name,
+        contract_version=contract_version,
+        doc_type=cast(type[tuple[TBatchDocument, ...]], tuple),
+        placement=placement,
+        decode_bytes=codec.decode_bytes,
+        encode_document=codec.encode_document,
+        render_document=codec.render_document,
+        document_payload=codec.document_payload,
+        scan_type=cast(type[msgspec.Struct], batch_spec.item_type),
+    )
