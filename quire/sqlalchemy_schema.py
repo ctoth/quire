@@ -369,6 +369,8 @@ def _column_from_schema_field(schema_object: SchemaObject, field: SchemaField) -
 
 
 def _schema_field_foreign_keys(field: SchemaField) -> tuple[Any, ...]:
+    if field.parse_boundary == "json":
+        return ()
     if field.foreign_keys:
         return field.foreign_keys
     if field.foreign_key is not None:

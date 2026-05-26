@@ -341,6 +341,47 @@ def test_foreign_key_can_target_declared_non_id_field(tmp_path: Path) -> None:
         assert claim.source.title == "Alpha Source"
 
 
+def test_json_boundary_foreign_keys_are_metadata_not_sql_constraints(tmp_path: Path) -> None:
+    version = VersionId("2026.05.26", allow_placeholder=False)
+    sources = _family("json_sources", Source)
+    schema = build_sqlalchemy_schema(
+        charter_catalog(
+            FamilyCharter(
+                family=sources,
+                model=Source,
+                fields=(
+                    CharterField("id", str, primary_key=True, nullable=False),
+                    CharterField("metadata", str, nullable=False),
+                    CharterField(
+                        "semantic_refs",
+                        tuple[str, ...],
+                        parse_boundary="json",
+                        nullable=False,
+                        default=(),
+                        default_sql="'[]'",
+                        foreign_key=ForeignKeySpec(
+                            name="semantic_json_ref",
+                            contract_version=version,
+                            source_family="json_sources",
+                            source_field="semantic_refs[]",
+                            target_family="semantic_only_family",
+                            required=False,
+                            many=True,
+                        ),
+                    ),
+                    CharterField("trust", SourceTrust, nullable=False, json_value_object=True),
+                ),
+            ),
+        )
+    )
+
+    create_sqlalchemy_store(tmp_path / "derived.sqlite", schema)
+
+    semantic_refs = schema.schema_object("json_sources").fields[2]
+    assert semantic_refs.foreign_key is not None
+    assert schema.table("json_sources").c.semantic_refs.foreign_keys == set()
+
+
 def test_polymorphic_charter_maps_subclasses_on_one_table(tmp_path: Path) -> None:
     schema = build_sqlalchemy_schema(
         charter_catalog(
