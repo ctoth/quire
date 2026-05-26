@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar
@@ -21,6 +21,39 @@ class DocumentBatchSpec(Generic[TDocument]):
     item_type: type[TDocument]
     items_field: str
     inherited_item_fields: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DocumentBatchCodec(Generic[TDocument]):
+    spec: DocumentBatchSpec[TDocument]
+    inherited_item_payload: Callable[[tuple[TDocument, ...]], Mapping[str, object]] | None = None
+
+    def decode_bytes(self, payload: bytes, source: str) -> tuple[TDocument, ...]:
+        return decode_document_batch_bytes(payload, self.spec, source=source)
+
+    def render_document(self, document: tuple[TDocument, ...]) -> str:
+        return render_document_batch(
+            document,
+            self.spec,
+            inherited_item_values=self._inherited_item_values(document),
+        )
+
+    def encode_document(self, document: tuple[TDocument, ...]) -> bytes:
+        return self.render_document(document).encode("utf-8")
+
+    def document_payload(self, document: tuple[TDocument, ...]) -> dict[str, object]:
+        inherited_values = self._inherited_item_values(document)
+        payload: dict[str, object] = dict(inherited_values)
+        payload[self.spec.items_field] = [
+            dict(_batch_item_payload(item, inherited_values))
+            for item in document
+        ]
+        return payload
+
+    def _inherited_item_values(self, document: tuple[TDocument, ...]) -> Mapping[str, object]:
+        if self.inherited_item_payload is not None:
+            return self.inherited_item_payload(document)
+        return _shared_inherited_item_values(document, self.spec)
 
 
 @dataclass(frozen=True)
@@ -184,6 +217,29 @@ def _batch_item_payload(
     return item
 
 
+def _shared_inherited_item_values(
+    items: Sequence[object],
+    spec: DocumentBatchSpec[Any],
+) -> dict[str, object]:
+    inherited_values: dict[str, object] = {}
+    for field in spec.inherited_item_fields:
+        present_items_and_values = [
+            (item, getattr(item, field))
+            for item in items
+            if getattr(item, field, None) is not None
+        ]
+        if not present_items_and_values:
+            continue
+        first_item, first_value = present_items_and_values[0]
+        if all(value == first_value for _, value in present_items_and_values[1:]):
+            payload = document_to_payload(first_item)
+            if isinstance(payload, Mapping) and field in payload:
+                inherited_values[field] = payload[field]
+            else:
+                inherited_values[field] = first_value
+    return inherited_values
+
+
 def render_document_batch(
     items: Sequence[TDocument],
     spec: DocumentBatchSpec[TDocument],
@@ -202,3 +258,11 @@ def render_document_batch(
         for item in items
     ]
     return msgspec.yaml.encode(envelope).decode("utf-8").rstrip()
+
+
+def document_batch_codec(
+    spec: DocumentBatchSpec[TDocument],
+    *,
+    inherited_item_payload: Callable[[tuple[TDocument, ...]], Mapping[str, object]] | None = None,
+) -> DocumentBatchCodec[TDocument]:
+    return DocumentBatchCodec(spec=spec, inherited_item_payload=inherited_item_payload)

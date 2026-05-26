@@ -11,9 +11,11 @@ from quire.documents.schema import (
     to_document_builtins,
 )
 from quire.documents.batch import (
+    DocumentBatchCodec,
     DocumentBatchSpec,
     LoadedBatchItem,
     decode_document_batch_bytes,
+    document_batch_codec,
     load_document_batch,
     load_document_batch_dir,
     render_document_batch,
@@ -44,6 +46,7 @@ from quire.documents.loaded import LoadedDocument
 
 __all__ = [
     "DocumentBatchSpec",
+    "DocumentBatchCodec",
     "DocumentSchemaError",
     "DocumentStruct",
     "DEFAULT_DOCUMENT_CODEC",
@@ -63,6 +66,7 @@ __all__ = [
     "decode_yaml_mapping",
     "decode_yaml_value",
     "document_to_payload",
+    "document_batch_codec",
     "encode_document",
     "encode_json_mapping",
     "encode_text_document",

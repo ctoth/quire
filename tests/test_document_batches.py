@@ -3,10 +3,12 @@ from __future__ import annotations
 import pytest
 
 from quire.documents import (
+    DocumentBatchCodec,
     DocumentBatchSpec,
     DocumentSchemaError,
     DocumentStruct,
     decode_document_batch_bytes,
+    document_batch_codec,
     load_document_batch,
     load_document_batch_dir,
     render_document_batch,
@@ -166,11 +168,85 @@ def test_render_document_batch_round_trips_items() -> None:
     )
 
 
+def test_document_batch_codec_decodes_bytes_through_batch_spec() -> None:
+    codec = document_batch_codec(EXAMPLE_BATCH_SPEC)
+
+    documents = codec.decode_bytes(
+        b"examples:\n  - name: alpha\n    value: 1\n",
+        "examples.yaml",
+    )
+
+    assert documents == (BatchExampleDocument(name="alpha", value=1),)
+
+
+def test_document_batch_codec_renders_and_encodes_yaml() -> None:
+    codec = document_batch_codec(INHERITING_BATCH_SPEC)
+    documents = (
+        BatchExampleDocument(name="alpha", value=1, source="paper-a"),
+        BatchExampleDocument(name="beta", value=2, source="paper-a"),
+    )
+
+    rendered = codec.render_document(documents)
+    encoded = codec.encode_document(documents)
+
+    assert "source: paper-a" in rendered
+    assert encoded == rendered.encode("utf-8")
+    assert codec.decode_bytes(encoded, "encoded.yaml") == documents
+
+
+def test_document_batch_codec_creates_payload_from_items() -> None:
+    codec = document_batch_codec(EXAMPLE_BATCH_SPEC)
+    documents = (
+        BatchExampleDocument(name="alpha", value=1),
+        BatchExampleDocument(name="beta", value=2),
+    )
+
+    assert codec.document_payload(documents) == {
+        "examples": [
+            {"name": "alpha", "value": 1},
+            {"name": "beta", "value": 2},
+        ]
+    }
+
+
+def test_document_batch_codec_lifts_equal_inherited_fields_to_envelope() -> None:
+    codec = document_batch_codec(INHERITING_BATCH_SPEC)
+    documents = (
+        BatchExampleDocument(name="alpha", value=1, source="paper-a"),
+        BatchExampleDocument(name="beta", value=2, source="paper-a"),
+    )
+
+    assert codec.document_payload(documents) == {
+        "source": "paper-a",
+        "examples": [
+            {"name": "alpha", "value": 1},
+            {"name": "beta", "value": 2},
+        ],
+    }
+
+
+def test_document_batch_codec_leaves_differing_inherited_fields_on_items() -> None:
+    codec = document_batch_codec(INHERITING_BATCH_SPEC)
+    documents = (
+        BatchExampleDocument(name="alpha", value=1, source="paper-a"),
+        BatchExampleDocument(name="beta", value=2, source="paper-b"),
+    )
+
+    assert codec.document_payload(documents) == {
+        "examples": [
+            {"name": "alpha", "value": 1, "source": "paper-a"},
+            {"name": "beta", "value": 2, "source": "paper-b"},
+        ],
+    }
+
+
 def test_quire_documents_exports_batch_api() -> None:
     from quire import documents
 
+    assert documents.DocumentBatchCodec is DocumentBatchCodec
     assert documents.DocumentBatchSpec is DocumentBatchSpec
     assert documents.decode_document_batch_bytes is decode_document_batch_bytes
+    assert documents.document_batch_codec is document_batch_codec
     assert documents.load_document_batch is load_document_batch
     assert documents.load_document_batch_dir is load_document_batch_dir
     assert documents.render_document_batch is render_document_batch
