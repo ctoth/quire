@@ -39,6 +39,7 @@ class Claim:
     id: str
     label: str
     concept_id: str
+    family: DemoFamily = DemoFamily.CLAIMS
     premise_ids: tuple[str, ...] = ()
     artifact_code: str | None = None
     status: str | None = None
@@ -86,6 +87,7 @@ def _charter() -> FamilyCharter:
         fields=(
             CharterField("id", str, primary_key=True, nullable=False),
             CharterField("label", str, graph_node_label=True),
+            CharterField("family", DemoFamily),
             CharterField(
                 "concept_id",
                 str,
@@ -126,6 +128,7 @@ def test_artifact_payload_omits_artifact_fields_before_hashing() -> None:
 
     assert isinstance(payload, dict)
     assert payload["id"] == "claim-a"
+    assert payload["family"] == "claims"
     assert "artifact_code" not in payload
     assert artifact_digest(_charter(), _record()).startswith("sha256:")
 
