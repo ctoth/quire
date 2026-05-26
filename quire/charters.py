@@ -87,6 +87,8 @@ class CharterField:
     graph_metadata: bool = False
     graph_edge: bool = False
     graph_edge_kind: str | None = None
+    graph_edge_source_field: str | None = None
+    graph_edge_source_family: str | None = None
     local_id: bool = False
     local_id_policy: str | None = None
     contract_version: VersionId | None = None
@@ -153,6 +155,8 @@ class CharterField:
             graph_metadata=self.graph_metadata,
             graph_edge=self.graph_edge,
             graph_edge_kind=self.graph_edge_kind,
+            graph_edge_source_field=self.graph_edge_source_field,
+            graph_edge_source_family=self.graph_edge_source_family,
             local_id=self.local_id,
             local_id_policy=self.local_id_policy,
             contract_version=self.contract_version,

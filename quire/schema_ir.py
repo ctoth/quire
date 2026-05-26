@@ -75,6 +75,8 @@ class SchemaField:
     graph_metadata: bool = False
     graph_edge: bool = False
     graph_edge_kind: str | None = None
+    graph_edge_source_field: str | None = None
+    graph_edge_source_family: str | None = None
     local_id: bool = False
     local_id_policy: str | None = None
     contract_version: VersionId | None = None
@@ -101,6 +103,8 @@ class SchemaField:
             "graph_metadata": self.graph_metadata,
             "graph_edge": self.graph_edge,
             "graph_edge_kind": self.graph_edge_kind,
+            "graph_edge_source_field": self.graph_edge_source_field,
+            "graph_edge_source_family": self.graph_edge_source_family,
             "graph_node_label": self.graph_node_label,
             "index": self.index,
             "json_value_object": self.json_value_object,

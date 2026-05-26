@@ -29,6 +29,7 @@ class ClaimDoc(msgspec.Struct, kw_only=True):
     id: str
     label: str
     concept_id: str
+    related_id: str | None = None
     premise_ids: tuple[str, ...] = ()
     artifact_code: str | None = None
     status: str | None = None
@@ -40,6 +41,7 @@ class Claim:
     label: str
     concept_id: str
     family: DemoFamily = DemoFamily.CLAIMS
+    related_id: str | None = None
     premise_ids: tuple[str, ...] = ()
     artifact_code: str | None = None
     status: str | None = None
@@ -97,6 +99,15 @@ def _charter() -> FamilyCharter:
                 graph_edge_kind="claim_of",
             ),
             CharterField(
+                "related_id",
+                str | None,
+                foreign_key=_foreign_key("claim_related", "related_id"),
+                graph_edge=True,
+                graph_edge_kind="related",
+                graph_edge_source_field="concept_id",
+                graph_edge_source_family="concepts",
+            ),
+            CharterField(
                 "premise_ids",
                 tuple[str, ...],
                 foreign_key=premise_fk,
@@ -113,6 +124,7 @@ def _record() -> Claim:
         id="claim-a",
         label="Claim A",
         concept_id="concept-a",
+        related_id="concept-related",
         premise_ids=("claim-b", "claim-c"),
         artifact_code="sha256:stored",
         status="accepted",
@@ -157,10 +169,14 @@ def test_graph_projection_uses_label_metadata_and_graph_edges() -> None:
     assert node.identity.family == "claims"
     assert node.label == "Claim A"
     assert node.metadata == {"status": "accepted"}
-    assert len(edges) == 1
+    assert len(edges) == 2
     assert edges[0].edge_type == "claim_of"
     assert edges[0].target_family == "concepts"
     assert edges[0].target_identity == "concept-a"
+    assert edges[1].edge_type == "related"
+    assert edges[1].source.family == "concepts"
+    assert edges[1].source.identity == "concept-a"
+    assert edges[1].target_identity == "concept-related"
 
 
 def test_dependency_field_requires_foreign_key() -> None:

@@ -144,7 +144,6 @@ def iter_graph_edges(
     charter: FamilyCharter,
     record: object,
 ) -> Iterator[GraphEdgeProjection]:
-    source = artifact_identity(charter, record)
     for field in charter.fields:
         if not field.graph_edge:
             continue
@@ -155,6 +154,7 @@ def iter_graph_edges(
             )
         value = getattr(record, field.name, None)
         for foreign_key in foreign_keys:
+            source = _graph_edge_source(charter, record, field, foreign_key)
             edge_type = field.graph_edge_kind or foreign_key.name
             for dependency in _dependency_values(source, field, foreign_key, value):
                 yield GraphEdgeProjection(
@@ -179,6 +179,27 @@ def _field_foreign_keys(field: CharterField) -> tuple[ForeignKeySpec, ...]:
     if field.foreign_key is not None:
         return (field.foreign_key,)
     return ()
+
+
+def _graph_edge_source(
+    charter: FamilyCharter,
+    record: object,
+    field: CharterField,
+    foreign_key: ForeignKeySpec,
+) -> ArtifactIdentity:
+    source_field = field.graph_edge_source_field
+    if source_field is None:
+        return artifact_identity(charter, record)
+    value = getattr(record, source_field, None)
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"{charter.family.name}.{field.name}: graph edge source field "
+            f"{source_field!r} must be a non-empty string"
+        )
+    return ArtifactIdentity(
+        field.graph_edge_source_family or foreign_key.source_family,
+        value,
+    )
 
 
 def _payload_value(value: object) -> object:
