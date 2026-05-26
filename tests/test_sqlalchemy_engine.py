@@ -382,6 +382,44 @@ def test_json_boundary_foreign_keys_are_metadata_not_sql_constraints(tmp_path: P
     assert schema.table("json_sources").c.semantic_refs.foreign_keys == set()
 
 
+def test_foreign_key_to_family_outside_catalog_is_metadata_not_sql_constraint(
+    tmp_path: Path,
+) -> None:
+    version = VersionId("2026.05.26", allow_placeholder=False)
+    sources = _family("partial_sources", Source)
+    schema = build_sqlalchemy_schema(
+        charter_catalog(
+            FamilyCharter(
+                family=sources,
+                model=Source,
+                fields=(
+                    CharterField("id", str, primary_key=True, nullable=False),
+                    CharterField(
+                        "metadata",
+                        str,
+                        nullable=True,
+                        foreign_key=ForeignKeySpec(
+                            name="semantic_scalar_ref",
+                            contract_version=version,
+                            source_family="partial_sources",
+                            source_field="metadata",
+                            target_family="semantic_only_family",
+                            required=False,
+                        ),
+                    ),
+                    CharterField("trust", SourceTrust, nullable=False, json_value_object=True),
+                ),
+            ),
+        )
+    )
+
+    create_sqlalchemy_store(tmp_path / "derived.sqlite", schema)
+
+    metadata = schema.schema_object("partial_sources").fields[1]
+    assert metadata.foreign_key is not None
+    assert schema.table("partial_sources").c.metadata.foreign_keys == set()
+
+
 def test_polymorphic_charter_maps_subclasses_on_one_table(tmp_path: Path) -> None:
     schema = build_sqlalchemy_schema(
         charter_catalog(

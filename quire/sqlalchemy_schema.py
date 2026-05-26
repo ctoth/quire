@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Set
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from functools import cache
@@ -240,8 +240,13 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
     clear_mappers()
     metadata = MetaData()
     mapper_registry = registry(metadata=metadata)
+    catalog_family_names = frozenset(
+        schema_object.family_name for schema_object in catalog.objects
+    )
     tables = {
-        schema_object.family_name: _table_from_schema_object(metadata, schema_object)
+        schema_object.family_name: _table_from_schema_object(
+            metadata, schema_object, catalog_family_names
+        )
         for schema_object in catalog.objects
     }
     fts_indexes = _fts_indexes_from_catalog(catalog)
@@ -277,8 +282,15 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
     return schema
 
 
-def _table_from_schema_object(metadata: MetaData, schema_object: SchemaObject) -> Table:
-    columns = tuple(_column_from_schema_field(schema_object, field) for field in schema_object.fields)
+def _table_from_schema_object(
+    metadata: MetaData,
+    schema_object: SchemaObject,
+    catalog_family_names: Set[str],
+) -> Table:
+    columns = tuple(
+        _column_from_schema_field(schema_object, field, catalog_family_names)
+        for field in schema_object.fields
+    )
     table_args: list[Any] = [
         UniqueConstraint(*index.fields, name=index.name)
         for index in schema_object.indexes
@@ -348,13 +360,17 @@ def _vector_caches_from_catalog(catalog: SchemaCatalog) -> dict[str, SchemaVecto
     return caches
 
 
-def _column_from_schema_field(schema_object: SchemaObject, field: SchemaField) -> Column[Any]:
+def _column_from_schema_field(
+    schema_object: SchemaObject,
+    field: SchemaField,
+    catalog_family_names: Set[str],
+) -> Column[Any]:
     args: list[Any] = [
         ForeignKey(
             f"{foreign_key.target_family}.{foreign_key.target_field}",
             name=f"fk_{foreign_key.name}",
         )
-        for foreign_key in _schema_field_foreign_keys(field)
+        for foreign_key in _schema_field_foreign_keys(field, catalog_family_names)
     ]
     kwargs: dict[str, Any] = {
         "nullable": field.nullable,
@@ -368,12 +384,20 @@ def _column_from_schema_field(schema_object: SchemaObject, field: SchemaField) -
     return Column(field.name, _sqlalchemy_type(field), *args, **kwargs)
 
 
-def _schema_field_foreign_keys(field: SchemaField) -> tuple[Any, ...]:
+def _schema_field_foreign_keys(
+    field: SchemaField, catalog_family_names: Set[str]
+) -> tuple[Any, ...]:
     if field.parse_boundary == "json":
         return ()
     if field.foreign_keys:
-        return field.foreign_keys
+        return tuple(
+            foreign_key
+            for foreign_key in field.foreign_keys
+            if foreign_key.target_family in catalog_family_names
+        )
     if field.foreign_key is not None:
+        if field.foreign_key.target_family not in catalog_family_names:
+            return ()
         return (field.foreign_key,)
     return ()
 
