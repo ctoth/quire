@@ -82,8 +82,11 @@ class CharterField:
     states: frozenset[str] | None = None
     artifact: bool = False
     artifact_name: str | None = None
+    artifact_dependency: bool = False
     graph_node_label: bool = False
     graph_metadata: bool = False
+    graph_edge: bool = False
+    graph_edge_kind: str | None = None
     local_id: bool = False
     local_id_policy: str | None = None
     contract_version: VersionId | None = None
@@ -145,8 +148,11 @@ class CharterField:
             states=self.states,
             artifact=self.artifact,
             artifact_name=self.artifact_name,
+            artifact_dependency=self.artifact_dependency,
             graph_node_label=self.graph_node_label,
             graph_metadata=self.graph_metadata,
+            graph_edge=self.graph_edge,
+            graph_edge_kind=self.graph_edge_kind,
             local_id=self.local_id,
             local_id_policy=self.local_id_policy,
             contract_version=self.contract_version,

@@ -70,8 +70,11 @@ class SchemaField:
     states: frozenset[str] | None = None
     artifact: bool = False
     artifact_name: str | None = None
+    artifact_dependency: bool = False
     graph_node_label: bool = False
     graph_metadata: bool = False
+    graph_edge: bool = False
+    graph_edge_kind: str | None = None
     local_id: bool = False
     local_id_policy: str | None = None
     contract_version: VersionId | None = None
@@ -83,6 +86,7 @@ class SchemaField:
         return {
             "artifact": self.artifact,
             "artifact_name": self.artifact_name,
+            "artifact_dependency": self.artifact_dependency,
             "canonical_only": self.canonical_only,
             "contract_version": self.contract_version,
             "default": self.default,
@@ -95,6 +99,8 @@ class SchemaField:
             "foreign_keys": tuple(foreign_key.payload() for foreign_key in self.foreign_keys),
             "generated": self.generated,
             "graph_metadata": self.graph_metadata,
+            "graph_edge": self.graph_edge,
+            "graph_edge_kind": self.graph_edge_kind,
             "graph_node_label": self.graph_node_label,
             "index": self.index,
             "json_value_object": self.json_value_object,
