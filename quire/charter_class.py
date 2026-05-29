@@ -653,6 +653,20 @@ def charter(
     resolved_artifact_name = artifact_family_name or name
 
     def decorate(cls: _T) -> _T:
+        # Bind the decorated class into its own module namespace under its
+        # __name__ BEFORE resolving type hints. `get_type_hints` evaluates
+        # string/forward-ref annotations against the module globals, but the
+        # class name is not bound there until the decorator returns — so a
+        # self-referential annotation (the class naming itself, or a tagged
+        # union naming itself + a sibling) would raise NameError at decoration
+        # time. Pre-binding closes that gap; sibling references to classes
+        # defined earlier in the module already resolve. (Idempotent: the normal
+        # `class X: ...` binding overwrites this with the same object once the
+        # decorator returns.)
+        defining_module = sys.modules.get(cls.__module__)
+        if defining_module is not None:
+            setattr(defining_module, cls.__name__, cls)
+
         # The class IS the document. Recover Annotated[...] metadata via type
         # hints; recover field ordering + defaults via msgspec's own field
         # introspection (a required msgspec field exposes a slot descriptor via
