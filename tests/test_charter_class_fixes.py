@@ -72,10 +72,15 @@ def test_document_codec_uses_the_decorated_class() -> None:
     assert type(decoded) is SameAsAssertionDocument
 
 
-def test_generated_document_with_state_raises() -> None:
+def test_generated_document_with_state_returns_class_when_no_field_states() -> None:
+    # A charter with no state-conditional field returns the SAME decorated class
+    # for any state (parity with the hand-written _field_matches_state behaviour,
+    # which matched every field when field.states is None). The NotImplementedError
+    # path now applies only to genuine field-level projections — see
+    # test_charter_class_lifecycle_state.py.
     charter_obj: FamilyCharter = SameAsAssertionDocument.__charter__
-    with pytest.raises(NotImplementedError):
-        charter_obj.generated_document("proposed")
+    assert charter_obj.generated_document("proposed") is SameAsAssertionDocument
+    assert charter_obj.generated_document("proposed") is charter_obj.generated_document(None)
 
 
 def test_validators_still_run_on_decoded_class() -> None:

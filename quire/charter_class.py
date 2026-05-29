@@ -554,9 +554,17 @@ class _DeclarativeFamilyCharter(FamilyCharter):
 
     The authored class is bound after construction via :meth:`_bind_document`
     (the class object does not exist until the decorator has finished reading
-    its fields). Field-level ``state`` projections are not used by propstore
-    today; a non-``None`` ``state`` raises :class:`NotImplementedError` rather
-    than silently returning a divergent projected struct.
+    its fields).
+
+    A non-``None`` ``state`` returns the SAME decorated class as ``state=None``
+    whenever no field is state-conditional (no ``CharterField`` declares a
+    ``states`` set) — which is the only case propstore exercises. This restores
+    parity with the hand-written charter's ``_field_matches_state`` behaviour,
+    where a field with ``states is None`` matched every state, so
+    ``generated_document("proposed")`` returned a document identical to
+    ``generated_document(None)``. ``NotImplementedError`` is raised only for a
+    genuine field-level projection (some field declares ``states`` AND a
+    non-``None`` ``state`` is requested) — subsetting that propstore never does.
     """
 
     def _bind_document(self, document_class: type[msgspec.Struct]) -> None:
@@ -565,22 +573,37 @@ class _DeclarativeFamilyCharter(FamilyCharter):
         # authored class for state=None.
         self._generated_document_cache[None] = document_class
 
+    def _has_state_conditional_field(self) -> bool:
+        return any(field.states is not None for field in self.fields)
+
     def generated_document(self, state: str | None = None) -> type[msgspec.Struct]:
         cached = self._generated_document_cache.get(state)
         if cached is not None:
             return cached
-        if state is not None:
+
+        bound = self._generated_document_cache.get(None)
+        if bound is None:
+            # The document was never bound — this only happens if the charter was
+            # constructed outside the @charter decorator.
+            raise RuntimeError(
+                "declarative charter has no bound document class; "
+                "construct it through the @charter decorator"
+            )
+
+        if state is not None and self._has_state_conditional_field():
+            # A genuine field-level projection would require subsetting the
+            # document by state. propstore never declares field-level states, so
+            # this stays defensive rather than implementing the subset.
             raise NotImplementedError(
                 "declarative charters do not project field-level states; "
-                f"generated_document(state={state!r}) is unsupported "
-                "(the authored class is the document for state=None)"
+                f"generated_document(state={state!r}) is unsupported because a "
+                "field declares a state-conditional `states` set"
             )
-        # state is None but the document was not bound — this only happens if the
-        # charter was constructed outside the @charter decorator.
-        raise RuntimeError(
-            "declarative charter has no bound document class; "
-            "construct it through the @charter decorator"
-        )
+
+        # No field is filtered by state -> the state-projected document equals
+        # the full document, so return (and memoize) the decorated class.
+        self._generated_document_cache[state] = bound
+        return bound
 
 
 # ---------------------------------------------------------------------------
