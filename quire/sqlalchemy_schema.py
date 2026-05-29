@@ -290,6 +290,7 @@ def _table_from_schema_object(
     columns = tuple(
         _column_from_schema_field(schema_object, field, catalog_family_names)
         for field in schema_object.fields
+        if field.storage
     )
     table_args: list[Any] = [
         UniqueConstraint(*index.fields, name=index.name)
@@ -298,6 +299,8 @@ def _table_from_schema_object(
     ]
     table = Table(schema_object.family_name, metadata, *columns, *table_args)
     for field in schema_object.fields:
+        if not field.storage:
+            continue
         if field.index:
             Index(f"ix_{schema_object.family_name}_{field.name}", table.c[field.name])
         if field.unique:

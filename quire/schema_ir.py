@@ -65,6 +65,7 @@ class SchemaField:
     source_local_only: bool = False
     canonical_only: bool = False
     document: bool = True
+    storage: bool = True
     document_name: str | None = None
     document_order: int | None = None
     states: frozenset[str] | None = None
@@ -120,6 +121,7 @@ class SchemaField:
             "source_local_only": self.source_local_only,
             "sql_type": _payload(self.sql_type),
             "states": self.states,
+            "storage": self.storage,
             "unique": self.unique,
             "vector_dimensions": self.vector_dimensions,
         }

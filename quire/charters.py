@@ -77,6 +77,7 @@ class CharterField:
     source_local_only: bool = False
     canonical_only: bool = False
     document: bool = True
+    storage: bool = True
     document_name: str | None = None
     document_order: int | None = None
     states: frozenset[str] | None = None
@@ -145,6 +146,7 @@ class CharterField:
             source_local_only=self.source_local_only,
             canonical_only=self.canonical_only,
             document=self.document,
+            storage=self.storage,
             document_name=self.document_name,
             document_order=self.document_order,
             states=self.states,

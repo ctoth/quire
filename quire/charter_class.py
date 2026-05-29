@@ -119,6 +119,7 @@ class CharterFieldSpec:
     column_name: str | None = None
     nullable: bool | None = None
     json: bool = False
+    document_only: bool = False
     artifact: bool = False
     primary_key: bool = False
     foreign_key: ForeignKeySpec | None = None
@@ -154,6 +155,7 @@ def charter_field(
     column_name: str | None = None,
     nullable: bool | None = None,
     json: bool = False,
+    document_only: bool = False,
     artifact: bool = False,
     primary_key: bool = False,
     foreign_key: ForeignKeySpec | None = None,
@@ -190,12 +192,22 @@ def charter_field(
     while the document type stays the annotated nested type. ``nullable`` (when
     passed) overrides the annotation-inferred column nullability and reproduces
     the explicit-nullable document-optionality rule of the hand-written builder.
+
+    ``document_only=True`` keeps the field in the typed document, the document
+    codec, and the contract manifest (it is still ``document=True``) but emits NO
+    backing SQLAlchemy column: the lowered :class:`~quire.charters.CharterField`
+    carries ``storage=False`` and ``build_sqlalchemy_schema`` skips it. Use it for
+    a projection field whose data lives in other columns (e.g. propstore's
+    ``merge`` family, where ``merge`` is a typed document view over the
+    ``branch_a`` / ``branch_b`` / ``arguments`` storage columns), closing the gap
+    that previously forced an always-populated duplicate column.
     """
 
     return CharterFieldSpec(
         column_name=column_name,
         nullable=nullable,
         json=json,
+        document_only=document_only,
         artifact=artifact,
         primary_key=primary_key,
         foreign_key=foreign_key,
@@ -476,6 +488,7 @@ def _charter_field_from_attribute(
         source_local_only=spec.source_local_only,
         canonical_only=spec.canonical_only,
         document=True,
+        storage=not spec.document_only,
         document_name=document_name,
         document_order=spec.order,
         states=spec.states,
