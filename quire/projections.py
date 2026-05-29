@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field as dataclass_field, is_dataclass
 from enum import Enum
 from typing import Any
 
@@ -44,7 +44,7 @@ class GraphEdgeProjection:
     field: str
     foreign_key: str
     index: int | None = None
-    metadata: Mapping[str, object] = field(default_factory=dict)
+    metadata: Mapping[str, object] = dataclass_field(default_factory=dict)
 
 
 def artifact_identity(charter: FamilyCharter, record: object) -> ArtifactIdentity:

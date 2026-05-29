@@ -1,0 +1,34 @@
+status: accepted
+ontology_reference:
+  uri: ps:concept:source
+  label: Source
+lexical_entry:
+  identifier: entry:source
+  canonical_form:
+    written_rep: Source
+    language: en
+  senses:
+  - reference:
+      uri: ps:concept:source
+      label: Source
+    usage: A source artifact or authority for an assertion.
+    provenance:
+      status: stated
+      witnesses:
+      - asserter: propstore
+        timestamp: '2026-04-17T00:00:00Z'
+        source_artifact_code: ps:resource:phase3-seed
+        method: packaged-resource
+      derived_from: []
+      operations: []
+  physical_dimension_form: structural
+artifact_id: ps:concept:source
+logical_ids:
+- namespace: propstore-seed
+  value: Source
+- namespace: propstore
+  value: Source
+version_id: sha256:692e8c1095a33d41dd177f41971099194c2db0d3e12be5d3295b4b7757c3f85b
+relationships:
+- type: is_a
+  target: ps:concept:entity

@@ -1,0 +1,37 @@
+name: distance
+dimensionless: false
+kind: quantity
+unit_symbol: m
+dimensions:
+  L: 1
+common_alternatives:
+- unit: km
+  type: multiplicative
+  multiplier: 1000.0
+  offset: 0.0
+  base: 10.0
+  divisor: 1.0
+  reference: 1.0
+- unit: cm
+  type: multiplicative
+  multiplier: 0.01
+  offset: 0.0
+  base: 10.0
+  divisor: 1.0
+  reference: 1.0
+- unit: mm
+  type: multiplicative
+  multiplier: 0.001
+  offset: 0.0
+  base: 10.0
+  divisor: 1.0
+  reference: 1.0
+- unit: AU
+  type: multiplicative
+  multiplier: 149597870700.0
+  offset: 0.0
+  base: 10.0
+  divisor: 1.0
+  reference: 1.0
+delta_alternatives: []
+extra_units: []
