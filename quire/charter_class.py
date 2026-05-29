@@ -21,9 +21,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field as _dc_field
 from enum import Enum
+import sys
 from typing import (
     Annotated,
     Any,
+    ClassVar,
     TypeVar,
     cast,
     get_args,
@@ -73,7 +75,27 @@ class CharterDoc(msgspec.Struct, forbid_unknown_fields=True):
     A declarative charter class subclasses this; its annotated attributes are
     the document fields. ``forbid_unknown_fields=True`` mirrors the generated
     document produced by :meth:`FamilyCharter.generated_document`.
+
+    The decorated class IS the family's document: ``@charter`` attaches the
+    derived :class:`~quire.charters.FamilyCharter` as ``__charter__`` and the
+    generated SQLAlchemy model as ``__charter_model__``, and the charter's
+    ``generated_document()`` returns this very class (so the contract-manifest
+    ``document_schema`` label equals the public class name). These two
+    attributes are declared as :data:`~typing.ClassVar` so ``X.__charter__``
+    type-checks without a ``# type: ignore``.
+
+    ``__post_init__`` runs the charter-level validators registered via
+    ``@charter(validators=...)``; the decorator composes these with any
+    ``__post_init__`` already defined on the authored class.
     """
+
+    __charter__: ClassVar["FamilyCharter"]
+    __charter_model__: ClassVar[type[Any]]
+    __charter_validators__: ClassVar[tuple[Callable[[msgspec.Struct], None], ...]] = ()
+
+    def __post_init__(self) -> None:
+        for validator in type(self).__charter_validators__:
+            validator(self)
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +538,52 @@ def _charter_field_from_column(spec: ColumnSpec) -> CharterField:
 
 
 # ---------------------------------------------------------------------------
+# Declarative charter (the decorated class IS the document)
+# ---------------------------------------------------------------------------
+
+
+class _DeclarativeFamilyCharter(FamilyCharter):
+    """A :class:`FamilyCharter` whose document IS the decorated class.
+
+    Unlike the base charter — which synthesizes a fresh ``msgspec.defstruct``
+    named from ``family.name`` — this charter returns the authored class itself
+    for the common ``state=None`` case. Consequence: the document codec and the
+    serialized contract manifest both use the public class (its ``__name__``),
+    so the manifest ``document_schema`` label never drifts from the name
+    consumers import.
+
+    The authored class is bound after construction via :meth:`_bind_document`
+    (the class object does not exist until the decorator has finished reading
+    its fields). Field-level ``state`` projections are not used by propstore
+    today; a non-``None`` ``state`` raises :class:`NotImplementedError` rather
+    than silently returning a divergent projected struct.
+    """
+
+    def _bind_document(self, document_class: type[msgspec.Struct]) -> None:
+        # The frozen dataclass holds an init=False cache dict; populate it so the
+        # base ``generated_document``/``document_codec`` machinery finds the
+        # authored class for state=None.
+        self._generated_document_cache[None] = document_class
+
+    def generated_document(self, state: str | None = None) -> type[msgspec.Struct]:
+        cached = self._generated_document_cache.get(state)
+        if cached is not None:
+            return cached
+        if state is not None:
+            raise NotImplementedError(
+                "declarative charters do not project field-level states; "
+                f"generated_document(state={state!r}) is unsupported "
+                "(the authored class is the document for state=None)"
+            )
+        # state is None but the document was not bound — this only happens if the
+        # charter was constructed outside the @charter decorator.
+        raise RuntimeError(
+            "declarative charter has no bound document class; "
+            "construct it through the @charter decorator"
+        )
+
+
+# ---------------------------------------------------------------------------
 # The @charter decorator
 # ---------------------------------------------------------------------------
 
@@ -643,7 +711,15 @@ def charter(
         else:
             resolved_semantic_metadata = {}
 
-        family_charter = FamilyCharter(
+        # Validators run on the authored class itself (it IS the document).
+        # `CharterDoc.__post_init__` executes `type(self).__charter_validators__`,
+        # so register them there. msgspec captures `__post_init__` at class
+        # creation, so a subclass that defines its OWN `__post_init__` shadows
+        # `CharterDoc.__post_init__`; such a subclass must call
+        # `super().__post_init__()` (idiomatic) for the charter validators to run.
+        cls.__charter_validators__ = validators
+
+        family_charter = _DeclarativeFamilyCharter(
             family=family,
             model=model,
             fields=all_fields,
@@ -660,6 +736,8 @@ def charter(
             semantic_metadata=resolved_semantic_metadata,
             validators=validators,
         )
+        # The authored class IS the document for state=None.
+        family_charter._bind_document(cast("type[msgspec.Struct]", cls))
 
         # Batch specs reference the family's own generated document. Accept a
         # factory (called with the generated document type) or a ready spec, and
@@ -677,8 +755,18 @@ def charter(
                     )
             object.__setattr__(family_charter, "batch_specs", tuple(resolved_specs))
 
-        cls.__charter__ = family_charter  # type: ignore[attr-defined]
-        cls.__charter_model__ = model  # type: ignore[attr-defined]
+        cls.__charter__ = family_charter
+        cls.__charter_model__ = model
+
+        # Bind the generated model into the defining module's globals under its
+        # __qualname__ so a dotted-path loader — e.g. propstore's schema loader
+        # doing `getattr(import_module(model.__module__), model.__qualname__)` —
+        # can resolve it. Without this the name exists on the class object but
+        # not in the module namespace, and `pks build` fails to find the model.
+        defining_module = sys.modules.get(cls.__module__)
+        if defining_module is not None:
+            setattr(defining_module, generated_model_name, model)
+
         return cls
 
     return decorate

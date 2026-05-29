@@ -4,10 +4,23 @@ custom-document case (document-level equivalence)."""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, get_args, get_origin
 
 import msgspec
 import pytest
+
+
+def _strip_annotated(annotation: object) -> object:
+    """Inner type of an ``Annotated[...]``; the type otherwise.
+
+    Fix 1 makes ``generated_document()`` return the authored class, whose field
+    types carry ``Annotated[T, CharterFieldSpec(...)]`` metadata that msgspec
+    ignores for encode/decode. Compare the codec-effective inner type.
+    """
+
+    if get_origin(annotation) is Annotated:
+        return get_args(annotation)[0]
+    return annotation
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, FamilyCharter, FamilyModel
@@ -162,8 +175,8 @@ def test_merge_document_is_single_merge_field() -> None:
     derived = charter_obj.generated_document()
     hand = _hand_written_merge_document_type()
     assert derived.__struct_fields__ == hand.__struct_fields__ == ("merge",)
-    derived_types = {f.name: f.type for f in msgspec.structs.fields(derived)}
-    hand_types = {f.name: f.type for f in msgspec.structs.fields(hand)}
+    derived_types = {f.name: _strip_annotated(f.type) for f in msgspec.structs.fields(derived)}
+    hand_types = {f.name: _strip_annotated(f.type) for f in msgspec.structs.fields(hand)}
     assert derived_types == hand_types
 
     payload = MergeManifestPayloadDocument(branch_a="a", branch_b="b", arguments=("x",))

@@ -12,7 +12,7 @@ generated document, schema object, and codec bytes match the hand-written one.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, get_args, get_origin
 
 import msgspec
 
@@ -20,7 +20,23 @@ from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, CharterIndex, FamilyCharter, FamilyModel
 from quire.charter_class import CharterDoc, charter, charter_field, column
 from quire.families import FamilyDefinition
+from quire.sql_types import SqlTypeSpec
 from quire.versions import VersionId
+
+
+def _strip_annotated(annotation: object) -> object:
+    """Return the inner type of an ``Annotated[...]`` annotation, else the type.
+
+    Since Fix 1 makes ``generated_document()`` return the authored class itself,
+    its msgspec field types carry the ``Annotated[T, CharterFieldSpec(...)]``
+    metadata. msgspec ignores that metadata for encode/decode, so the effective
+    (codec-relevant) type is the inner ``T``. Comparisons against a hand-written
+    charter's stripped types strip the wrapper first.
+    """
+
+    if get_origin(annotation) is Annotated:
+        return get_args(annotation)[0]
+    return annotation
 
 
 _VERSION = VersionId("2026.05.25", allow_placeholder=False)
@@ -147,8 +163,8 @@ def test_generated_document_matches() -> None:
         "metadata",
         "artifact_code",
     )
-    hand_types = {f.name: f.type for f in msgspec.structs.fields(hand)}
-    derived_types = {f.name: f.type for f in msgspec.structs.fields(derived)}
+    hand_types = {f.name: _strip_annotated(f.type) for f in msgspec.structs.fields(hand)}
+    derived_types = {f.name: _strip_annotated(f.type) for f in msgspec.structs.fields(derived)}
     assert hand_types == derived_types
     hand_defaults = {f.name: f.default for f in msgspec.structs.fields(hand)}
     derived_defaults = {f.name: f.default for f in msgspec.structs.fields(derived)}
@@ -190,7 +206,9 @@ def test_json_blob_fields_are_str_columns() -> None:
     # the document type stays the nested struct.
     schema = _derived_charter().to_schema_object()
     by_name = {f.name: f for f in schema.fields}
-    assert by_name["origin"].sql_type.storage_kind == "text"
+    origin_sql_type = by_name["origin"].sql_type
+    assert isinstance(origin_sql_type, SqlTypeSpec)
+    assert origin_sql_type.storage_kind == "text"
     assert by_name["origin"].parse_boundary == "json"
     assert by_name["origin"].document is True
     assert by_name["quality"].document is False
