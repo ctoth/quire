@@ -30,6 +30,9 @@ Supported kinds:
 * ``{"kind": "name", "module": ..., "qualname": ...}`` — a plain ``type``
   (builtins live in module ``builtins``; module-level classes carry their own
   ``__module__``).
+* ``{"kind": "newtype", "module": ..., "qualname": ...}`` — a
+  ``typing.NewType('Name', Supertype)``. A module-level NewType has stable
+  identity, so it round-trips by import (same resolver path as ``name``).
 * ``{"kind": "literal", "values": [...]}`` — ``Literal[...]``. Each value is a
   JSON primitive (str / int / bool / ``None``) or, for an enum member,
   ``{"enum": {"module": ..., "qualname": ..., "name": ...}}``. Order preserved.
@@ -48,7 +51,7 @@ import functools
 import importlib
 import operator
 from types import UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, Literal, NewType, Union, get_args, get_origin
 
 __all__ = ["type_to_node", "node_to_type"]
 
@@ -125,6 +128,15 @@ def type_to_node(t: object) -> dict[str, object]:
             "args": [type_to_node(arg) for arg in get_args(t)],
         }
 
+    # NewType: a module-level ``NewType('Name', Supertype)`` has stable identity
+    # by import, so identity-by-import is the correct round-trip (same resolver
+    # path as the ``name`` kind). On Python >= 3.10 ``typing.NewType`` is a class,
+    # so ``isinstance(t, NewType)`` is the clean check. Checked explicitly and
+    # early because a NewType is NOT a ``type`` and ``get_origin`` returns None,
+    # so neither the generic branch nor the plain-type branch would catch it.
+    if isinstance(t, NewType):
+        return {"kind": "newtype", "module": t.__module__, "qualname": t.__qualname__}
+
     # Plain type: builtin or module-level class.
     if isinstance(t, type):
         return _name_node(t)
@@ -176,6 +188,11 @@ def node_to_type(node: dict[str, object]) -> object:
     if kind == "ellipsis":
         return Ellipsis
     if kind == "name":
+        return _resolve_name(str(node["module"]), str(node["qualname"]))
+    if kind == "newtype":
+        # A module-level NewType has stable identity, so resolving by import +
+        # getattr-walk returns the same NewType object and ``X == X`` holds by
+        # identity — exactly the ``name`` resolver path.
         return _resolve_name(str(node["module"]), str(node["qualname"]))
     if kind == "literal":
         values = node["values"]

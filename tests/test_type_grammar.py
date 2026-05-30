@@ -19,7 +19,7 @@ from __future__ import annotations
 import enum
 import json
 from collections.abc import Mapping
-from typing import Any, Literal, Optional
+from typing import Any, Literal, NewType, Optional
 
 import pytest
 from hypothesis import given
@@ -31,6 +31,12 @@ from quire.type_grammar import node_to_type, type_to_node
 class Flavor(enum.Enum):
     RULE = "rule"
     EXCEPTION = "exception"
+
+
+# A module-level NewType — stands in for propstore's real charter NewTypes
+# (e.g. cel_types.CelExpr as ``tuple[CelExpr, ...]``, algorithm_stage.AlgorithmStage
+# bare). Module-level NewType has stable identity, so it round-trips by import.
+MyId = NewType("MyId", str)
 
 
 # The explicit drift cases that motivated the grammar. Enum-free so they also
@@ -49,6 +55,9 @@ _EXPLICIT_CASES: list[object] = [
     type(None),
     Any,
     Optional[Literal["a", "b"]],  # == Literal['a', 'b'] | None
+    MyId,  # bare NewType (cf. propstore AlgorithmStage)
+    tuple[MyId, ...],  # nested NewType (cf. propstore tuple[CelExpr, ...])
+    MyId | None,  # NewType in a union
 ]
 
 
