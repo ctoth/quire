@@ -265,6 +265,11 @@ class ArtifactAddress:
             raise TypeError(f"artifact address is not ref-backed: {type(self.locator).__name__}")
         return self.locator.ref
 
+    def require_branch(self) -> str:
+        if self.branch is None:
+            raise TypeError("artifact address is not branch-backed (ref-backed address has no branch)")
+        return self.branch
+
 
 @dataclass(frozen=True)
 class ScannedArtifact(Generic[TRef]):
