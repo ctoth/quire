@@ -11,6 +11,7 @@ from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast, ru
 import msgspec
 
 from quire.documents.batch import DocumentBatchSpec, document_batch_codec
+from quire.refs import RefName
 from quire.versions import VersionId
 
 TRef = TypeVar("TRef")
@@ -235,8 +236,22 @@ class PathArtifactLocator:
 
 
 @dataclass(frozen=True)
+class RefBlobLocator:
+    """Locator for an artifact whose canonical home is a git blob-ref.
+
+    Branch-independent and cold-loadable: the artifact lives at a loose blob
+    pointed to by ``ref`` rather than at a path inside a branch tree.
+    """
+
+    ref: RefName
+
+    def to_contract_body(self) -> dict[str, object]:
+        return {"kind": "blob_ref", "ref": self.ref.value}
+
+
+@dataclass(frozen=True)
 class ArtifactAddress:
-    branch: str
+    branch: str | None
     locator: ArtifactLocator
     commit: str | None = None
 
@@ -244,6 +259,11 @@ class ArtifactAddress:
         if not isinstance(self.locator, PathArtifactLocator):
             raise TypeError(f"artifact address is not path-backed: {type(self.locator).__name__}")
         return self.locator.path
+
+    def require_ref(self) -> RefName:
+        if not isinstance(self.locator, RefBlobLocator):
+            raise TypeError(f"artifact address is not ref-backed: {type(self.locator).__name__}")
+        return self.locator.ref
 
 
 @dataclass(frozen=True)
@@ -276,6 +296,9 @@ class ReadOnlyDocumentStoreBackend(Protocol):
         ...
 
     def branch_sha(self, name: str) -> str | None:
+        ...
+
+    def read_blob_ref(self, ref: RefName) -> bytes | None:
         ...
 
 
@@ -969,10 +992,72 @@ class SingletonFilePlacement(Generic[TOwner, TRef]):
 
 
 @dataclass(frozen=True)
+class BlobRefPlacement(Generic[TOwner, TRef]):
+    """Singleton placement whose canonical home is a git blob-ref.
+
+    Unlike the path-backed placements, the single artifact does not live in a
+    branch tree: it is a loose blob pointed to by ``ref``. The address it emits
+    is branchless (``branch=None``) and carries a :class:`RefBlobLocator`, so a
+    ref-backed family loads cold — with no branch and no tree.
+    """
+
+    ref: RefName
+    ref_factory: Callable[[], TRef]
+
+    def storage_root(self) -> str:
+        raise ValueError("blob-ref placement does not expose a storage root")
+
+    def address_for(self, owner: TOwner, ref: TRef) -> ArtifactAddress:
+        return ArtifactAddress(branch=None, locator=RefBlobLocator(self.ref))
+
+    def iter_refs(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[TRef]:
+        yield self.ref_factory()
+
+    def iter_artifacts(
+        self,
+        owner: TOwner,
+        backend: ReadOnlyDocumentStoreBackend | None,
+        *,
+        branch: str | None = None,
+        commit: str | None = None,
+    ) -> Iterator[ScannedArtifact[TRef]]:
+        if backend is None:
+            raise ValueError("listing blob-ref artifacts requires a backend")
+        content = backend.read_blob_ref(self.ref)
+        if content is None:
+            return
+        yield ScannedArtifact(
+            ref=self.ref_factory(),
+            address=ArtifactAddress(branch=None, locator=RefBlobLocator(self.ref)),
+            content=content,
+        )
+
+    def ref_from_locator(self, locator: ArtifactLocator) -> TRef:
+        if not isinstance(locator, RefBlobLocator):
+            raise TypeError("blob-ref placement only supports ref locators")
+        if locator.ref != self.ref:
+            raise ValueError(f"expected ref {self.ref.value!r}, got {locator.ref.value!r}")
+        return self.ref_factory()
+
+    def ref_from_loaded(self, loaded: object) -> TRef:
+        return self.ref_factory()
+
+    def contract_body(self) -> dict[str, object]:
+        return {"kind": "blob_ref", "ref": self.ref.value}
+
+
+@dataclass(frozen=True)
 class ArtifactContext(Generic[TOwner, TRef]):
     repo: TOwner
     ref: TRef
-    branch: str
+    branch: str | None
     address: ArtifactAddress
 
     def require_path(self) -> str:
@@ -992,7 +1077,7 @@ class PreparedArtifact(Generic[TOwner, TRef, TDoc]):
     family: ArtifactFamily[TOwner, TRef, TDoc]
     ref: TRef
     address: ArtifactAddress
-    branch: str
+    branch: str | None
     document: TDoc
     content: bytes
 

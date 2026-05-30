@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from quire import documents
 from quire.artifacts import (
+    ArtifactAddress,
     ArtifactFamily,
     ArtifactHandle,
+    BlobRefPlacement,
     BranchPlacement,
     FixedFilePlacement,
     FlatYamlPlacement,
     HashScatteredYamlPlacement,
     IndexRequiredError,
     NestedFlatYamlPlacement,
+    PathArtifactLocator,
+    RefBlobLocator,
     SingletonFilePlacement,
     SubdirFixedFilePlacement,
     TemplateFilePlacement,
@@ -137,10 +141,12 @@ from quire.sqlite_vec_store import (
 
 __all__ = [
     "AmbiguousReferenceError",
+    "ArtifactAddress",
     "ArtifactFamily",
     "ArtifactHandle",
     "ArtifactDependency",
     "ArtifactIdentity",
+    "BlobRefPlacement",
     "BranchPlacement",
     "BoundFamily",
     "BoundFamilyRegistry",
@@ -197,7 +203,9 @@ __all__ = [
     "MissingReferenceError",
     "NestedFlatYamlPlacement",
     "NotesRef",
+    "PathArtifactLocator",
     "ProjectionBuildStep",
+    "RefBlobLocator",
     "RefName",
     "ReferenceKey",
     "ReferenceIndex",

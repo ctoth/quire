@@ -14,11 +14,13 @@ from quire.artifacts import (
     PathArtifactLocator,
     PreparedArtifact,
     ReadOnlyDocumentStoreBackend,
+    RefBlobLocator,
     ScannedArtifact,
     TDoc,
     TRef,
 )
 from quire.git_store import HeadMismatchError
+from quire.refs import RefName
 from quire.documents.codecs import (
     DEFAULT_DOCUMENT_CODEC,
     DocumentCodec,
@@ -39,6 +41,12 @@ class DocumentStoreBackend(ReadOnlyDocumentStoreBackend, Protocol):
     ) -> str:
         ...
 
+    def write_blob_ref(self, ref: RefName, payload: bytes) -> str:
+        ...
+
+    def delete_ref(self, ref: RefName) -> None:
+        ...
+
 
 BranchHeadResolver = Callable[[DocumentStoreBackend, str], str | None]
 
@@ -51,6 +59,12 @@ def address_path(address: ArtifactAddress) -> str:
     if not isinstance(address.locator, PathArtifactLocator):
         raise TypeError(f"document family store only supports path locators, got {type(address.locator).__name__}")
     return normalized_path(address.locator.path)
+
+
+def _require_branch(address: ArtifactAddress) -> str:
+    if address.branch is None:
+        raise TypeError("path-backed artifact address requires a branch")
+    return address.branch
 
 
 def default_branch_head(backend: DocumentStoreBackend, branch: str) -> str | None:
@@ -158,9 +172,14 @@ class DocumentFamilyStore(Generic[TOwner]):
     ) -> TDoc | None:
         backend = self._require_backend()
         address = self.address(family, ref, branch=branch, commit=commit)
+        if isinstance(address.locator, RefBlobLocator):
+            raw = backend.read_blob_ref(address.locator.ref)
+            if raw is None:
+                return None
+            return self._decode_bytes(family, raw, f"{address.locator.ref.value}")
         target_commit = commit or address.commit
         if target_commit is None:
-            target_commit = self.branch_head(backend, address.branch)
+            target_commit = self.branch_head(backend, _require_branch(address))
             if target_commit is None:
                 return None
         path = address_path(address)
@@ -169,9 +188,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         except FileNotFoundError:
             return None
         source = f"{address.branch}:{path}"
-        if family.decode_bytes is not None:
-            return family.decode_bytes(raw, source)
-        return self.codec.decode(raw, family.doc_type, source=source)
+        return self._decode_bytes(family, raw, source)
 
     def exists(
         self,
@@ -183,9 +200,11 @@ class DocumentFamilyStore(Generic[TOwner]):
     ) -> bool:
         backend = self._require_backend()
         address = self.address(family, ref, branch=branch, commit=commit)
+        if isinstance(address.locator, RefBlobLocator):
+            return backend.read_blob_ref(address.locator.ref) is not None
         target_commit = commit or address.commit
         if target_commit is None:
-            target_commit = self.branch_head(backend, address.branch)
+            target_commit = self.branch_head(backend, _require_branch(address))
             if target_commit is None:
                 return False
         return backend.exists(address_path(address), commit=target_commit) is not None
@@ -265,6 +284,8 @@ class DocumentFamilyStore(Generic[TOwner]):
     ) -> str:
         backend = self._require_backend()
         prepared = self.prepare(family, ref, doc, branch=branch)
+        if isinstance(prepared.address.locator, RefBlobLocator):
+            return backend.write_blob_ref(prepared.address.locator.ref, prepared.content)
         return backend.commit_batch(
             adds={address_path(prepared.address): prepared.content},
             deletes=[],
@@ -299,6 +320,9 @@ class DocumentFamilyStore(Generic[TOwner]):
     ) -> str:
         backend = self._require_backend()
         address = self.address(family, ref)
+        if isinstance(address.locator, RefBlobLocator):
+            backend.delete_ref(address.locator.ref)
+            return ""
         target_branch = branch or address.branch
         return backend.commit_batch(
             adds={},
@@ -364,16 +388,27 @@ class DocumentFamilyStore(Generic[TOwner]):
             raise ValueError("document family operations require a git-backed repository")
         return self.backend
 
+    def _decode_bytes(
+        self,
+        family: ArtifactFamily[TOwner, TRef, TDoc],
+        raw: bytes,
+        source: str,
+    ) -> TDoc:
+        if family.decode_bytes is not None:
+            return family.decode_bytes(raw, source)
+        return self.codec.decode(raw, family.doc_type, source=source)
+
     def _decode_scanned_artifact(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         scanned: ScannedArtifact[TRef],
     ) -> TDoc:
-        path = address_path(scanned.address)
-        source = f"{scanned.address.branch}:{path}"
-        if family.decode_bytes is not None:
-            return family.decode_bytes(scanned.content, source)
-        return self.codec.decode(scanned.content, family.doc_type, source=source)
+        if isinstance(scanned.address.locator, RefBlobLocator):
+            source = scanned.address.locator.ref.value
+        else:
+            path = address_path(scanned.address)
+            source = f"{scanned.address.branch}:{path}"
+        return self._decode_bytes(family, scanned.content, source)
 
 
 @dataclass
@@ -484,7 +519,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         ref: TRef,
-    ) -> tuple[str, ArtifactAddress]:
+    ) -> tuple[str | None, ArtifactAddress]:
         address = family.address_for(self.owner, ref)
         branch = self.branch or address.branch
         if self.branch is None:

@@ -11,6 +11,7 @@ from quire.artifacts import (
     ArtifactHandle,
     ArtifactPlacementPolicy,
     PreparedArtifact,
+    RefBlobLocator,
 )
 from quire.contracts import CompatibilityMarker, ContractEntry, ContractManifest
 from quire.family_store import DocumentFamilyStore, DocumentFamilyTransaction, address_path
@@ -517,19 +518,24 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         expected_head: str | None = None,
     ) -> str:
         prepared = self.store.prepare(self.family, ref, doc, branch=branch)
+        backend = self.store._require_backend()
+        if isinstance(prepared.address.locator, RefBlobLocator):
+            return backend.write_blob_ref(prepared.address.locator.ref, prepared.content)
+        prepared_branch = prepared.branch
+        if prepared_branch is None:
+            raise TypeError("path-backed artifact write requires a branch")
         if self.definition is not None and self.registry is not None:
             _validate_registry_post_state(
                 self.store,
                 self.registry,
-                branch=prepared.branch,
+                branch=prepared_branch,
                 saves=((self.definition, ref, prepared.document),),
             )
-        backend = self.store._require_backend()
         return backend.commit_batch(
             adds={address_path(prepared.address): prepared.content},
             deletes=[],
             message=message,
-            branch=prepared.branch,
+            branch=prepared_branch,
             expected_head=expected_head,
         )
 
@@ -542,7 +548,13 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         expected_head: str | None = None,
     ) -> str:
         address = self.store.address(self.family, ref, branch=branch)
+        backend = self.store._require_backend()
+        if isinstance(address.locator, RefBlobLocator):
+            backend.delete_ref(address.locator.ref)
+            return ""
         target_branch = branch or address.branch
+        if target_branch is None:
+            raise TypeError("path-backed artifact delete requires a branch")
         if self.definition is not None and self.registry is not None:
             _validate_registry_post_state(
                 self.store,
@@ -550,7 +562,6 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
                 branch=target_branch,
                 deletes=((self.definition, ref),),
             )
-        backend = self.store._require_backend()
         return backend.commit_batch(
             adds={},
             deletes=[address_path(address)],
