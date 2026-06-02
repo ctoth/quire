@@ -126,6 +126,50 @@ def test_family_charter_composes_with_existing_family_and_reference_apis() -> No
     assert schema.field("canonical_rank").canonical_only is True
 
 
+def test_family_charter_computes_version_id_from_versioned_document_fields() -> None:
+    family = _claim_family()
+    charter = FamilyCharter(
+        family=family,
+        model=Claim,
+        fields=(
+            CharterField(
+                "artifact_id",
+                str,
+                primary_key=True,
+                nullable=False,
+                versioned=False,
+            ),
+            CharterField("concept_id", str, nullable=False),
+            CharterField("trust", SourceTrust, nullable=True, json_value_object=True),
+        ),
+    )
+    document_type = charter.generated_document()
+
+    first = document_type(
+        artifact_id="claim-a",
+        concept_id="concept-a",
+        trust={"score": 0.8, "method": "reader"},
+    )
+    second = document_type(
+        artifact_id="claim-b",
+        concept_id="concept-a",
+        trust={"score": 0.8, "method": "reader"},
+    )
+    changed = document_type(
+        artifact_id="claim-a",
+        concept_id="concept-b",
+        trust={"score": 0.8, "method": "reader"},
+    )
+
+    assert charter.to_schema_object().field("artifact_id").versioned is False
+    assert charter.version_payload(first) == {
+        "concept_id": "concept-a",
+        "trust": {"method": "reader", "score": 0.8},
+    }
+    assert charter.version_id(first) == charter.version_id(second)
+    assert charter.version_id(first) != charter.version_id(changed)
+
+
 def test_python_type_mapping_uses_types_without_marker_wrappers() -> None:
     assert python_type_to_sql(str).ddl_name == "TEXT"
     assert python_type_to_sql(int).ddl_name == "INTEGER"

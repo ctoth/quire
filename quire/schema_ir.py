@@ -56,6 +56,7 @@ class SchemaField:
     index: bool = False
     unique: bool = False
     generated: bool = False
+    versioned: bool = True
     default: object | None = None
     default_sql: str | None = None
     json_value_object: bool = False
@@ -124,6 +125,7 @@ class SchemaField:
             "storage": self.storage,
             "unique": self.unique,
             "vector_dimensions": self.vector_dimensions,
+            "versioned": self.versioned,
         }
 
 

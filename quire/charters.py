@@ -18,6 +18,7 @@ from quire.documents.codecs import (
 )
 from quire.documents.batch import DocumentBatchSpec
 from quire.families import FamilyDefinition
+from quire.hashing import canonical_json_sha256
 from quire.lifecycle import (
     FamilyState,
     FamilyTransition,
@@ -68,6 +69,7 @@ class CharterField:
     index: bool = False
     unique: bool = False
     generated: bool = False
+    versioned: bool = True
     default: object | None = None
     default_sql: str | None = None
     json_value_object: bool = False
@@ -137,6 +139,7 @@ class CharterField:
             index=self.index,
             unique=self.unique,
             generated=self.generated,
+            versioned=self.versioned,
             default=self.default,
             default_sql=self.default_sql,
             json_value_object=self.json_value_object,
@@ -424,6 +427,26 @@ class FamilyCharter:
         )
         self._document_codec_cache[state] = codec
         return codec
+
+    def version_payload(self, document: object, state: str | None = None) -> object:
+        payload = self.document_codec(state).payload(document)
+        if not isinstance(payload, Mapping):
+            raise TypeError(
+                f"{self.family.name}: version payload must be a document mapping"
+            )
+        excluded_fields = {
+            field.document_name or field.name
+            for field in self.fields
+            if field.document and _field_matches_state(field, state) and not field.versioned
+        }
+        return {
+            key: value
+            for key, value in payload.items()
+            if key not in excluded_fields
+        }
+
+    def version_id(self, document: object, state: str | None = None) -> str:
+        return canonical_json_sha256(self.version_payload(document, state))
 
     def to_schema_object(self) -> SchemaObject:
         return SchemaObject(

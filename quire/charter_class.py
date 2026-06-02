@@ -130,6 +130,7 @@ class CharterFieldSpec:
     index: bool = False
     unique: bool = False
     generated: bool = False
+    versioned: bool = True
     json_value_object: bool = False
     search: bool = False
     vector_dimensions: int | None = None
@@ -166,6 +167,7 @@ def charter_field(
     index: bool = False,
     unique: bool = False,
     generated: bool = False,
+    versioned: bool = True,
     json_value_object: bool = False,
     search: bool = False,
     vector_dimensions: int | None = None,
@@ -218,6 +220,7 @@ def charter_field(
         index=index,
         unique=unique,
         generated=generated,
+        versioned=versioned,
         json_value_object=json_value_object,
         search=search,
         vector_dimensions=vector_dimensions,
@@ -479,6 +482,7 @@ def _charter_field_from_attribute(
         index=spec.index,
         unique=spec.unique,
         generated=spec.generated,
+        versioned=spec.versioned,
         default=field_default,
         default_sql=spec.default_sql,
         json_value_object=spec.json_value_object,
