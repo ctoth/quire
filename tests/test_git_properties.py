@@ -485,17 +485,22 @@ def _assert_stale_head_rejected(
     assert before_tip is not None
 
     if operation == "commit_files":
-        call = lambda: repo.commit_files({"stale-add.bin": b"stale"}, "stale", expected_head=stale)
+        def call() -> object:
+            return repo.commit_files({"stale-add.bin": b"stale"}, "stale", expected_head=stale)
     elif operation == "commit_deletes":
-        call = lambda: repo.commit_deletes(["base.bin"], "stale", expected_head=stale)
+        def call() -> object:
+            return repo.commit_deletes(["base.bin"], "stale", expected_head=stale)
     elif operation == "commit_batch":
-        call = lambda: repo.commit_batch({"stale-batch.bin": b"stale"}, ["base.bin"], "stale", expected_head=stale)
+        def call() -> object:
+            return repo.commit_batch({"stale-batch.bin": b"stale"}, ["base.bin"], "stale", expected_head=stale)
     elif operation == "commit_flat_tree":
         blob = repo.store_blob(b"flat")
-        call = lambda: repo.commit_flat_tree({"flat.bin": blob}, "stale", parents=[before_tip], expected_head=stale)
+        def call() -> object:
+            return repo.commit_flat_tree({"flat.bin": blob}, "stale", parents=[before_tip], expected_head=stale)
     elif operation == "revert_commit":
         assert target_commit is not None
-        call = lambda: repo.revert_commit(target_commit, expected_head=stale)
+        def call() -> object:
+            return repo.revert_commit(target_commit, expected_head=stale)
     else:
         raise AssertionError(f"unknown operation: {operation}")
 
