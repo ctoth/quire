@@ -113,6 +113,7 @@ from quire.references import (
     finalize_reference_lookup,
     validate_foreign_key,
 )
+from quire.sqlalchemy_schema import SqlAlchemySchema, build_sqlalchemy_schema
 from quire.tree_path import FilesystemTreePath, GitTreePath, TreePath, coerce_tree_path
 from quire.versions import VersionId
 from quire.families import (
@@ -213,6 +214,7 @@ __all__ = [
     "RestoreReport",
     "SchemaCatalog",
     "SingletonFilePlacement",
+    "SqlAlchemySchema",
     "SQLITE_READONLY_POLICY",
     "SQLITE_WRITE_POLICY",
     "SqliteConnectionPolicy",
@@ -253,6 +255,7 @@ __all__ = [
     "artifact_identity",
     "artifact_payload",
     "build_reference_lookup",
+    "build_sqlalchemy_schema",
     "batch_artifact_family",
     "encode_ref_value",
     "extend_reference_lookup",

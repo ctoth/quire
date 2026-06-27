@@ -29,7 +29,6 @@ from quire.schema_catalog import SchemaCatalog
 from quire.schema_ir import (
     SchemaField,
     SchemaFtsIndex,
-    SchemaForeignKey,
     SchemaIndex,
     SchemaObject,
     SchemaPolymorphicModel,
@@ -120,32 +119,15 @@ class CharterField:
             name=self.name,
             python_type=python_type_path(schema_python_type),
             sql_type=sql_type,
+            charter_field=self,
             nullable=bool(self.nullable) or is_optional_type(self.python_type),
             primary_key=self.primary_key,
-            foreign_key=(
-                None
-                if self.foreign_key is None
-                else _schema_foreign_key(self.foreign_key)
-            ),
-            foreign_keys=(
-                tuple(_schema_foreign_key(foreign_key) for foreign_key in self.foreign_keys)
-                if self.foreign_keys
-                else (
-                    ()
-                    if self.foreign_key is None
-                    else (_schema_foreign_key(self.foreign_key),)
-                )
-            ),
-            index=self.index,
-            unique=self.unique,
             generated=self.generated,
             versioned=self.versioned,
             default=self.default,
             default_sql=self.default_sql,
             json_value_object=self.json_value_object,
             enum_values=sql_type.enum_values,
-            search=self.search,
-            vector_dimensions=self.vector_dimensions,
             source_local_only=self.source_local_only,
             canonical_only=self.canonical_only,
             document=self.document,
@@ -153,17 +135,6 @@ class CharterField:
             document_name=self.document_name,
             document_order=self.document_order,
             states=self.states,
-            artifact=self.artifact,
-            artifact_name=self.artifact_name,
-            artifact_dependency=self.artifact_dependency,
-            graph_node_label=self.graph_node_label,
-            graph_metadata=self.graph_metadata,
-            graph_edge=self.graph_edge,
-            graph_edge_kind=self.graph_edge_kind,
-            graph_edge_source_field=self.graph_edge_source_field,
-            graph_edge_source_family=self.graph_edge_source_family,
-            local_id=self.local_id,
-            local_id_policy=self.local_id_policy,
             contract_version=self.contract_version,
             parse_python_type=self.python_type if self.parse_boundary == "json" else None,
             parse_boundary=self.parse_boundary,
@@ -619,13 +590,3 @@ def _decode_json_blob_fields(
     return decoded
 
 
-def _schema_foreign_key(spec: ForeignKeySpec) -> SchemaForeignKey:
-    return SchemaForeignKey(
-        name=spec.name,
-        source_family=spec.source_family,
-        source_field=spec.source_field,
-        target_family=spec.target_family,
-        target_field=spec.target_field,
-        required=spec.required,
-        many=spec.many,
-    )

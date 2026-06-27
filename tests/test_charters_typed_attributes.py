@@ -118,12 +118,12 @@ def test_to_schema_object_projects_typed_attributes() -> None:
     assert schema_field.document_name == "artifact-id"
     assert schema_field.document_order == 10
     assert schema_field.states == frozenset({"source-local", "canonical"})
-    assert schema_field.artifact is True
-    assert schema_field.artifact_name == "artifact-id"
-    assert schema_field.graph_node_label is True
-    assert schema_field.graph_metadata is True
-    assert schema_field.local_id is True
-    assert schema_field.local_id_policy == "claim-local"
+    assert schema_field.charter_field.artifact is True
+    assert schema_field.charter_field.artifact_name == "artifact-id"
+    assert schema_field.charter_field.graph_node_label is True
+    assert schema_field.charter_field.graph_metadata is True
+    assert schema_field.charter_field.local_id is True
+    assert schema_field.charter_field.local_id_policy == "claim-local"
     assert schema_field.contract_version == contract_version
     assert schema_field.parse_boundary == "yaml"
     assert schema_relationship.artifact_dependency is True

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import Iterable, Mapping, Set
+from collections.abc import Iterable, Iterator, Mapping, Set
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from functools import cache
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import msgspec
 from sqlalchemy import (
@@ -30,10 +30,18 @@ from sqlalchemy.sql.type_api import TypeEngine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy_fts5 import FTS5Table
 
+from quire.projection_kinds import (
+    ProjectionKind,
+    iter_projection_kinds,
+    register_projection_kind,
+)
+from quire.references import FamilyReferenceIndex, ForeignKeySpec, MissingReferenceError, ReferenceKey
 from quire.schema_catalog import SchemaCatalog
 from quire.schema_ir import SchemaField, SchemaFtsIndex, SchemaObject, SchemaVectorCache
-from quire.references import FamilyReferenceIndex, MissingReferenceError, ReferenceKey
 from quire.sql_types import SqlTypeSpec
+
+if TYPE_CHECKING:
+    from quire.charters import CharterField
 
 __all__ = [
     "EnumText",
@@ -104,6 +112,126 @@ def _make_json_type_decorator(python_type: object) -> type[TypeDecorator[Any]]:
 
     JsonBoundary.__name__ = f"JsonBoundary_{abs(hash(python_type))}"
     return JsonBoundary
+
+
+@runtime_checkable
+class SqlFieldIndexKind(ProjectionKind, Protocol):
+    """A projection kind that contributes field-level SQL indexes to a table."""
+
+    def field_indexes(
+        self,
+        table: Table,
+        family_name: str,
+        field: CharterField,
+    ) -> tuple[Index, ...]:
+        ...
+
+
+@runtime_checkable
+class SqlColumnForeignKeyKind(ProjectionKind, Protocol):
+    """A projection kind that contributes ``ForeignKey`` args to a column."""
+
+    def column_foreign_keys(
+        self,
+        field: CharterField,
+        catalog_family_names: Set[str],
+    ) -> Iterator[ForeignKey]:
+        ...
+
+
+class _IndexKind:
+    name = "index"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.index
+
+    def field_indexes(
+        self,
+        table: Table,
+        family_name: str,
+        field: CharterField,
+    ) -> tuple[Index, ...]:
+        return (Index(f"ix_{family_name}_{field.name}", table.c[field.name]),)
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {}
+
+
+class _UniqueKind:
+    name = "unique"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.unique
+
+    def field_indexes(
+        self,
+        table: Table,
+        family_name: str,
+        field: CharterField,
+    ) -> tuple[Index, ...]:
+        return (
+            Index(f"ux_{family_name}_{field.name}", table.c[field.name], unique=True),
+        )
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {}
+
+
+class _ForeignKeyKind:
+    name = "foreign-key"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.foreign_key is not None or bool(field.foreign_keys)
+
+    def column_foreign_keys(
+        self,
+        field: CharterField,
+        catalog_family_names: Set[str],
+    ) -> Iterator[ForeignKey]:
+        # A JSON parse-boundary field stores its references inside the blob; the
+        # foreign key stays metadata, never a SQL constraint.
+        if field.parse_boundary == "json":
+            return
+        for spec in _charter_field_foreign_keys(field):
+            if spec.target_family not in catalog_family_names:
+                continue
+            yield ForeignKey(
+                f"{spec.target_family}.{spec.target_field}",
+                name=f"fk_{spec.name}",
+            )
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {
+            "foreign_keys": tuple(
+                _foreign_key_payload(spec)
+                for spec in _charter_field_foreign_keys(field)
+            )
+        }
+
+
+def _charter_field_foreign_keys(field: CharterField) -> tuple[ForeignKeySpec, ...]:
+    if field.foreign_keys:
+        return field.foreign_keys
+    if field.foreign_key is not None:
+        return (field.foreign_key,)
+    return ()
+
+
+def _foreign_key_payload(spec: ForeignKeySpec) -> dict[str, object]:
+    return {
+        "many": spec.many,
+        "name": spec.name,
+        "required": spec.required,
+        "source_family": spec.source_family,
+        "source_field": spec.source_field,
+        "target_family": spec.target_family,
+        "target_field": spec.target_field,
+    }
+
+
+register_projection_kind(_IndexKind())
+register_projection_kind(_UniqueKind())
+register_projection_kind(_ForeignKeyKind())
 
 
 @dataclass(frozen=True)
@@ -298,17 +426,15 @@ def _table_from_schema_object(
         if index.unique
     ]
     table = Table(schema_object.family_name, metadata, *columns, *table_args)
+    index_kinds = [
+        kind for kind in iter_projection_kinds() if isinstance(kind, SqlFieldIndexKind)
+    ]
     for field in schema_object.fields:
         if not field.storage:
             continue
-        if field.index:
-            Index(f"ix_{schema_object.family_name}_{field.name}", table.c[field.name])
-        if field.unique:
-            Index(
-                f"ux_{schema_object.family_name}_{field.name}",
-                table.c[field.name],
-                unique=True,
-            )
+        for kind in index_kinds:
+            if kind.applies(field.charter_field):
+                kind.field_indexes(table, schema_object.family_name, field.charter_field)
     for index in schema_object.indexes:
         if not index.unique:
             Index(index.name, *(table.c[field] for field in index.fields))
@@ -368,13 +494,10 @@ def _column_from_schema_field(
     field: SchemaField,
     catalog_family_names: Set[str],
 ) -> Column[Any]:
-    args: list[Any] = [
-        ForeignKey(
-            f"{foreign_key.target_family}.{foreign_key.target_field}",
-            name=f"fk_{foreign_key.name}",
-        )
-        for foreign_key in _schema_field_foreign_keys(field, catalog_family_names)
-    ]
+    args: list[Any] = []
+    for kind in iter_projection_kinds():
+        if isinstance(kind, SqlColumnForeignKeyKind) and kind.applies(field.charter_field):
+            args.extend(kind.column_foreign_keys(field.charter_field, catalog_family_names))
     kwargs: dict[str, Any] = {
         "nullable": field.nullable,
         "primary_key": field.primary_key,
@@ -385,24 +508,6 @@ def _column_from_schema_field(
     if field.default_sql is not None:
         kwargs["server_default"] = text(field.default_sql)
     return Column(field.name, _sqlalchemy_type(field), *args, **kwargs)
-
-
-def _schema_field_foreign_keys(
-    field: SchemaField, catalog_family_names: Set[str]
-) -> tuple[Any, ...]:
-    if field.parse_boundary == "json":
-        return ()
-    if field.foreign_keys:
-        return tuple(
-            foreign_key
-            for foreign_key in field.foreign_keys
-            if foreign_key.target_family in catalog_family_names
-        )
-    if field.foreign_key is not None:
-        if field.foreign_key.target_family not in catalog_family_names:
-            return ()
-        return (field.foreign_key,)
-    return ()
 
 
 def _sqlalchemy_type(field: SchemaField) -> TypeEngine[Any]:
@@ -438,10 +543,10 @@ def _column_info(schema_object: SchemaObject, field: SchemaField) -> dict[str, o
         "canonical_only": field.canonical_only,
         "family": schema_object.family_name,
         "python_type": field.python_type,
-        "search": field.search,
+        "search": field.charter_field.search,
         "semantic_metadata": dict(field.metadata),
         "source_local_only": field.source_local_only,
-        "vector_dimensions": field.vector_dimensions,
+        "vector_dimensions": field.charter_field.vector_dimensions,
     }
 
 

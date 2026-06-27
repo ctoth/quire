@@ -3,12 +3,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
 from quire.documents.batch import DocumentBatchSpec
 from quire.lifecycle import FamilyState, FamilyTransition
+from quire.projection_kinds import iter_projection_kinds
 from quire.references import ReferenceKey
 from quire.versions import VersionId
+
+if TYPE_CHECKING:
+    from quire.charters import CharterField
 
 
 def python_type_path(python_type: object) -> str:
@@ -46,23 +50,28 @@ class SchemaForeignKey:
 
 @dataclass(frozen=True)
 class SchemaField:
+    """Lowered, SQL-resolved view of one :class:`~quire.charters.CharterField`.
+
+    Holds only *intrinsic* column attributes (name, resolved SQL type, nullability,
+    primary key, document/storage shape, ...). Field-level *projections* — index,
+    unique, foreign keys, graph node/edge, artifact, local-id, search, vector — are
+    no longer mirrored here. They are sourced through the projection-kind registry
+    over :attr:`charter_field`, the single source of truth, so both the SQL builder
+    and the contract payload consume one field type instead of a parallel flag copy.
+    """
+
     name: str
     python_type: str
     sql_type: object
+    charter_field: "CharterField" = field(repr=False, compare=False)
     nullable: bool = True
     primary_key: bool = False
-    foreign_key: SchemaForeignKey | None = None
-    foreign_keys: tuple[SchemaForeignKey, ...] = ()
-    index: bool = False
-    unique: bool = False
     generated: bool = False
     versioned: bool = True
     default: object | None = None
     default_sql: str | None = None
     json_value_object: bool = False
     enum_values: tuple[str, ...] = ()
-    search: bool = False
-    vector_dimensions: int | None = None
     source_local_only: bool = False
     canonical_only: bool = False
     document: bool = True
@@ -70,27 +79,28 @@ class SchemaField:
     document_name: str | None = None
     document_order: int | None = None
     states: frozenset[str] | None = None
-    artifact: bool = False
-    artifact_name: str | None = None
-    artifact_dependency: bool = False
-    graph_node_label: bool = False
-    graph_metadata: bool = False
-    graph_edge: bool = False
-    graph_edge_kind: str | None = None
-    graph_edge_source_field: str | None = None
-    graph_edge_source_family: str | None = None
-    local_id: bool = False
-    local_id_policy: str | None = None
     contract_version: VersionId | None = None
     parse_python_type: object | None = field(default=None, repr=False, compare=False)
     parse_boundary: Literal["yaml", "json", "sqlite"] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
+    def projection_payload(self) -> dict[str, dict[str, object]]:
+        """Deterministic contract body for every projection kind that applies.
+
+        Keyed by kind name (``iter_projection_kinds`` yields name-sorted); each
+        kind's :meth:`schema_payload` output has its keys sorted. This is what
+        makes adding/changing a field's projection participation visible to
+        ``check_contract_manifest`` without re-enumerating flags here.
+        """
+
+        return {
+            kind.name: dict(sorted(kind.schema_payload(self.charter_field).items()))
+            for kind in iter_projection_kinds()
+            if kind.applies(self.charter_field)
+        }
+
     def payload(self) -> dict[str, object]:
         return {
-            "artifact": self.artifact,
-            "artifact_name": self.artifact_name,
-            "artifact_dependency": self.artifact_dependency,
             "canonical_only": self.canonical_only,
             "contract_version": self.contract_version,
             "default": self.default,
@@ -99,32 +109,19 @@ class SchemaField:
             "document_name": self.document_name,
             "document_order": self.document_order,
             "enum_values": self.enum_values,
-            "foreign_key": None if self.foreign_key is None else self.foreign_key.payload(),
-            "foreign_keys": tuple(foreign_key.payload() for foreign_key in self.foreign_keys),
             "generated": self.generated,
-            "graph_metadata": self.graph_metadata,
-            "graph_edge": self.graph_edge,
-            "graph_edge_kind": self.graph_edge_kind,
-            "graph_edge_source_field": self.graph_edge_source_field,
-            "graph_edge_source_family": self.graph_edge_source_family,
-            "graph_node_label": self.graph_node_label,
-            "index": self.index,
             "json_value_object": self.json_value_object,
-            "local_id": self.local_id,
-            "local_id_policy": self.local_id_policy,
             "metadata": dict(sorted(self.metadata.items())),
             "name": self.name,
             "nullable": self.nullable,
             "parse_boundary": self.parse_boundary,
             "primary_key": self.primary_key,
+            "projections": self.projection_payload(),
             "python_type": self.python_type,
-            "search": self.search,
             "source_local_only": self.source_local_only,
             "sql_type": _payload(self.sql_type),
             "states": self.states,
             "storage": self.storage,
-            "unique": self.unique,
-            "vector_dimensions": self.vector_dimensions,
             "versioned": self.versioned,
         }
 

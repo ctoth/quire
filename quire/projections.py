@@ -197,9 +197,65 @@ class _ArtifactDependencyKind:
         return {"artifact_dependency": field.artifact_dependency}
 
 
+class _ArtifactPlacementKind:
+    """Git-tree placement projection (``artifact`` / ``artifact_name``).
+
+    Contract-only: the placement is consumed by ``artifact_payload`` directly off
+    the charter field; this kind exposes it to the schema contract.
+    """
+
+    name = "artifact"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.artifact
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {"artifact_name": field.artifact_name}
+
+
+class _LocalIdKind:
+    """Source-local identity projection (``local_id`` / ``local_id_policy``)."""
+
+    name = "local-id"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.local_id
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {"local_id_policy": field.local_id_policy}
+
+
+class _SearchKind:
+    """FTS-participation projection hint (``search``)."""
+
+    name = "search"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.search
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {}
+
+
+class _VectorKind:
+    """Embedding-participation projection (``vector_dimensions``)."""
+
+    name = "vector"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.vector_dimensions is not None
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {"vector_dimensions": field.vector_dimensions}
+
+
 register_projection_kind(_GraphNodeKind())
 register_projection_kind(_GraphEdgeKind())
 register_projection_kind(_ArtifactDependencyKind())
+register_projection_kind(_ArtifactPlacementKind())
+register_projection_kind(_LocalIdKind())
+register_projection_kind(_SearchKind())
+register_projection_kind(_VectorKind())
 
 
 def artifact_identity(charter: FamilyCharter, record: object) -> ArtifactIdentity:

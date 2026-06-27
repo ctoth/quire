@@ -378,7 +378,7 @@ def test_json_boundary_foreign_keys_are_metadata_not_sql_constraints(tmp_path: P
     create_sqlalchemy_store(tmp_path / "derived.sqlite", schema)
 
     semantic_refs = schema.schema_object("json_sources").fields[2]
-    assert semantic_refs.foreign_key is not None
+    assert semantic_refs.charter_field.foreign_key is not None
     assert schema.table("json_sources").c.semantic_refs.foreign_keys == set()
 
 
@@ -416,7 +416,7 @@ def test_foreign_key_to_family_outside_catalog_is_metadata_not_sql_constraint(
     create_sqlalchemy_store(tmp_path / "derived.sqlite", schema)
 
     metadata = schema.schema_object("partial_sources").fields[1]
-    assert metadata.foreign_key is not None
+    assert metadata.charter_field.foreign_key is not None
     assert schema.table("partial_sources").c.metadata.foreign_keys == set()
 
 

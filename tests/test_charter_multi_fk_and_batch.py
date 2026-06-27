@@ -69,11 +69,11 @@ def test_charter_field_projects_multiple_foreign_keys() -> None:
         foreign_keys=(first, second),
     ).to_schema_field()
 
-    assert tuple(key.name for key in schema_field.foreign_keys) == (
+    assert tuple(key.name for key in schema_field.charter_field.foreign_keys) == (
         "claim_source",
         "claim_author",
     )
-    assert tuple(key.target_family for key in schema_field.foreign_keys) == (
+    assert tuple(key.target_family for key in schema_field.charter_field.foreign_keys) == (
         "sources",
         "authors",
     )
@@ -105,6 +105,6 @@ def test_existing_single_foreign_key_behavior_unchanged() -> None:
         foreign_key=foreign_key,
     ).to_schema_field()
 
-    assert schema_field.foreign_key is not None
-    assert schema_field.foreign_key.name == "claim_source"
-    assert schema_field.foreign_key.target_family == "sources"
+    assert schema_field.charter_field.foreign_key is not None
+    assert schema_field.charter_field.foreign_key.name == "claim_source"
+    assert schema_field.charter_field.foreign_key.target_family == "sources"
