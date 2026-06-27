@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, field as dataclass_field, is_dataclass
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import msgspec
 
