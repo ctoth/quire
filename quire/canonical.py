@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, is_dataclass
 from typing import Any
@@ -50,3 +51,8 @@ def canonical_json_text(payload: Any) -> str:
 def canonical_json_bytes(payload: Any) -> bytes:
     """Return UTF-8 bytes for the canonical JSON representation."""
     return canonical_json_text(payload).encode("utf-8")
+
+
+def canonical_json_sha256(payload: Any) -> str:
+    """Return ``sha256:<hex>`` for the canonical JSON representation."""
+    return f"sha256:{hashlib.sha256(canonical_json_bytes(payload)).hexdigest()}"

@@ -16,9 +16,9 @@ from quire.documents.codecs import (
     encode_document,
     render_document,
 )
+from quire.canonical import canonical_json_sha256
 from quire.documents.batch import DocumentBatchSpec
 from quire.families import FamilyDefinition
-from quire.hashing import canonical_json_sha256
 from quire.lifecycle import (
     FamilyState,
     FamilyTransition,

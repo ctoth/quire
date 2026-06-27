@@ -12,7 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from quire.hashing import canonical_json_sha256
+from quire.canonical import canonical_json_sha256
 from quire.derived_runtime import connect_sqlite_store_readonly
 
 __all__ = [

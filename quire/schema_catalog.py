@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from quire.hashing import canonical_json_sha256
+from quire.canonical import canonical_json_sha256
 from quire.schema_ir import SchemaObject
 
 

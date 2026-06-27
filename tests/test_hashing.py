@@ -8,7 +8,7 @@ import msgspec
 import pytest
 
 from quire.contracts import _normalize_payload
-from quire.hashing import canonical_json_bytes, canonical_json_sha256
+from quire.canonical import canonical_json_bytes, canonical_json_sha256
 from quire.versions import VersionId
 
 

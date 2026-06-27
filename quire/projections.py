@@ -8,7 +8,7 @@ from typing import Protocol, runtime_checkable
 import msgspec
 
 from quire.charters import CharterField, FamilyCharter
-from quire.hashing import canonical_json_sha256
+from quire.canonical import canonical_json_sha256
 from quire.projection_kinds import (
     ProjectionKind,
     iter_projection_kinds,

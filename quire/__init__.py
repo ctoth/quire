@@ -127,7 +127,7 @@ from quire.families import (
     FamilyRegistry,
     TransactionalBoundFamily,
 )
-from quire.hashing import canonical_json_bytes, canonical_json_sha256
+from quire.canonical import canonical_json_bytes, canonical_json_sha256
 from quire.sqlite_vec_store import (
     EMBEDDING_MODEL_TABLE,
     RestoreReport,
