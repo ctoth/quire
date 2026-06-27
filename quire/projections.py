@@ -53,6 +53,24 @@ class GraphEdgeProjection:
 
 
 @dataclass(frozen=True)
+class GraphHyperedgeProjection:
+    """An N-ary edge: ``sources`` (antecedents) jointly relate to one target.
+
+    Unlike :class:`GraphEdgeProjection` (a single source -> single target), a
+    hyperedge keeps the antecedent grouping intact instead of fanning out into N
+    independent binary edges that duplicate the edge metadata and lose the joint
+    relationship (e.g. a parameterization: input concepts -> output via a formula).
+    """
+
+    sources: tuple[ArtifactIdentity, ...]
+    target_family: str
+    target_identity: str
+    edge_type: str
+    field: str
+    metadata: Mapping[str, object] = dataclass_field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class NodeContribution:
     """One field's contribution to a record's :class:`GraphNodeProjection`.
 
@@ -96,6 +114,19 @@ class ArtifactDependencyKind(ProjectionKind, Protocol):
         field: CharterField,
         source: ArtifactIdentity,
     ) -> Iterator[ArtifactDependency]:
+        ...
+
+
+@runtime_checkable
+class GraphHyperedgeKind(ProjectionKind, Protocol):
+    """A projection kind emitting N-ary graph hyperedges for an applying field."""
+
+    def iter_hyperedges(
+        self,
+        charter: FamilyCharter,
+        record: object,
+        field: CharterField,
+    ) -> Iterator[GraphHyperedgeProjection]:
         ...
 
 
@@ -249,8 +280,74 @@ class _VectorKind:
         return {"vector_dimensions": field.vector_dimensions}
 
 
+class _HyperedgeKind:
+    """N-ary hyperedge projection declared entirely via ``field.metadata``.
+
+    Opting in needs NO new ``CharterField`` flag: a field carries
+    ``metadata={"hyperedge": {"sources_field": ..., "source_family": ...,
+    "target_field": ..., "target_family": ..., "kind": ...}}`` and this
+    registered kind emits one :class:`GraphHyperedgeProjection` per record,
+    preserving the antecedent grouping instead of fanning out into binary edges.
+    This is the registry's extensibility proof: a new projection kind added with
+    zero changes to ``CharterField`` or the existing consumers.
+    """
+
+    name = "hyperedge"
+
+    def applies(self, field: CharterField) -> bool:
+        return "hyperedge" in field.metadata
+
+    def _config(self, field: CharterField) -> Mapping[str, object]:
+        config = field.metadata["hyperedge"]
+        if not isinstance(config, Mapping):
+            raise ValueError(
+                f"{field.name}: hyperedge metadata must be a mapping"
+            )
+        return config
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        config = self._config(field)
+        return {"hyperedge": {key: config[key] for key in sorted(config)}}
+
+    def iter_hyperedges(
+        self,
+        charter: FamilyCharter,
+        record: object,
+        field: CharterField,
+    ) -> Iterator[GraphHyperedgeProjection]:
+        config = self._config(field)
+        target_value = getattr(record, str(config["target_field"]), None)
+        if not isinstance(target_value, str) or not target_value:
+            return
+        source_family = str(config["source_family"])
+        source_values = getattr(record, str(config["sources_field"]), None) or ()
+        sources: list[ArtifactIdentity] = []
+        for index, value in enumerate(source_values):
+            if not isinstance(value, str) or not value:
+                raise ValueError(
+                    f"{charter.family.name}.{field.name}[{index}]: hyperedge "
+                    "source must be a non-empty string"
+                )
+            sources.append(ArtifactIdentity(source_family, value))
+        if not sources:
+            return
+        yield GraphHyperedgeProjection(
+            sources=tuple(sources),
+            target_family=str(config["target_family"]),
+            target_identity=target_value,
+            edge_type=str(config.get("kind") or field.name),
+            field=field.name,
+            metadata={
+                key: item
+                for key, item in field.metadata.items()
+                if isinstance(key, str) and key != "hyperedge"
+            },
+        )
+
+
 register_projection_kind(_GraphNodeKind())
 register_projection_kind(_GraphEdgeKind())
+register_projection_kind(_HyperedgeKind())
 register_projection_kind(_ArtifactDependencyKind())
 register_projection_kind(_ArtifactPlacementKind())
 register_projection_kind(_LocalIdKind())
@@ -365,6 +462,20 @@ def iter_graph_edges(
         for kind in kinds:
             if kind.applies(field):
                 yield from kind.iter_edges(charter, record, field)
+
+
+def iter_graph_hyperedges(
+    charter: FamilyCharter,
+    record: object,
+) -> Iterator[GraphHyperedgeProjection]:
+    kinds = [
+        kind for kind in iter_projection_kinds()
+        if isinstance(kind, GraphHyperedgeKind)
+    ]
+    for field in charter.fields:
+        for kind in kinds:
+            if kind.applies(field):
+                yield from kind.iter_hyperedges(charter, record, field)
 
 
 def _field_foreign_keys(field: CharterField) -> tuple[ForeignKeySpec, ...]:

@@ -90,6 +90,7 @@ from quire.projections import (
     ArtifactDependency,
     ArtifactIdentity,
     GraphEdgeProjection,
+    GraphHyperedgeProjection,
     GraphNodeProjection,
     artifact_digest,
     artifact_identity,
@@ -97,6 +98,7 @@ from quire.projections import (
     graph_node_projection,
     iter_artifact_dependencies,
     iter_graph_edges,
+    iter_graph_hyperedges,
 )
 from quire.references import (
     AmbiguousReferenceError,
@@ -195,6 +197,7 @@ __all__ = [
     "GitStorePolicy",
     "GitTreePath",
     "GraphEdgeProjection",
+    "GraphHyperedgeProjection",
     "GraphNodeProjection",
     "HashScatteredYamlPlacement",
     "HeadMismatchError",
@@ -264,6 +267,7 @@ __all__ = [
     "is_missing_table_error",
     "iter_artifact_dependencies",
     "iter_graph_edges",
+    "iter_graph_hyperedges",
     "load_sqlite_vec_extension",
     "materialize_sqlite_file",
     "order_projection_steps",
