@@ -10,7 +10,7 @@ from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, FamilyCharter
 from quire.families import FamilyDefinition
 from quire.references import ForeignKeySpec
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoFamily(str, Enum):
@@ -34,7 +34,7 @@ class Claim:
 
 
 def _family() -> FamilyDefinition[object, DemoFamily, str, ClaimDoc]:
-    version = VersionId("2026.05.24", allow_placeholder=False)
+    version = contract_version("2026.05.24")
     return FamilyDefinition(
         key=DemoFamily.CLAIMS,
         name="claims",
@@ -52,7 +52,7 @@ def _family() -> FamilyDefinition[object, DemoFamily, str, ClaimDoc]:
 def _foreign_key(name: str, target_family: str) -> ForeignKeySpec:
     return ForeignKeySpec(
         name=name,
-        contract_version=VersionId("2026.05.24", allow_placeholder=False),
+        contract_version=contract_version("2026.05.24"),
         source_family="claims",
         source_field="source_id",
         target_family=target_family,

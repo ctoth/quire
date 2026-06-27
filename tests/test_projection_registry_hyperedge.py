@@ -25,6 +25,7 @@ from quire.projections import (
     iter_graph_hyperedges,
 )
 from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoFamily(str, Enum):
@@ -46,7 +47,7 @@ class Parameterization:
 
 
 def _version() -> VersionId:
-    return VersionId("2026.05.26", allow_placeholder=False)
+    return contract_version("2026.05.26")
 
 
 _HYPEREDGE_META = {

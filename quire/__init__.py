@@ -21,7 +21,13 @@ from quire.artifacts import (
     batch_artifact_family,
     encode_ref_value,
 )
-from quire.contracts import ContractEntry, ContractManifest, ContractManifestError, check_contract_manifest
+from quire.contracts import (
+    ContractEntry,
+    ContractManifest,
+    ContractManifestError,
+    check_contract_manifest,
+    contract_version,
+)
 from quire.charters import (
     CharterField,
     CharterFtsIndex,
@@ -244,6 +250,7 @@ __all__ = [
     "charter_catalog",
     "check_contract_manifest",
     "checkpoint_and_close_sqlite",
+    "contract_version",
     "coerce_tree_path",
     "configure_sqlite_connection",
     "connect_sqlite_store",

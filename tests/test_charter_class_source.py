@@ -21,7 +21,7 @@ from quire.charters import CharterField, CharterIndex, FamilyCharter, FamilyMode
 from quire.charter_class import CharterDoc, charter, charter_field, column
 from quire.families import FamilyDefinition
 from quire.sql_types import SqlTypeSpec
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 def _strip_annotated(annotation: object) -> object:
@@ -39,7 +39,7 @@ def _strip_annotated(annotation: object) -> object:
     return annotation
 
 
-_VERSION = VersionId("2026.05.25", allow_placeholder=False)
+_VERSION = contract_version("2026.05.25")
 
 
 class SourceKind(str, Enum):

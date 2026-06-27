@@ -17,7 +17,7 @@ from quire.families import FamilyDefinition, FamilyRegistry
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore
 from quire.refs import RefName, singleton_ref_type
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class SchemaDocument(msgspec.Struct):
@@ -31,7 +31,7 @@ class Owner:
 
 SchemaRef = singleton_ref_type("SchemaRef", module=__name__)
 SCHEMA_REF_NAME = RefName("refs/quire-test/schema")
-VERSION = VersionId("2026.05.29", allow_placeholder=False)
+VERSION = contract_version("2026.05.29")
 
 
 def _schema_placement() -> BlobRefPlacement[Owner, object]:

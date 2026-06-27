@@ -9,6 +9,11 @@ from typing import Annotated, get_args, get_origin
 import msgspec
 import pytest
 
+from quire.charters import FamilyCharter
+from quire.charter_class import CharterDoc, charter, charter_field, column
+from quire.documents.batch import DocumentBatchSpec
+from quire.contracts import contract_version
+
 
 def _strip_annotated(annotation: object) -> object:
     """Inner type of an ``Annotated[...]``; the type otherwise.
@@ -22,15 +27,8 @@ def _strip_annotated(annotation: object) -> object:
         return get_args(annotation)[0]
     return annotation
 
-from quire.artifacts import ArtifactFamily, FlatYamlPlacement
-from quire.charters import CharterField, FamilyCharter, FamilyModel
-from quire.charter_class import CharterDoc, charter, charter_field, column
-from quire.documents.batch import DocumentBatchSpec
-from quire.families import FamilyDefinition
-from quire.versions import VersionId
 
-
-_VERSION = VersionId("2026.05.25", allow_placeholder=False)
+_VERSION = contract_version("2026.05.25")
 
 
 # --- validators ------------------------------------------------------------

@@ -25,6 +25,7 @@ from quire.references import (
     validate_foreign_key,
 )
 from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 @dataclass(frozen=True)
@@ -369,24 +370,24 @@ def test_foreign_key_validation_enforces_many_cardinality() -> None:
 def test_cross_family_reference_index_integrates_with_bound_family_registry() -> None:
     concepts = ArtifactFamily(
         name="concepts",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=ConceptDoc,
         placement=FlatYamlPlacement("concepts", str),
     )
     claims = ArtifactFamily(
         name="claims",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=ClaimDoc,
         placement=FlatYamlPlacement("claims", str),
     )
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(
             FamilyDefinition(
                 key=DemoFamily.CONCEPTS,
                 name="concepts",
-                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                contract_version=contract_version("2026.04.18"),
                 artifact_family=concepts,
                 identity_field="artifact_id",
                 reference_keys=(ReferenceKey.field("aliases[]"),),
@@ -394,13 +395,13 @@ def test_cross_family_reference_index_integrates_with_bound_family_registry() ->
             FamilyDefinition(
                 key=DemoFamily.CLAIMS,
                 name="claims",
-                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                contract_version=contract_version("2026.04.18"),
                 artifact_family=claims,
                 identity_field="artifact_id",
                 foreign_keys=(
                     ForeignKeySpec(
                         name="claim_concept",
-                        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                        contract_version=contract_version("2026.04.18"),
                         source_family="claims",
                         source_field="concept",
                         target_family="concepts",

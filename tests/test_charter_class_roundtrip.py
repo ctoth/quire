@@ -22,11 +22,11 @@ from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, FamilyCharter, FamilyModel
 from quire.charter_class import CharterDoc, charter, charter_field
 from quire.families import FamilyDefinition
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "charter_class"
-_VERSION = VersionId("2026.05.20", allow_placeholder=False)
+_VERSION = contract_version("2026.05.20")
 
 
 # Nested struct types shared by BOTH charters (these are plain msgspec.Structs in

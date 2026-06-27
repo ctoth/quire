@@ -11,6 +11,7 @@ from quire.contracts import (
     ContractManifest,
     ContractManifestError,
     check_contract_manifest,
+    contract_version,
 )
 from quire.versions import VersionId
 
@@ -106,20 +107,30 @@ def test_changed_contract_body_accepts_compatibility_marker():
     assert report.failed == ()
 
 
-def test_placeholder_contract_versions_are_rejected_after_baseline():
-    with pytest.raises(ValueError):
-        VersionId("1.0", allow_placeholder=False)
+def test_placeholder_contract_versions_are_rejected():
+    with pytest.raises(ValueError, match="Placeholder contract version is not allowed"):
+        contract_version("1.0")
 
 
-def test_non_placeholder_contract_versions_require_zero_padded_calendar_dates():
-    assert VersionId("2026.04.09", allow_placeholder=False) < VersionId(
-        "2026.04.18",
-        allow_placeholder=False,
-    )
+def test_contract_version_requires_zero_padded_calendar_dates():
+    assert contract_version("2026.04.09") == VersionId("2026.04.09")
 
-    for invalid in ("2026.04.9", "2026.4.09", "draft", "tbd", "1.0"):
+    for invalid in ("2026.04.9", "2026.4.09", "draft", "tbd"):
         with pytest.raises(ValueError, match="Contract versions must use YYYY.MM.DD"):
-            VersionId(invalid, allow_placeholder=False)
+            contract_version(invalid)
+
+
+def test_version_id_is_opaque():
+    # VersionId carries an arbitrary non-empty token; declaration policy lives in
+    # contract_version(), not in VersionId.
+    assert VersionId("draft").value == "draft"
+    assert str(VersionId("anything at all")) == "anything at all"
+    # VersionId defines no ordering, so a comparison falls back to the default
+    # object behaviour and raises.
+    with pytest.raises(TypeError):
+        VersionId("2026.04.09") < VersionId("2026.04.18")  # type: ignore[operator]
+    with pytest.raises(ValueError, match="cannot be empty"):
+        VersionId("   ")
 
 
 def test_contract_manifest_from_yaml_rejects_invalid_versions():

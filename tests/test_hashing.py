@@ -9,7 +9,7 @@ import pytest
 
 from quire.contracts import _normalize_payload
 from quire.canonical import canonical_json_bytes, canonical_json_sha256
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class StructPayload(msgspec.Struct, frozen=True):
@@ -44,7 +44,7 @@ def test_canonical_json_bytes_uses_contract_payload_normalization() -> None:
         "items": {"b", "a"},
         "struct": StructPayload(name="node", values=(2, 1)),
         "tuple": ("x", 1),
-        "version": VersionId("2026.04.27", allow_placeholder=False),
+        "version": contract_version("2026.04.27"),
     }
     normalized = _normalize_payload(payload)
 

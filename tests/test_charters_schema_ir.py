@@ -13,7 +13,7 @@ from quire.lifecycle import ConflictPolicy, FamilyState, FamilyTransition
 from quire.references import ForeignKeySpec, ReferenceKey
 from quire.schema_catalog import SchemaCatalog
 from quire.sql_types import python_type_to_sql
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoFamily(str, Enum):
@@ -41,7 +41,7 @@ class SourceTrust:
 
 
 def _claim_family() -> FamilyDefinition[object, DemoFamily, str, ClaimDoc]:
-    version = VersionId("2026.05.20", allow_placeholder=False)
+    version = contract_version("2026.05.20")
     foreign_key = ForeignKeySpec(
         name="claim_concept",
         contract_version=version,

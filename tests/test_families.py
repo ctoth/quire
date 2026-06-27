@@ -25,6 +25,7 @@ from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore, HeadMismatchError
 from quire.references import AmbiguousReferenceError, ForeignKeySpec, ForeignKeyValidationError, ReferenceKey
 from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoDocument(msgspec.Struct):
@@ -70,7 +71,7 @@ class DemoFamily(str, Enum):
 def _artifact_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, DemoDocument]:
     return ArtifactFamily(
         name=name,
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement(namespace, str),
     )
@@ -79,7 +80,7 @@ def _artifact_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, De
 def _identified_artifact_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, IdentifiedDocument]:
     return ArtifactFamily(
         name=name,
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=IdentifiedDocument,
         placement=FlatYamlPlacement(namespace, str),
     )
@@ -88,7 +89,7 @@ def _identified_artifact_family(name: str, namespace: str) -> ArtifactFamily[Own
 def _claim_with_concept_family(name: str, namespace: str) -> ArtifactFamily[Owner, str, ClaimWithConceptDocument]:
     return ArtifactFamily(
         name=name,
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=ClaimWithConceptDocument,
         placement=FlatYamlPlacement(namespace, str),
     )
@@ -98,7 +99,7 @@ def _reference_registry(*, required: bool = True) -> FamilyRegistry[Owner, DemoF
     concepts = FamilyDefinition(
         key=DemoFamily.CONCEPTS,
         name="concepts",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
         identity_field="artifact_id",
         reference_keys=(ReferenceKey.field("aliases[]"),),
@@ -106,13 +107,13 @@ def _reference_registry(*, required: bool = True) -> FamilyRegistry[Owner, DemoF
     claims = FamilyDefinition(
         key=DemoFamily.CLAIMS,
         name="claims",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_claim_with_concept_family("claims_artifact", "claims"),
         identity_field="artifact_id",
         foreign_keys=(
             ForeignKeySpec(
                 name="claim_concept",
-                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                contract_version=contract_version("2026.04.18"),
                 source_family="claims",
                 source_field="concept",
                 target_family="concepts",
@@ -122,7 +123,7 @@ def _reference_registry(*, required: bool = True) -> FamilyRegistry[Owner, DemoF
     )
     return FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(claims, concepts),
     )
 
@@ -143,7 +144,7 @@ def _family_definition(
         key=key,
         name=name,
         accessor=accessor,
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_artifact_family(f"{name}_artifact", namespace),
         foreign_keys=foreign_keys,
         identity_policy=identity_policy,
@@ -160,7 +161,7 @@ def _registry(
 ) -> FamilyRegistry[Owner, DemoFamily]:
     return FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(
             _family_definition(
                 DemoFamily.CLAIMS,
@@ -174,7 +175,7 @@ def _registry(
 
 
 def test_family_declaration_builds_common_placement_shapes_like_explicit_definitions() -> None:
-    version = VersionId("2026.04.18", allow_placeholder=False)
+    version = contract_version("2026.04.18")
     branch = BranchPlacement(policy="fixed", fixed_branch="archive")
     placements = (
         FlatYamlPlacement("books", DemoRef, ref_field="name", branch=branch),
@@ -236,7 +237,7 @@ def test_family_declaration_builds_common_placement_shapes_like_explicit_definit
 
 
 def test_family_declaration_passes_callbacks_and_definition_metadata_through() -> None:
-    version = VersionId("2026.04.18", allow_placeholder=False)
+    version = contract_version("2026.04.18")
 
     def coerce_payload(payload: object, source: str) -> SerializedDemoDocument:
         return SerializedDemoDocument(f"{source}:{payload}")
@@ -342,7 +343,7 @@ def test_family_contract_slots_reject_placeholder_versions() -> None:
     with pytest.raises(ValueError, match="Contract versions must use YYYY.MM.DD"):
         FamilyRegistry(
             name="demo",
-            contract_version=VersionId("draft", allow_placeholder=True),
+            contract_version=VersionId("draft"),
             families=(),
         )
 
@@ -350,7 +351,7 @@ def test_family_contract_slots_reject_placeholder_versions() -> None:
         FamilyDefinition(
             key=DemoFamily.CLAIMS,
             name="claims",
-            contract_version=VersionId("draft", allow_placeholder=True),
+            contract_version=VersionId("draft"),
             artifact_family=_artifact_family("claims_artifact", "claims"),
         )
 
@@ -396,7 +397,7 @@ def test_bound_family_builds_reference_index_from_declared_keys() -> None:
     family = FamilyDefinition(
         key=DemoFamily.CONCEPTS,
         name="concepts",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
         identity_field="artifact_id",
         reference_keys=(
@@ -406,7 +407,7 @@ def test_bound_family_builds_reference_index_from_declared_keys() -> None:
     )
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(family,),
     )
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
@@ -428,7 +429,7 @@ def test_family_reference_index_resolves_generated_identity_fields(generated: di
     family = FamilyDefinition(
         key=DemoFamily.CONCEPTS,
         name="concepts",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
         identity_field="artifact_id",
     )
@@ -448,7 +449,7 @@ def test_family_reference_index_reports_extra_key_ambiguity_without_changing_ide
     family = FamilyDefinition(
         key=DemoFamily.CONCEPTS,
         name="concepts",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
         identity_field="artifact_id",
         reference_keys=(ReferenceKey.field("aliases[]"),),
@@ -471,7 +472,7 @@ def test_registry_rejects_duplicate_keys_names_and_accessors() -> None:
     with pytest.raises(ValueError, match="duplicate family keys"):
         FamilyRegistry(
             name="demo",
-            contract_version=VersionId("2026.04.18", allow_placeholder=False),
+            contract_version=contract_version("2026.04.18"),
             families=(
                 claims,
                 _family_definition(DemoFamily.CLAIMS, "other", "other"),
@@ -481,7 +482,7 @@ def test_registry_rejects_duplicate_keys_names_and_accessors() -> None:
     with pytest.raises(ValueError, match="duplicate family names"):
         FamilyRegistry(
             name="demo",
-            contract_version=VersionId("2026.04.18", allow_placeholder=False),
+            contract_version=contract_version("2026.04.18"),
             families=(
                 claims,
                 _family_definition(DemoFamily.CONCEPTS, "claims", "other"),
@@ -491,7 +492,7 @@ def test_registry_rejects_duplicate_keys_names_and_accessors() -> None:
     with pytest.raises(ValueError, match="duplicate family accessors"):
         FamilyRegistry(
             name="demo",
-            contract_version=VersionId("2026.04.18", allow_placeholder=False),
+            contract_version=contract_version("2026.04.18"),
             families=(
                 _family_definition(DemoFamily.CLAIMS, "claims", "claims", accessor="rows"),
                 _family_definition(DemoFamily.CONCEPTS, "concepts", "concepts", accessor="rows"),
@@ -518,7 +519,7 @@ def test_family_definition_metadata_value_reads_missing_metadata_as_empty() -> N
 def test_registry_selects_families_by_predicate_and_metadata() -> None:
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(
             _family_definition(
                 DemoFamily.CLAIMS,
@@ -560,7 +561,7 @@ def test_registry_selects_families_by_predicate_and_metadata() -> None:
 def test_registry_by_metadata_requires_exactly_one_family() -> None:
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(
             _family_definition(
                 DemoFamily.CLAIMS,
@@ -587,7 +588,7 @@ def test_registry_by_metadata_requires_exactly_one_family() -> None:
 def test_family_definition_and_registry_resolve_storage_roots_from_placements() -> None:
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(
             _family_definition(DemoFamily.CLAIMS, "claims", "books"),
             _family_definition(DemoFamily.CONCEPTS, "concepts", "concepts"),
@@ -607,20 +608,20 @@ def test_family_definition_and_registry_resolve_storage_roots_from_placements() 
 def test_registry_root_lookup_rejects_non_namespace_placements() -> None:
     fixed_family: ArtifactFamily[Owner, str, DemoDocument] = ArtifactFamily(
         name="notes_artifact",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FixedFilePlacement(filename="notes.yaml"),
     )
     fixed_definition = FamilyDefinition(
         key=DemoFamily.NOTES,
         name="notes",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=fixed_family,
     )
 
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(fixed_definition,),
     )
 
@@ -631,14 +632,14 @@ def test_registry_root_lookup_rejects_non_namespace_placements() -> None:
 def test_registry_can_skip_foreign_key_closure_for_query_views() -> None:
     foreign_key = ForeignKeySpec(
         name="claim_concept",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         source_family="claims",
         source_field="concept",
         target_family="concepts",
     )
     registry = FamilyRegistry(
         name="query-view",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(
             _family_definition(
                 DemoFamily.CLAIMS,
@@ -844,7 +845,7 @@ def test_head_bound_transaction_families_transact_uses_captured_head(monkeypatch
 def test_head_bound_transaction_family_binding_pins_writes_to_captured_branch() -> None:
     family = ArtifactFamily[Owner, str, DemoDocument](
         name="other",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement(
             "other",
@@ -855,12 +856,12 @@ def test_head_bound_transaction_family_binding_pins_writes_to_captured_branch() 
     definition = FamilyDefinition(
         key=DemoFamily.NOTES,
         name="other",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=family,
     )
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(definition,),
     )
     backend = GitStore.init_memory()
@@ -965,13 +966,13 @@ def test_unrelated_family_save_does_not_validate_separate_foreign_key_graph() ->
     claims = FamilyDefinition(
         key=DemoFamily.CLAIMS,
         name="claims",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_claim_with_concept_family("claims_artifact", "claims"),
         identity_field="artifact_id",
         foreign_keys=(
             ForeignKeySpec(
                 name="claim_concept",
-                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                contract_version=contract_version("2026.04.18"),
                 source_family="claims",
                 source_field="concept",
                 target_family="concepts",
@@ -981,14 +982,14 @@ def test_unrelated_family_save_does_not_validate_separate_foreign_key_graph() ->
     concepts = FamilyDefinition(
         key=DemoFamily.CONCEPTS,
         name="concepts",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         artifact_family=_identified_artifact_family("concepts_artifact", "concepts"),
         identity_field="artifact_id",
     )
     notes = _family_definition(DemoFamily.NOTES, "notes", "notes")
     registry = FamilyRegistry(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         families=(claims, concepts, notes),
     )
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
@@ -1094,7 +1095,7 @@ def test_contract_manifest_changes_when_family_surface_changes() -> None:
         foreign_keys=(
             ForeignKeySpec(
                 name="claim_concept",
-                contract_version=VersionId("2026.04.18", allow_placeholder=False),
+                contract_version=contract_version("2026.04.18"),
                 source_family="claims",
                 source_field="concept",
                 target_family="concepts",

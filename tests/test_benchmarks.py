@@ -9,10 +9,10 @@ import pytest
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
-BENCHMARK_VERSION = VersionId("2026.04.25", allow_placeholder=False)
+BENCHMARK_VERSION = contract_version("2026.04.25")
 SMALL_COMMIT_COUNT = 200
 TRANSACTION_SAVE_COUNT = 1000
 SEEDED_LOAD_COUNT = 1000

@@ -12,7 +12,7 @@ from quire.charters import CharterField, FamilyCharter, charter_catalog
 from quire.families import FamilyDefinition
 from quire.sqlalchemy_schema import build_sqlalchemy_schema
 from quire.sqlalchemy_store import create_sqlalchemy_store, readonly_session, writable_session
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoFamily(str, Enum):
@@ -35,7 +35,7 @@ class Demo:
 
 
 def _minimal_family() -> FamilyDefinition[object, DemoFamily, str, DemoDoc]:
-    version = VersionId("2026.05.25", allow_placeholder=False)
+    version = contract_version("2026.05.25")
     return FamilyDefinition(
         key=DemoFamily.DEMOS,
         name="demos",

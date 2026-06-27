@@ -47,6 +47,7 @@ from quire.charters import (
     FamilyModel,
 )
 from quire.documents.batch import DocumentBatchSpec
+from quire.contracts import contract_version as _validate_contract_version
 from quire.families import FamilyDefinition
 from quire.lifecycle import FamilyState, FamilyTransition
 from quire.references import ForeignKeySpec
@@ -683,7 +684,7 @@ def charter(
     version = (
         contract_version
         if isinstance(contract_version, VersionId)
-        else VersionId(contract_version, allow_placeholder=False)
+        else _validate_contract_version(contract_version)
     )
     resolved_placement: ArtifactPlacementPolicy[Any, Any] = (
         FlatYamlPlacement(placement, str)

@@ -10,7 +10,7 @@ import pytest
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, FamilyCharter
 from quire.families import FamilyDefinition
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoFamily(str, Enum):
@@ -33,7 +33,7 @@ def _raise_empty_claims(document: msgspec.Struct) -> None:
 
 
 def _minimal_family() -> FamilyDefinition[object, DemoFamily, str, DemoDoc]:
-    version = VersionId("2026.05.25", allow_placeholder=False)
+    version = contract_version("2026.05.25")
     return FamilyDefinition(
         key=DemoFamily.DEMOS,
         name="demos",

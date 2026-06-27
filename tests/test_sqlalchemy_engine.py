@@ -38,7 +38,7 @@ from quire.sqlite_vec_store import (
     SqlAlchemyVecRegistry,
     SqlAlchemyVecSnapshotStore,
 )
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 def _serialize_float32(vector: list[float]) -> bytes:
@@ -250,7 +250,7 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
 
 
 def test_foreign_key_can_target_declared_non_id_field(tmp_path: Path) -> None:
-    version = VersionId("2026.05.18", allow_placeholder=False)
+    version = contract_version("2026.05.18")
     sources = FamilyDefinition(
         key="slug_sources",
         name="slug_sources",
@@ -342,7 +342,7 @@ def test_foreign_key_can_target_declared_non_id_field(tmp_path: Path) -> None:
 
 
 def test_json_boundary_foreign_keys_are_metadata_not_sql_constraints(tmp_path: Path) -> None:
-    version = VersionId("2026.05.26", allow_placeholder=False)
+    version = contract_version("2026.05.26")
     sources = _family("json_sources", Source)
     schema = build_sqlalchemy_schema(
         charter_catalog(
@@ -385,7 +385,7 @@ def test_json_boundary_foreign_keys_are_metadata_not_sql_constraints(tmp_path: P
 def test_foreign_key_to_family_outside_catalog_is_metadata_not_sql_constraint(
     tmp_path: Path,
 ) -> None:
-    version = VersionId("2026.05.26", allow_placeholder=False)
+    version = contract_version("2026.05.26")
     sources = _family("partial_sources", Source)
     schema = build_sqlalchemy_schema(
         charter_catalog(
@@ -1226,10 +1226,10 @@ def _family(
     return FamilyDefinition(
         key=name,
         name=name,
-        contract_version=VersionId("2026.05.18", allow_placeholder=False),
+        contract_version=contract_version("2026.05.18"),
         artifact_family=ArtifactFamily(
             name=name,
-            contract_version=VersionId("2026.05.18", allow_placeholder=False),
+            contract_version=contract_version("2026.05.18"),
             doc_type=model,
             placement=FlatYamlPlacement(name, str),
         ),
@@ -1246,7 +1246,7 @@ def _foreign_key(
 ) -> ForeignKeySpec:
     return ForeignKeySpec(
         name=name,
-        contract_version=VersionId("2026.05.18", allow_placeholder=False),
+        contract_version=contract_version("2026.05.18"),
         source_family=source_family,
         source_field=source_field,
         target_family=target_family,

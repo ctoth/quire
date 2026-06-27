@@ -18,7 +18,7 @@ from quire.artifacts import (
 from quire.documents import DocumentBatchSpec, DocumentCodec
 from quire.family_store import DocumentFamilyStore, DocumentStoreBackend
 from quire.git_store import GitStore
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoDocument(msgspec.Struct):
@@ -49,7 +49,7 @@ def _demo_family(
 ) -> ArtifactFamily[Owner, str, DemoDocument]:
     return ArtifactFamily(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement("demo", str),
         normalize_for_write=normalize_for_write,
@@ -75,7 +75,7 @@ def test_family_store_exists_checks_address_without_decoding():
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
     family = ArtifactFamily[Owner, str, DemoDocument](
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement("demo", str),
         decode_bytes=decode_bytes,
@@ -202,7 +202,7 @@ def test_iter_handles_supports_hash_scattered_encoded_refs():
     backend = GitStore.init_memory()
     family = ArtifactFamily[Owner, str, DemoDocument](
         name="hashy",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=HashScatteredYamlPlacement(
             "hashy",
@@ -269,7 +269,7 @@ def test_transaction_rejects_cross_branch_writes():
     store = DocumentFamilyStore(owner=Owner(), backend=backend)
     family = ArtifactFamily[Owner, BranchRef, DemoDocument](
         name="branching",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement(
             "demo",
@@ -347,7 +347,7 @@ def test_transaction_move_with_same_ref_does_not_stage_delete():
 def test_custom_codecs_override_defaults():
     family = ArtifactFamily(
         name="custom",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement("custom", str, extension=".txt"),
         encode_document=lambda document: f"name={document.name}".encode("utf-8"),
@@ -373,7 +373,7 @@ def test_batch_artifact_family_wires_batch_callbacks_and_scan_type():
     )
     family = batch_artifact_family(
         name="batch-demos",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         placement=FlatYamlPlacement("batch-demos", str),
         batch_spec=batch_spec,
     )
@@ -452,7 +452,7 @@ def test_unsupported_family_operations_fail_clearly():
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
     family = ArtifactFamily(
         name="minimal",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement("minimal", str),
     )

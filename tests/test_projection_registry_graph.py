@@ -27,6 +27,7 @@ from quire.projections import (
 )
 from quire.references import ForeignKeySpec
 from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoFamily(str, Enum):
@@ -56,7 +57,7 @@ class Claim:
 
 
 def _version() -> VersionId:
-    return VersionId("2026.05.26", allow_placeholder=False)
+    return contract_version("2026.05.26")
 
 
 def _foreign_key(name: str, field: str) -> ForeignKeySpec:

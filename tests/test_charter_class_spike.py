@@ -21,7 +21,7 @@ from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, FamilyCharter, FamilyModel
 from quire.charter_class import CharterDoc, charter
 from quire.families import FamilyDefinition
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class ProvenanceStatus(str, Enum):
@@ -32,7 +32,7 @@ class ProvenanceStatus(str, Enum):
     VACUOUS = "vacuous"
 
 
-_VERSION = VersionId("2026.05.25", allow_placeholder=False)
+_VERSION = contract_version("2026.05.25")
 
 
 # --- declarative shape -----------------------------------------------------

@@ -7,6 +7,7 @@ import msgspec
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import CharterField, CharterRelationship, FamilyCharter
+from quire.contracts import contract_version
 from quire.families import FamilyDefinition
 from quire.references import ReferenceKey
 from quire.versions import VersionId
@@ -27,7 +28,7 @@ class Claim:
 
 
 def _claim_family() -> FamilyDefinition[object, DemoFamily, str, ClaimDoc]:
-    version = VersionId("2026.05.25", allow_placeholder=False)
+    version = contract_version("2026.05.25")
     return FamilyDefinition(
         key=DemoFamily.CLAIMS,
         name="claims",

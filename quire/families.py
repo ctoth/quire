@@ -13,7 +13,7 @@ from quire.artifacts import (
     PreparedArtifact,
     RefBlobLocator,
 )
-from quire.contracts import CompatibilityMarker, ContractEntry, ContractManifest
+from quire.contracts import CompatibilityMarker, ContractEntry, ContractManifest, contract_version
 from quire.family_store import DocumentFamilyStore, DocumentFamilyTransaction, address_path
 from quire.references import FamilyReferenceIndex, ForeignKeySpec, ReferenceKey, validate_foreign_key
 from quire.versions import VersionId
@@ -27,7 +27,7 @@ TDoc = TypeVar("TDoc")
 def _require_version(value: object, *, label: str) -> VersionId:
     if not isinstance(value, VersionId):
         raise ValueError(f"{label} requires an explicit VersionId")
-    VersionId(str(value), allow_placeholder=False)
+    contract_version(str(value))
     return value
 
 

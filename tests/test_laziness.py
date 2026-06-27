@@ -24,7 +24,7 @@ from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.families import BoundFamily
 from quire.family_store import DocumentFamilyStore
 from quire.git_store import GitStore
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class _DemoDocument(msgspec.Struct):
@@ -39,7 +39,7 @@ class _Owner:
 def _demo_family() -> ArtifactFamily[_Owner, str, _DemoDocument]:
     return ArtifactFamily(
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=_DemoDocument,
         placement=FlatYamlPlacement("demo", str),
     )

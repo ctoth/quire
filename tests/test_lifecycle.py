@@ -22,7 +22,7 @@ from quire.lifecycle import (
     run_transition,
     run_transition_batch,
 )
-from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoFamily(str, Enum):
@@ -45,7 +45,7 @@ class Note:
 
 
 def _family(name: DemoFamily) -> FamilyDefinition[object, DemoFamily, str, object]:
-    version = VersionId("2026.05.25", allow_placeholder=False)
+    version = contract_version("2026.05.25")
     return FamilyDefinition(
         key=name,
         name=name.value,

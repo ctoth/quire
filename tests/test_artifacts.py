@@ -24,6 +24,7 @@ from quire.artifacts import (
 from quire.git_store import GitStore
 from quire.documents.loaded import LoadedDocument
 from quire.versions import VersionId
+from quire.contracts import contract_version
 
 
 class DemoDocument(msgspec.Struct):
@@ -57,7 +58,7 @@ class NestedRef:
 def test_artifact_family_declares_contract_version_and_placement():
     family = ArtifactFamily[Owner, DemoRef, DemoDocument](
         name="demo",
-        contract_version=VersionId("2026.04.18", allow_placeholder=False),
+        contract_version=contract_version("2026.04.18"),
         doc_type=DemoDocument,
         placement=FlatYamlPlacement("demo", DemoRef, ref_field="name"),
     )

@@ -1,12 +1,41 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import yaml
 
 from quire.canonical import canonical_json_text, normalize_payload
 from quire.versions import VersionId
+
+_PLACEHOLDER_CONTRACT_VERSIONS = frozenset({"0", "0.0", "0.1", "1", "1.0"})
+_CALENDAR_VERSION_RE = re.compile(r"^(?P<year>\d{4})\.(?P<month>\d{2})\.(?P<day>\d{2})$")
+
+
+def contract_version(value: str) -> VersionId:
+    """Validate a contract/family declaration version and wrap it in a VersionId.
+
+    Contract and family declarations require a zero-padded ``YYYY.MM.DD``
+    calendar version and reject placeholder tokens. VersionId itself is opaque;
+    this declaration-time policy lives here, not in VersionId.
+    """
+    normalized = value.strip()
+    if normalized in _PLACEHOLDER_CONTRACT_VERSIONS:
+        raise ValueError(f"Placeholder contract version is not allowed: {normalized}")
+    match = _CALENDAR_VERSION_RE.match(normalized)
+    if match is None:
+        raise ValueError("Contract versions must use YYYY.MM.DD")
+    try:
+        date(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+        )
+    except ValueError as exc:
+        raise ValueError("Contract versions must use YYYY.MM.DD") from exc
+    return VersionId(normalized)
 
 
 class ContractManifestError(ValueError):
@@ -40,7 +69,7 @@ class ContractEntry:
         return cls(
             kind=str(payload["kind"]),
             name=str(payload["name"]),
-            contract_version=VersionId(str(payload["contract_version"]), allow_placeholder=False),
+            contract_version=contract_version(str(payload["contract_version"])),
             body=_normalize_payload(dict(payload["body"])),
         )
 
@@ -62,7 +91,7 @@ class CompatibilityMarker:
     def from_payload(cls, payload: dict[str, Any]) -> CompatibilityMarker:
         return cls(
             contract=str(payload["contract"]),
-            contract_version=VersionId(str(payload["contract_version"]), allow_placeholder=False),
+            contract_version=contract_version(str(payload["contract_version"])),
             reason=str(payload["reason"]),
         )
 
@@ -162,7 +191,7 @@ class ContractManifest:
             registry_contract_version=(
                 None
                 if registry_version is None
-                else VersionId(str(registry_version), allow_placeholder=False)
+                else contract_version(str(registry_version))
             ),
             contracts=tuple(
                 ContractEntry.from_payload(dict(entry))
