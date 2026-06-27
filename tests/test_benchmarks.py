@@ -88,7 +88,7 @@ def test_benchmark_family_transaction(benchmark, backend_kind: str):
             family = _family()
             store = DocumentFamilyStore(owner=Owner(), backend=backend)
             _seed_family(store, family, TRANSACTION_SAVE_COUNT)
-            return len(list(store.iter(family)))
+            return len(list(store.iter_refs(family)))
         finally:
             if temp_dir is not None:
                 temp_dir.cleanup()
@@ -129,7 +129,7 @@ def test_benchmark_family_scan_iter_and_require(benchmark, backend_kind: str):
             store = DocumentFamilyStore(owner=Owner(), backend=backend)
             _seed_family(store, family, SCAN_DOC_COUNT)
             total = 0
-            for ref in store.iter(family):
+            for ref in store.iter_refs(family):
                 total += store.require(family, ref).value
             return total
         finally:
@@ -172,7 +172,7 @@ def test_benchmark_family_scan_pinned_iter_and_require(benchmark, backend_kind: 
             _seed_family(store, family, SCAN_DOC_COUNT)
             pinned_branch, pinned_commit = store.pin(family)
             total = 0
-            for ref in store.iter(family, branch=pinned_branch, commit=pinned_commit):
+            for ref in store.iter_refs(family, branch=pinned_branch, commit=pinned_commit):
                 total += store.require(family, ref, branch=pinned_branch, commit=pinned_commit).value
             return total
         finally:

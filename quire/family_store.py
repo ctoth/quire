@@ -332,7 +332,7 @@ class DocumentFamilyStore(Generic[TOwner]):
             expected_head=expected_head,
         )
 
-    def iter(
+    def iter_refs(
         self,
         family: ArtifactFamily[TOwner, TRef, TDoc],
         *,

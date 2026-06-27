@@ -151,7 +151,7 @@ def test_prepare_has_no_git_side_effects():
 
     assert prepared.content
     assert backend.branch_sha("master") is None
-    assert backend.log(max_count=10) == []
+    assert list(backend.iter_log(max_count=10)) == []
 
 
 def test_document_store_backend_extends_read_only_backend_protocol():
@@ -241,7 +241,7 @@ def test_store_pin_resolves_branch_head_once_for_iter_and_require():
     store.save(family, "beta", DemoDocument("beta"), message="save beta")
 
     pinned_branch, pinned_commit = store.pin(family)
-    refs = list(store.iter(family, branch=pinned_branch, commit=pinned_commit))
+    refs = list(store.iter_refs(family, branch=pinned_branch, commit=pinned_commit))
     loaded = [store.require(family, ref, branch=pinned_branch, commit=pinned_commit) for ref in refs]
 
     assert pinned_branch == "master"
@@ -261,7 +261,7 @@ def test_transaction_writes_multiple_documents_in_one_commit():
 
     assert store.require(family, "one") == DemoDocument("one")
     assert store.require(family, "two") == DemoDocument("two")
-    assert len(backend.log(max_count=10)) == 1
+    assert len(list(backend.iter_log(max_count=10))) == 1
 
 
 def test_transaction_rejects_cross_branch_writes():

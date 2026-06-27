@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -141,9 +141,9 @@ class SqlAlchemyVecRegistry:
     def __init__(self, conn: Connection) -> None:
         self._conn = conn
 
-    def get_registered_models(self) -> list[dict[str, Any]]:
+    def iter_registered_models(self) -> Iterator[dict[str, Any]]:
         if not _table_exists(self._conn, EMBEDDING_MODEL_TABLE):
-            return []
+            return
         rows = self._conn.execute(
             text(
                 f"""
@@ -159,7 +159,8 @@ class SqlAlchemyVecRegistry:
                 """
             )
         ).mappings()
-        return [dict(row) for row in rows]
+        for row in rows:
+            yield dict(row)
 
 
 class SqlAlchemyVecEntityStore:
@@ -290,13 +291,13 @@ class SqlAlchemyVecEntityStore:
         value = row[0]
         return value if isinstance(value, bytes) else bytes(value)
 
-    def similar_entities(
+    def iter_similar_entities(
         self,
         *,
         model_identity: EmbeddingModelIdentity,
         query_vector: bytes,
         k: int,
-    ) -> list[dict[str, Any]]:
+    ) -> Iterator[dict[str, Any]]:
         table_name = self._table_name(model_identity.identity_hash)
         rows = self._conn.exec_driver_sql(
             f"""
@@ -316,7 +317,8 @@ class SqlAlchemyVecEntityStore:
             """,
             (model_identity.identity_hash, query_vector, k),
         ).mappings()
-        return [dict(row) for row in rows]
+        for row in rows:
+            yield dict(row)
 
     def _table_name(
         self,

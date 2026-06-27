@@ -165,7 +165,7 @@ def family_scan_pinned_iter_and_require(root: Path) -> None:
     try:
         pinned = store.pin(family)
         total = 0
-        for ref in store.iter(family, branch=pinned[0], commit=pinned[1]):
+        for ref in store.iter_refs(family, branch=pinned[0], commit=pinned[1]):
             total += store.require(family, ref, branch=pinned[0], commit=pinned[1]).value
         expected = sum(range(SCAN_DOC_COUNT))
         if total != expected:

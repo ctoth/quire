@@ -6,8 +6,8 @@ from quire.documents.schema import (
     convert_document_value,
     decode_document_bytes,
     decode_document_path,
+    iter_document_dir,
     load_document,
-    load_document_dir,
     to_document_builtins,
 )
 from quire.documents.batch import (
@@ -16,8 +16,8 @@ from quire.documents.batch import (
     LoadedBatchItem,
     decode_document_batch_bytes,
     document_batch_codec,
+    iter_document_batch_dir,
     load_document_batch,
-    load_document_batch_dir,
     render_document_batch,
 )
 from quire.documents.codecs import (
@@ -67,6 +67,8 @@ __all__ = [
     "decode_yaml_value",
     "document_to_payload",
     "document_batch_codec",
+    "iter_document_batch_dir",
+    "iter_document_dir",
     "encode_document",
     "encode_json_mapping",
     "encode_text_document",
@@ -74,9 +76,7 @@ __all__ = [
     "identity_json_mapping",
     "identity_text_document",
     "load_document_batch",
-    "load_document_batch_dir",
     "load_document",
-    "load_document_dir",
     "render_json_mapping",
     "render_document_batch",
     "render_document",

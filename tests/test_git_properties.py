@@ -80,12 +80,12 @@ def _make_disk_repo() -> tuple[GitStore, Path, tempfile.TemporaryDirectory[str]]
 def _snapshot(store: GitStore, commit: str | None = None) -> dict[str, bytes]:
     return {
         path: store.read_file(path, commit=commit)
-        for path in sorted(store.flat_tree_entries(commit))
+        for path in sorted(dict(store.iter_flat_tree_entries(commit)))
     }
 
 
 def _flat_snapshot(store: GitStore, commit: str | None = None) -> dict[str, str]:
-    return store.flat_tree_entries(commit)
+    return dict(store.iter_flat_tree_entries(commit))
 
 
 def _model_diff(new: dict[str, str], old: dict[str, str]) -> dict[str, list[str]]:
@@ -335,10 +335,10 @@ def test_batch_atomicity(
 ) -> None:
     repo = _make_repo()
     repo.commit_files({del_path: del_content}, "setup")
-    initial_count = len(repo.log(max_count=10000))
+    initial_count = len(list(repo.iter_log(max_count=10000)))
 
     repo.commit_batch(adds={add_path: add_content}, deletes=[del_path], message="batch op")
-    new_count = len(repo.log(max_count=10000))
+    new_count = len(list(repo.iter_log(max_count=10000)))
 
     assert new_count == initial_count + 1
     if add_path == del_path:
@@ -377,8 +377,8 @@ def test_batch_matches_dict_model(seed: dict[str, bytes], adds: dict[str, bytes]
     batch = repo.commit_batch(adds, deletes, "batch")
 
     assert _snapshot(repo, batch) == _batch_model(current, adds, deletes)
-    assert repo.commit_parent_shas(batch) == [old_tip]
-    assert len(repo.log(max_count=10000)) == 3
+    assert list(repo.iter_commit_parent_shas(batch)) == [old_tip]
+    assert len(list(repo.iter_log(max_count=10000))) == 3
 
 
 @settings(deadline=None)
@@ -421,7 +421,7 @@ def test_empty_batch_preserves_tree_and_advances_branch(seed: dict[str, bytes]) 
 
     assert empty != base
     assert repo.head_sha() == empty
-    assert repo.commit_parent_shas(empty) == [base]
+    assert list(repo.iter_commit_parent_shas(empty)) == [base]
     assert _snapshot(repo, empty) == before
 
 
@@ -437,7 +437,7 @@ def test_batch_delete_wins_when_same_path_is_added_and_deleted(
 
     batch = repo.commit_batch({path: replacement}, [path], "delete wins")
 
-    assert path not in repo.flat_tree_entries(batch)
+    assert path not in dict(repo.iter_flat_tree_entries(batch))
     with pytest.raises(FileNotFoundError):
         repo.read_file(path, commit=batch)
 
@@ -532,14 +532,14 @@ def test_expected_head_guards_write_operations(operation: str, content: bytes) -
     elif operation == "commit_batch":
         accepted = repo.commit_batch({"accepted.bin": b"ok"}, ["other.bin"], "accepted", expected_head=current)
     elif operation == "commit_flat_tree":
-        entries = repo.flat_tree_entries(current)
+        entries = dict(repo.iter_flat_tree_entries(current))
         entries["accepted.bin"] = repo.store_blob(b"ok")
         accepted = repo.commit_flat_tree(entries, "accepted", parents=[current], expected_head=current)
     else:
         accepted = repo.revert_commit(target, expected_head=current)
 
     assert repo.head_sha() == accepted
-    assert repo.commit_parent_shas(accepted) == [current]
+    assert list(repo.iter_commit_parent_shas(accepted)) == [current]
 
 
 @settings(deadline=None)
@@ -725,7 +725,7 @@ def test_history_monotonicity(paths: list[str]) -> None:
         shas.append(sha)
 
     expected = 1 + len(paths)
-    history = repo.log(max_count=expected + 1)
+    history = list(repo.iter_log(max_count=expected + 1))
     assert len(history) == expected
 
 
@@ -815,16 +815,16 @@ def test_branch_isolation_and_ancestry_properties(
     for commit in (master, branch_tip):
         distances = repo.ancestor_distances(commit)
         assert distances[commit] == 0
-        for parent in repo.commit_parent_shas(commit):
+        for parent in list(repo.iter_commit_parent_shas(commit)):
             assert parent in distances
             assert distances[parent] <= distances[commit] + 1
-        assert repo.commit_parent_shas(commit) == [base]
+        assert list(repo.iter_commit_parent_shas(commit)) == [base]
 
-    branch_log = repo.log(max_count=20, branch=branch)
+    branch_log = list(repo.iter_log(max_count=20, branch=branch))
     assert branch_log[0]["sha"] == branch_tip
     for entry in branch_log:
         assert entry["sha"] in repo.ancestor_distances(branch_tip)
-        assert entry["parents"] == repo.commit_parent_shas(str(entry["sha"]))
+        assert entry["parents"] == list(repo.iter_commit_parent_shas(str(entry["sha"])))
 
 
 @settings(deadline=None)
@@ -850,7 +850,7 @@ def test_non_first_parent_is_reachable_but_not_on_first_parent_chain(
 
     first_parent_chain: list[str] = []
     current = merged
-    while parents := repo.commit_parent_shas(current):
+    while parents := list(repo.iter_commit_parent_shas(current)):
         current = parents[0]
         first_parent_chain.append(current)
 
@@ -897,15 +897,15 @@ def test_merge_base_criss_cross_tie_break_is_deterministic(names: tuple[str, str
     left = repo.commit_files({"left.bin": payload}, "left", branch=left_branch)
     right = repo.commit_files({"right.bin": payload}, "right", branch=right_branch)
 
-    left_entries = repo.flat_tree_entries(left)
-    left_entries.update(repo.flat_tree_entries(right))
+    left_entries = dict(repo.iter_flat_tree_entries(left))
+    left_entries.update(dict(repo.iter_flat_tree_entries(right)))
     left_merge = repo.commit_flat_tree(left_entries, "left merge", parents=[left, right], branch=left_branch)
-    right_entries = repo.flat_tree_entries(right)
-    right_entries.update(repo.flat_tree_entries(left))
+    right_entries = dict(repo.iter_flat_tree_entries(right))
+    right_entries.update(dict(repo.iter_flat_tree_entries(left)))
     right_merge = repo.commit_flat_tree(right_entries, "right merge", parents=[right, left], branch=right_branch)
 
-    assert repo.commit_parent_shas(left_merge) == [left, right]
-    assert repo.commit_parent_shas(right_merge) == [right, left]
+    assert list(repo.iter_commit_parent_shas(left_merge)) == [left, right]
+    assert list(repo.iter_commit_parent_shas(right_merge)) == [right, left]
     assert repo.merge_base(left_branch, right_branch) == min(left, right)
 
 
@@ -924,8 +924,8 @@ def test_store_blob_and_commit_flat_tree_materialize_exact_entries(files: dict[s
 
     assert _snapshot(repo, flat) == files
     assert _snapshot(repo, empty) == {}
-    assert repo.commit_parent_shas(flat) == []
-    assert repo.commit_parent_shas(empty) == []
+    assert list(repo.iter_commit_parent_shas(flat)) == []
+    assert list(repo.iter_commit_parent_shas(empty)) == []
 
 
 @settings(deadline=None)
@@ -935,14 +935,14 @@ def test_commit_flat_tree_round_trips_flat_tree_entries(files: dict[str, bytes])
     source = _commit_model(repo, files)
 
     recreated = repo.commit_flat_tree(
-        repo.flat_tree_entries(source),
+        dict(repo.iter_flat_tree_entries(source)),
         "recreate",
         parents=[source],
         branch="recreated",
     )
 
     assert _snapshot(repo, recreated) == _snapshot(repo, source)
-    assert repo.commit_parent_shas(recreated) == [source]
+    assert list(repo.iter_commit_parent_shas(recreated)) == [source]
 
 
 @settings(deadline=None)
@@ -955,15 +955,15 @@ def test_flat_tree_merge_commit_surface(
     repo = _make_repo()
     left = repo.commit_files(left_files, "left", branch="left")
     right = repo.commit_files(right_files, "right", branch="right")
-    entries = repo.flat_tree_entries(right)
-    entries.update(repo.flat_tree_entries(left))
+    entries = dict(repo.iter_flat_tree_entries(right))
+    entries.update(dict(repo.iter_flat_tree_entries(left)))
     entries["merge.bin"] = repo.store_blob(merge_content)
 
     merge = repo.commit_flat_tree(entries, "merge", parents=[left, right], branch="merged")
 
-    assert repo.commit_parent_shas(merge) == [left, right]
+    assert list(repo.iter_commit_parent_shas(merge)) == [left, right]
     assert repo.branch_sha("merged") == merge
-    assert repo.log(max_count=1, branch="merged")[0]["sha"] == merge
+    assert list(repo.iter_log(max_count=1, branch="merged"))[0]["sha"] == merge
     assert _flat_snapshot(repo, merge) == entries
     assert repo.diff_commits(merge, left) == _model_diff(_flat_snapshot(repo, merge), _flat_snapshot(repo, left))
     assert repo.diff_commits(merge, right) == _model_diff(_flat_snapshot(repo, merge), _flat_snapshot(repo, right))
@@ -1004,7 +1004,7 @@ def test_revert_commit_restores_parent_tree(
 
     reverted = repo.revert_commit(target)
 
-    assert repo.commit_parent_shas(reverted) == [target]
+    assert list(repo.iter_commit_parent_shas(reverted)) == [target]
     assert _snapshot(repo, reverted) == _snapshot(repo, parent)
 
 
@@ -1035,7 +1035,7 @@ def test_revert_rejects_root_and_merge_commits(files: dict[str, bytes]) -> None:
     root = repo.commit_files(files, "root")
     right = repo.commit_files({"right.bin": b"right"}, "right", branch="right")
     merge = repo.commit_flat_tree(
-        {**repo.flat_tree_entries(root), **repo.flat_tree_entries(right)},
+        {**dict(repo.iter_flat_tree_entries(root)), **dict(repo.iter_flat_tree_entries(right))},
         "merge",
         parents=[root, right],
         branch="merged",
@@ -1060,7 +1060,7 @@ def test_revert_respects_explicit_branch(branch: str, before: bytes, after: byte
 
     assert repo.branch_sha(branch) == reverted
     assert repo.branch_sha("master") == master
-    assert repo.commit_parent_shas(reverted) == [target]
+    assert list(repo.iter_commit_parent_shas(reverted)) == [target]
     assert _snapshot(repo, reverted) == _snapshot(repo, base)
 
 
@@ -1075,7 +1075,7 @@ def test_noop_revert_preserves_tree_but_creates_commit(files: dict[str, bytes]) 
     reverted = repo.revert_commit(noop)
 
     assert reverted != noop
-    assert repo.commit_parent_shas(reverted) == [noop]
+    assert list(repo.iter_commit_parent_shas(reverted)) == [noop]
     assert _snapshot(repo, reverted) == before
     assert _snapshot(repo, reverted) == _snapshot(repo, base)
 
@@ -1214,7 +1214,7 @@ def test_root_commit_diff_reports_all_files_added(files: dict[str, bytes]) -> No
 
     root = repo.commit_files(files, "root")
 
-    assert repo.commit_parent_shas(root) == []
+    assert list(repo.iter_commit_parent_shas(root)) == []
     assert repo.diff_commits(root) == {
         "added": sorted(files),
         "modified": [],
@@ -1235,7 +1235,7 @@ def test_commit_message_preservation(path: str, content: bytes, message: str) ->
 
     commit = repo.commit_files({path: content}, message)
 
-    history = repo.log(max_count=1)
+    history = list(repo.iter_log(max_count=1))
     assert history[0]["message"] == message.strip()
     assert repo.show_commit(commit)["message"] == message.strip()
 
@@ -1248,7 +1248,7 @@ def test_log_limits_tip_and_parent_metadata(messages: list[str], max_count: int)
     for index, message in enumerate(messages):
         commits.append(repo.commit_files({f"log-{index}.bin": bytes([index])}, message))
 
-    history = repo.log(max_count=max_count)
+    history = list(repo.iter_log(max_count=max_count))
 
     assert len(history) <= max_count
     if max_count == 0:
@@ -1258,7 +1258,7 @@ def test_log_limits_tip_and_parent_metadata(messages: list[str], max_count: int)
     assert history[0]["sha"] == commits[-1]
     for entry in history:
         sha = str(entry["sha"])
-        assert entry["parents"] == repo.commit_parent_shas(sha)
+        assert entry["parents"] == list(repo.iter_commit_parent_shas(sha))
 
 
 @settings(deadline=None)
@@ -1284,7 +1284,7 @@ def test_path_spelling_matrix_targets_one_normalized_file(path: str, content: by
         for equivalent in _path_spellings(path):
             assert repo.read_file(equivalent, commit=commit) == content
 
-        flat_keys = set(repo.flat_tree_entries(commit))
+        flat_keys = set(dict(repo.iter_flat_tree_entries(commit)))
         assert path in flat_keys
         assert all("\\" not in key for key in flat_keys)
 
@@ -1297,7 +1297,7 @@ def test_delete_uses_same_path_normalization_as_add(path: str, content: bytes) -
 
     commit = repo.commit_deletes([_path_spellings(path)[-1]], "delete")
 
-    assert path not in repo.flat_tree_entries(commit)
+    assert path not in dict(repo.iter_flat_tree_entries(commit))
     for spelling in _path_spellings(path):
         with pytest.raises(FileNotFoundError):
             repo.read_file(spelling, commit=commit)
@@ -1354,7 +1354,7 @@ class GitStoreMachine(RuleBasedStateMachine):
     def history_length(self) -> None:
         if self.repo is None:
             return
-        history = self.repo.log(max_count=10000)
+        history = list(self.repo.iter_log(max_count=10000))
         assert len(history) == self.commit_count
 
 

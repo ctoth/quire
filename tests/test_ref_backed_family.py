@@ -115,7 +115,7 @@ def test_ref_backed_family_round_trips_with_no_branch_and_no_tree():
 
     # Still no branch/tree — the write landed on the blob-ref, not a branch tree.
     assert backend.branch_sha("master") is None
-    assert backend.log(max_count=10) == []
+    assert list(backend.iter_log(max_count=10)) == []
 
     loaded = store.load(family, SchemaRef())
     assert loaded == SchemaDocument("hello")

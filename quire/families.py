@@ -441,8 +441,8 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
     def payload(self, document: TDoc) -> object:
         return self.store.payload(document, family=cast(Any, self.family))
 
-    def iter(self, *, branch: str | None = None, commit: str | None = None) -> Iterator[TRef]:
-        return self.store.iter(self.family, branch=branch, commit=commit)
+    def iter_refs(self, *, branch: str | None = None, commit: str | None = None) -> Iterator[TRef]:
+        return self.store.iter_refs(self.family, branch=branch, commit=commit)
 
     def pin(
         self,
@@ -595,8 +595,8 @@ class PinnedBoundFamily(Generic[TOwner, TRef, TDoc]):
     def address(self, ref: TRef) -> ArtifactAddress:
         return self.store.address(self.family, ref, branch=self.branch, commit=self.commit)
 
-    def iter(self) -> Iterator[TRef]:
-        return self.store.iter(self.family, branch=self.branch, commit=self.commit)
+    def iter_refs(self) -> Iterator[TRef]:
+        return self.store.iter_refs(self.family, branch=self.branch, commit=self.commit)
 
     def iter_handles(self) -> Iterator[ArtifactHandle[TOwner, TRef, TDoc]]:
         return self.store.iter_handles(self.family, branch=self.branch, commit=self.commit)

@@ -157,7 +157,7 @@ def test_deep_tree_paths_do_not_depend_on_python_recursion_limit():
     commit = store.commit_files({deep_path: b"leaf"}, "add deep leaf")
 
     assert store.read_file(deep_path, commit=commit) == b"leaf"
-    assert store.flat_tree_entries(commit)[deep_path]
+    assert dict(store.iter_flat_tree_entries(commit))[deep_path]
 
 
 def test_single_file_update_preserves_unrelated_tree_contents():
@@ -234,7 +234,7 @@ def test_commit_delete_missing_path_remains_harmless():
     second = store.commit_deletes(["docs/missing.txt"], "delete missing")
 
     assert store.read_file("docs/example.txt", commit=second) == b"child"
-    assert store.commit_parent_shas(second) == [first]
+    assert list(store.iter_commit_parent_shas(second)) == [first]
 
 
 def test_materialize_worktree_can_remove_stale_files_and_preserve_runtime_paths(tmp_path):
@@ -540,8 +540,8 @@ def test_flat_tree_entries_and_commit_flat_tree_create_merge_commit():
     left = store.commit_files({"a.txt": b"left"}, "left", branch="left")
     right = store.commit_files({"b.txt": b"right"}, "right", branch="right")
 
-    entries = store.flat_tree_entries(right)
-    entries.update(store.flat_tree_entries(left))
+    entries = dict(store.iter_flat_tree_entries(right))
+    entries.update(dict(store.iter_flat_tree_entries(left)))
     entries["merged.txt"] = store.store_blob(b"merged")
 
     merge = store.commit_flat_tree(
@@ -597,8 +597,8 @@ def test_merge_base_is_deterministic_for_criss_cross_history():
     left = store.commit_files({"left.txt": b"left"}, "left", branch="left")
     right = store.commit_files({"right.txt": b"right"}, "right", branch="right")
 
-    left_entries = store.flat_tree_entries(left)
-    left_entries.update(store.flat_tree_entries(right))
+    left_entries = dict(store.iter_flat_tree_entries(left))
+    left_entries.update(dict(store.iter_flat_tree_entries(right)))
     left_entries["left-merge.txt"] = store.store_blob(b"left merge")
     left_merge = store.commit_flat_tree(
         left_entries,
@@ -607,8 +607,8 @@ def test_merge_base_is_deterministic_for_criss_cross_history():
         branch="left",
     )
 
-    right_entries = store.flat_tree_entries(right)
-    right_entries.update(store.flat_tree_entries(left))
+    right_entries = dict(store.iter_flat_tree_entries(right))
+    right_entries.update(dict(store.iter_flat_tree_entries(left)))
     right_entries["right-merge.txt"] = store.store_blob(b"right merge")
     right_merge = store.commit_flat_tree(
         right_entries,
@@ -617,8 +617,8 @@ def test_merge_base_is_deterministic_for_criss_cross_history():
         branch="right",
     )
 
-    assert store.commit_parent_shas(left_merge) == [left, right]
-    assert store.commit_parent_shas(right_merge) == [right, left]
+    assert list(store.iter_commit_parent_shas(left_merge)) == [left, right]
+    assert list(store.iter_commit_parent_shas(right_merge)) == [right, left]
     assert store.ancestor_distances(left_merge)[right] == 1
     assert store.ancestor_distances(right_merge)[left] == 1
     assert store.merge_base("left", "right") == min(left, right)
@@ -654,7 +654,7 @@ def test_branch_operations_track_refs_and_merge_base():
     assert branches["left"].tip_sha == left
     assert branches["left"].parent_branch == "master"
     assert branches["right"].tip_sha == right
-    assert store.commit_parent_shas(left) == [base]
+    assert list(store.iter_commit_parent_shas(left)) == [base]
     assert store.merge_base("left", "right") == base
 
     store.set_current_branch("left")
@@ -733,7 +733,7 @@ def test_revert_commit_creates_inverse_commit():
 
     reverted = store.revert_commit(second)
 
-    assert store.commit_parent_shas(reverted) == [second]
+    assert list(store.iter_commit_parent_shas(reverted)) == [second]
     assert store.read_file("keep.txt") == b"keep"
     assert store.read_file("modify.txt") == b"before"
     assert store.read_file("delete.txt") == b"delete"

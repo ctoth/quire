@@ -10,7 +10,7 @@ from quire.documents import (
     decode_document_batch_bytes,
     document_batch_codec,
     load_document_batch,
-    load_document_batch_dir,
+    iter_document_batch_dir,
     render_document_batch,
 )
 
@@ -137,7 +137,7 @@ def test_load_document_batch_dir_orders_yaml_children_then_items(tmp_path) -> No
         encoding="utf-8",
     )
 
-    loaded = load_document_batch_dir(batches_dir, EXAMPLE_BATCH_SPEC)
+    loaded = list(iter_document_batch_dir(batches_dir, EXAMPLE_BATCH_SPEC))
 
     assert [item.filename for item in loaded] == ["a.yaml#1", "a.yaml#2", "b.yaml#1"]
     assert [item.document.name for item in loaded] == ["alpha", "atom", "beta"]
@@ -248,5 +248,5 @@ def test_quire_documents_exports_batch_api() -> None:
     assert documents.decode_document_batch_bytes is decode_document_batch_bytes
     assert documents.document_batch_codec is document_batch_codec
     assert documents.load_document_batch is load_document_batch
-    assert documents.load_document_batch_dir is load_document_batch_dir
+    assert documents.iter_document_batch_dir is iter_document_batch_dir
     assert documents.render_document_batch is render_document_batch

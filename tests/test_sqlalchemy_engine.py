@@ -814,16 +814,18 @@ def test_vector_cache_create_insert_search_snapshot_and_restore(tmp_path: Path) 
 
     with readonly_session(store_path, schema) as session:
         vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
-        rows = vector_store.similar_entities(
-            model_identity=identity,
-            query_vector=_serialize_float32([0.1, 0.2, 0.31]),
-            k=1,
+        rows = list(
+            vector_store.iter_similar_entities(
+                model_identity=identity,
+                query_vector=_serialize_float32([0.1, 0.2, 0.31]),
+                k=1,
+            )
         )
         snapshot = SqlAlchemyVecSnapshotStore(
             session.session.connection(),
             tuple(schema.vector_caches.values()),
         ).extract()
-        models = SqlAlchemyVecRegistry(session.session.connection()).get_registered_models()
+        models = list(SqlAlchemyVecRegistry(session.session.connection()).iter_registered_models())
 
     assert rows[0]["entity_id"] == "entity:near"
     assert snapshot is not None
@@ -848,10 +850,12 @@ def test_vector_cache_create_insert_search_snapshot_and_restore(tmp_path: Path) 
     assert report.restored == 2
     with readonly_session(restored_path, schema) as session:
         vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
-        rows = vector_store.similar_entities(
-            model_identity=identity,
-            query_vector=_serialize_float32([0.1, 0.2, 0.31]),
-            k=1,
+        rows = list(
+            vector_store.iter_similar_entities(
+                model_identity=identity,
+                query_vector=_serialize_float32([0.1, 0.2, 0.31]),
+                k=1,
+            )
         )
     assert rows[0]["entity_id"] == "entity:near"
 
@@ -900,16 +904,18 @@ def test_vector_cache_can_use_model_registered_dimensions(tmp_path: Path) -> Non
 
     with readonly_session(store_path, schema) as session:
         vector_store = SqlAlchemyVecEntityStore(session.session.connection(), cache)
-        rows = vector_store.similar_entities(
-            model_identity=identity,
-            query_vector=_serialize_float32([0.1, 0.2, 0.31, 0.4]),
-            k=1,
+        rows = list(
+            vector_store.iter_similar_entities(
+                model_identity=identity,
+                query_vector=_serialize_float32([0.1, 0.2, 0.31, 0.4]),
+                k=1,
+            )
         )
         snapshot = SqlAlchemyVecSnapshotStore(
             session.session.connection(),
             tuple(schema.vector_caches.values()),
         ).extract()
-        models = SqlAlchemyVecRegistry(session.session.connection()).get_registered_models()
+        models = list(SqlAlchemyVecRegistry(session.session.connection()).iter_registered_models())
 
     assert rows[0]["entity_id"] == "entity:near"
     assert snapshot is not None

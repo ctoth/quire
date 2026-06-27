@@ -690,7 +690,7 @@ def test_bound_registry_exposes_family_operations_by_attribute_key_and_name() ->
     assert len(commit) == 40
     assert bound.claims.exists("paper") is True
     assert bound.claims.exists("missing") is False
-    assert list(bound.claims.iter()) == ["paper"]
+    assert list(bound.claims.iter_refs()) == ["paper"]
     assert bound.by_key(DemoFamily.CLAIMS).require("paper") == DemoDocument("alpha")
     assert bound.by_name("claims").require_handle("paper").address.require_path() == "claims/paper.yaml"
 
@@ -699,7 +699,7 @@ def test_bound_registry_exposes_family_operations_by_attribute_key_and_name() ->
     assert bound.claims.require("renamed") == DemoDocument("beta")
 
     bound.claims.delete("renamed", message="delete claim")
-    assert list(bound.claims.iter()) == []
+    assert list(bound.claims.iter_refs()) == []
 
 
 def test_bound_family_exposes_address_coercion_render_and_payload() -> None:
@@ -738,7 +738,7 @@ def test_bound_family_pin_freezes_commit_for_iter_and_require() -> None:
     bound.claims.save("other", DemoDocument("beta"), message="save another claim")
 
     assert pinned.commit is not None
-    assert list(pinned.iter()) == ["paper"]
+    assert list(pinned.iter_refs()) == ["paper"]
     assert pinned.exists("paper") is True
     assert pinned.exists("other") is False
     assert pinned.require("paper") == DemoDocument("alpha")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import TypeVar, overload
 
@@ -87,33 +87,33 @@ def load_document(
 
 
 @overload
-def load_document_dir(
+def iter_document_dir(
     directory: TreePath | Path | None,
     document_type: type[TDocument],
-) -> list[LoadedDocument[TDocument]]: ...
+) -> Iterator[LoadedDocument[TDocument]]: ...
 
 
 @overload
-def load_document_dir(
+def iter_document_dir(
     directory: TreePath | Path | None,
     document_type: type[TDocument],
     *,
     wrapper: Callable[[LoadedDocument[TDocument]], TLoaded],
-) -> list[TLoaded]: ...
+) -> Iterator[TLoaded]: ...
 
 
-def load_document_dir(
+def iter_document_dir(
     directory: TreePath | Path | None,
     document_type: type[TDocument],
     *,
     wrapper: Callable[[LoadedDocument[TDocument]], TLoaded] | None = None,
-) -> list[LoadedDocument[TDocument]] | list[TLoaded]:
+) -> Iterator[LoadedDocument[TDocument] | TLoaded]:
     if directory is None:
-        return []
+        return
 
     documents_dir = coerce_tree_path(directory)
     if not documents_dir.is_dir():
-        return []
+        return
 
     store_root = documents_dir.parent if documents_dir.name else documents_dir
     entries = sorted(
@@ -124,10 +124,6 @@ def load_document_dir(
         ),
         key=lambda entry: entry.as_posix(),
     )
-    loaded = [
-        load_document(entry, document_type, store_root=store_root)
-        for entry in entries
-    ]
-    if wrapper is None:
-        return loaded
-    return [wrapper(document) for document in loaded]
+    for entry in entries:
+        loaded = load_document(entry, document_type, store_root=store_root)
+        yield loaded if wrapper is None else wrapper(loaded)

@@ -597,13 +597,21 @@ class GitStore:
         with self._mutation_guard():
             return self._commit(adds=adds, deletes=deletes, message=message, branch=branch, expected_head=expected_head)
 
-    def flat_tree_entries(self, commit: str | None = None) -> dict[str, str]:
+    def iter_flat_tree_entries(self, commit: str | None = None) -> Iterator[tuple[str, str]]:
         tree = self._get_tree(commit)
         if tree is None:
-            return {}
-        entries: dict[str, bytes] = {}
-        self._flatten_tree(tree, "", entries)
-        return {path: sha.decode("ascii") for path, sha in entries.items()}
+            return
+        stack: list[tuple[str, Tree]] = [("", tree)]
+        while stack:
+            current_prefix, current_tree = stack.pop()
+            for entry in reversed(list(current_tree.items())):
+                name = entry.path.decode("utf-8")
+                path = f"{current_prefix}/{name}" if current_prefix else name
+                obj = self._cached_object(entry.sha)
+                if isinstance(obj, Tree):
+                    stack.append((path, obj))
+                elif isinstance(obj, Blob):
+                    yield path, entry.sha.decode("ascii")
 
     def store_blob(self, payload: bytes) -> str:
         with self._mutation_guard():
@@ -762,9 +770,10 @@ class GitStore:
                 created_at=created_at if isinstance(created_at, int) else 0,
             )
 
-    def commit_parent_shas(self, commit: str) -> list[str]:
+    def iter_commit_parent_shas(self, commit: str) -> Iterator[str]:
         commit_obj = self._commit_object(commit.encode("ascii"))
-        return [parent.decode("ascii") for parent in commit_obj.parents]
+        for parent in commit_obj.parents:
+            yield parent.decode("ascii")
 
     def revert_commit(
         self,
@@ -836,7 +845,7 @@ class GitStore:
         while queue:
             current = queue.popleft()
             current_distance = distances[current]
-            for parent_sha in self.commit_parent_shas(current):
+            for parent_sha in self.iter_commit_parent_shas(current):
                 next_distance = current_distance + 1
                 previous = distances.get(parent_sha)
                 if previous is None or next_distance < previous:
@@ -924,24 +933,22 @@ class GitStore:
                 return None
             return note_commit.decode("ascii")
 
-    def log(self, max_count: int = 50, *, branch: str | None = None) -> list[dict[str, object]]:
+    def iter_log(self, max_count: int = 50, *, branch: str | None = None) -> Iterator[dict[str, object]]:
         branch_name = self._resolve_read_branch_name(branch)
         if branch_name is None:
-            return []
+            return
         tip = _ref_get(self._repo.refs, f"refs/heads/{branch_name}".encode())
         if tip is None:
-            return []
-        result: list[dict[str, object]] = []
+            return
         for entry in self._repo.get_walker(include=cast(Any, [tip]), max_entries=max_count):
             commit = entry.commit
-            result.append({
+            yield {
                 "sha": commit.id.decode("ascii"),
                 "message": commit.message.decode("utf-8", errors="replace").strip(),
                 "time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(commit.commit_time)),
                 "author": commit.author.decode("utf-8", errors="replace"),
                 "parents": [parent.decode("ascii") for parent in commit.parents],
-            })
-        return result
+            }
 
     def materialize_worktree(self, *, remove_extra: bool = False) -> None:
         if self._root is None:

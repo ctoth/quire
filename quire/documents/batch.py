@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar
@@ -176,16 +176,16 @@ def load_document_batch(
     )
 
 
-def load_document_batch_dir(
+def iter_document_batch_dir(
     directory: TreePath | Path | None,
     spec: DocumentBatchSpec[TDocument],
-) -> list[LoadedBatchItem[TDocument]]:
+) -> Iterator[LoadedBatchItem[TDocument]]:
     if directory is None:
-        return []
+        return
 
     documents_dir = coerce_tree_path(directory)
     if not documents_dir.is_dir():
-        return []
+        return
 
     store_root = documents_dir.parent if documents_dir.name else documents_dir
     entries = sorted(
@@ -196,10 +196,8 @@ def load_document_batch_dir(
         ),
         key=lambda entry: entry.as_posix(),
     )
-    loaded: list[LoadedBatchItem[TDocument]] = []
     for entry in entries:
-        loaded.extend(load_document_batch(entry, spec, store_root=store_root))
-    return loaded
+        yield from load_document_batch(entry, spec, store_root=store_root)
 
 
 def _batch_item_payload(

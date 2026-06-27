@@ -15,7 +15,7 @@ from quire.documents import (
     encode_json_mapping,
     encode_text_document,
     load_document,
-    load_document_dir,
+    iter_document_dir,
 )
 from quire.documents._paths import _source_label
 from quire.tree_path import FilesystemTreePath
@@ -64,7 +64,7 @@ def test_load_document_dir_loads_direct_yaml_children_deterministically(tmp_path
     (documents_dir / "a.yaml").write_text("name: alpha\nvalue: 1\n", encoding="utf-8")
     (documents_dir / "ignored.txt").write_text("name: ignored\nvalue: 0\n", encoding="utf-8")
 
-    loaded = load_document_dir(documents_dir, ExampleDocument)
+    loaded = list(iter_document_dir(documents_dir, ExampleDocument))
 
     assert [document.filename for document in loaded] == ["a", "b"]
     assert [document.document.name for document in loaded] == ["alpha", "beta"]
