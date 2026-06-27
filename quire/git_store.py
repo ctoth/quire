@@ -486,6 +486,19 @@ class GitStore:
             raise FileNotFoundError(path)
         return obj.data
 
+    def object_at(self, path: str | Path, commit: str | None = None) -> Blob | Tree | None:
+        path = _normalize_path(path)
+        tree = self._get_tree(commit)
+        if tree is None:
+            return None
+        return self._walk_tree(tree, PurePosixPath(path).parts)
+
+    def is_dir(self, path: str | Path, commit: str | None = None) -> bool:
+        return isinstance(self.object_at(path, commit=commit), Tree)
+
+    def is_file(self, path: str | Path, commit: str | None = None) -> bool:
+        return isinstance(self.object_at(path, commit=commit), Blob)
+
     def iter_dir(self, subdir: str | Path, commit: str | None = None) -> Iterator[str]:
         subtree = self._subtree(subdir, commit=commit)
         if subtree is None:
@@ -547,7 +560,7 @@ class GitStore:
         for entry in entries:
             yield (
                 entry.path.decode("utf-8"),
-                bool(entry.mode & 0o040000),
+                isinstance(self._cached_object(entry.sha), Tree),
             )
 
     def commit_files(
@@ -1297,7 +1310,7 @@ class GitStore:
             name = parts[-1]
             entries = entries_by_dir[parent]
             existing = entries.get(name)
-            if existing is not None and existing[0] & 0o040000:
+            if existing is not None and isinstance(self._cached_object(existing[1]), Tree):
                 raise ValueError(f"path conflict at {'/'.join(parts)}")
             entries[name] = (0o100644, sha)
 
@@ -1308,7 +1321,7 @@ class GitStore:
             if delete_entries is None:
                 continue
             existing = delete_entries.get(name)
-            if existing is not None and not existing[0] & 0o040000:
+            if existing is not None and not isinstance(self._cached_object(existing[1]), Tree):
                 delete_entries.pop(name)
 
         root_tree: Tree | None = None
