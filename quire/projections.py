@@ -3,12 +3,17 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, field as dataclass_field, is_dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import msgspec
 
 from quire.charters import CharterField, FamilyCharter
 from quire.hashing import canonical_json_sha256
+from quire.projection_kinds import (
+    ProjectionKind,
+    iter_projection_kinds,
+    register_projection_kind,
+)
 from quire.references import ForeignKeySpec
 
 
@@ -45,6 +50,156 @@ class GraphEdgeProjection:
     foreign_key: str
     index: int | None = None
     metadata: Mapping[str, object] = dataclass_field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class NodeContribution:
+    """One field's contribution to a record's :class:`GraphNodeProjection`.
+
+    ``label`` overrides the node label when not ``None`` (last writer wins, in
+    field order); ``metadata`` entries are merged into the node metadata.
+    """
+
+    label: str | None
+    metadata: Mapping[str, object]
+
+
+@runtime_checkable
+class GraphNodeKind(ProjectionKind, Protocol):
+    """A projection kind contributing to the aggregated graph node of a record."""
+
+    def contribute_node(self, field: CharterField, record: object) -> NodeContribution:
+        ...
+
+
+@runtime_checkable
+class GraphEdgeKind(ProjectionKind, Protocol):
+    """A projection kind emitting graph edges for an applying field."""
+
+    def iter_edges(
+        self,
+        charter: FamilyCharter,
+        record: object,
+        field: CharterField,
+    ) -> Iterator[GraphEdgeProjection]:
+        ...
+
+
+@runtime_checkable
+class ArtifactDependencyKind(ProjectionKind, Protocol):
+    """A projection kind emitting artifact dependencies for an applying field."""
+
+    def iter_dependencies(
+        self,
+        charter: FamilyCharter,
+        record: object,
+        field: CharterField,
+        source: ArtifactIdentity,
+    ) -> Iterator[ArtifactDependency]:
+        ...
+
+
+class _GraphNodeKind:
+    name = "graph-node"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.graph_node_label or field.graph_metadata
+
+    def contribute_node(self, field: CharterField, record: object) -> NodeContribution:
+        value = getattr(record, field.name, None)
+        label = (
+            str(value)
+            if field.graph_node_label and value is not None
+            else None
+        )
+        metadata: dict[str, object] = {}
+        if field.graph_metadata and value is not None:
+            metadata[field.document_name or field.name] = value
+        return NodeContribution(label=label, metadata=metadata)
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {
+            "graph_node_label": field.graph_node_label,
+            "graph_metadata": field.graph_metadata,
+        }
+
+
+class _GraphEdgeKind:
+    name = "graph-edge"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.graph_edge
+
+    def iter_edges(
+        self,
+        charter: FamilyCharter,
+        record: object,
+        field: CharterField,
+    ) -> Iterator[GraphEdgeProjection]:
+        foreign_keys = _field_foreign_keys(field)
+        if not foreign_keys:
+            raise ValueError(
+                f"{charter.family.name}.{field.name}: graph edge requires a foreign key"
+            )
+        value = getattr(record, field.name, None)
+        for foreign_key in foreign_keys:
+            source = _graph_edge_source(charter, record, field, foreign_key)
+            edge_type = field.graph_edge_kind or foreign_key.name
+            for dependency in _dependency_values(source, field, foreign_key, value):
+                yield GraphEdgeProjection(
+                    source=dependency.source,
+                    target_family=dependency.target_family,
+                    target_identity=dependency.target_identity,
+                    edge_type=edge_type,
+                    field=dependency.field,
+                    foreign_key=dependency.foreign_key,
+                    index=dependency.index,
+                    metadata={
+                        key: item
+                        for key, item in field.metadata.items()
+                        if isinstance(key, str)
+                    },
+                )
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {
+            "graph_edge": field.graph_edge,
+            "graph_edge_kind": field.graph_edge_kind,
+            "graph_edge_source_field": field.graph_edge_source_field,
+            "graph_edge_source_family": field.graph_edge_source_family,
+        }
+
+
+class _ArtifactDependencyKind:
+    name = "artifact-dependency"
+
+    def applies(self, field: CharterField) -> bool:
+        return field.artifact_dependency
+
+    def iter_dependencies(
+        self,
+        charter: FamilyCharter,
+        record: object,
+        field: CharterField,
+        source: ArtifactIdentity,
+    ) -> Iterator[ArtifactDependency]:
+        foreign_keys = _field_foreign_keys(field)
+        if not foreign_keys:
+            raise ValueError(
+                f"{charter.family.name}.{field.name}: artifact dependency "
+                "requires a foreign key"
+            )
+        value = getattr(record, field.name, None)
+        for foreign_key in foreign_keys:
+            yield from _dependency_values(source, field, foreign_key, value)
+
+    def schema_payload(self, field: CharterField) -> Mapping[str, object]:
+        return {"artifact_dependency": field.artifact_dependency}
+
+
+register_projection_kind(_GraphNodeKind())
+register_projection_kind(_GraphEdgeKind())
+register_projection_kind(_ArtifactDependencyKind())
 
 
 def artifact_identity(charter: FamilyCharter, record: object) -> ArtifactIdentity:
@@ -110,18 +265,14 @@ def iter_artifact_dependencies(
     record: object,
 ) -> Iterator[ArtifactDependency]:
     source = artifact_identity(charter, record)
+    kinds = [
+        kind for kind in iter_projection_kinds()
+        if isinstance(kind, ArtifactDependencyKind)
+    ]
     for field in charter.fields:
-        if not field.artifact_dependency:
-            continue
-        foreign_keys = _field_foreign_keys(field)
-        if not foreign_keys:
-            raise ValueError(
-                f"{charter.family.name}.{field.name}: artifact dependency "
-                "requires a foreign key"
-            )
-        value = getattr(record, field.name, None)
-        for foreign_key in foreign_keys:
-            yield from _dependency_values(source, field, foreign_key, value)
+        for kind in kinds:
+            if kind.applies(field):
+                yield from kind.iter_dependencies(charter, record, field, source)
 
 
 def graph_node_projection(
@@ -131,12 +282,18 @@ def graph_node_projection(
     identity = artifact_identity(charter, record)
     label = identity.identity
     metadata: dict[str, object] = {}
+    kinds = [
+        kind for kind in iter_projection_kinds()
+        if isinstance(kind, GraphNodeKind)
+    ]
     for field in charter.fields:
-        value = getattr(record, field.name, None)
-        if field.graph_node_label and value is not None:
-            label = str(value)
-        if field.graph_metadata and value is not None:
-            metadata[field.document_name or field.name] = value
+        for kind in kinds:
+            if not kind.applies(field):
+                continue
+            contribution = kind.contribute_node(field, record)
+            if contribution.label is not None:
+                label = contribution.label
+            metadata.update(contribution.metadata)
     return GraphNodeProjection(identity=identity, label=label, metadata=metadata)
 
 
@@ -144,33 +301,14 @@ def iter_graph_edges(
     charter: FamilyCharter,
     record: object,
 ) -> Iterator[GraphEdgeProjection]:
+    kinds = [
+        kind for kind in iter_projection_kinds()
+        if isinstance(kind, GraphEdgeKind)
+    ]
     for field in charter.fields:
-        if not field.graph_edge:
-            continue
-        foreign_keys = _field_foreign_keys(field)
-        if not foreign_keys:
-            raise ValueError(
-                f"{charter.family.name}.{field.name}: graph edge requires a foreign key"
-            )
-        value = getattr(record, field.name, None)
-        for foreign_key in foreign_keys:
-            source = _graph_edge_source(charter, record, field, foreign_key)
-            edge_type = field.graph_edge_kind or foreign_key.name
-            for dependency in _dependency_values(source, field, foreign_key, value):
-                yield GraphEdgeProjection(
-                    source=dependency.source,
-                    target_family=dependency.target_family,
-                    target_identity=dependency.target_identity,
-                    edge_type=edge_type,
-                    field=dependency.field,
-                    foreign_key=dependency.foreign_key,
-                    index=dependency.index,
-                    metadata={
-                        key: item
-                        for key, item in field.metadata.items()
-                        if isinstance(key, str)
-                    },
-                )
+        for kind in kinds:
+            if kind.applies(field):
+                yield from kind.iter_edges(charter, record, field)
 
 
 def _field_foreign_keys(field: CharterField) -> tuple[ForeignKeySpec, ...]:
