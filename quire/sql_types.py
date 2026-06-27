@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from types import UnionType
-from typing import Any, Union, cast, get_args, get_origin
+from typing import Union, cast, get_args, get_origin
 
 from quire.schema_ir import python_type_path
 
