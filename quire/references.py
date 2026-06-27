@@ -48,10 +48,6 @@ class ReferenceResolution:
     def ambiguous(self) -> bool:
         return self.resolved_id is None and bool(self.ambiguous_candidates)
 
-    @property
-    def target_kind(self) -> str:
-        return self.target_family
-
 
 @dataclass(frozen=True)
 class ForeignKeySpec:
@@ -190,53 +186,21 @@ ReferenceKeySpec: TypeAlias = "ReferenceKey | ReferenceKeyExtractor[TRecord]"
 @dataclass(frozen=True)
 class ReferenceKey:
     field_path: str | None = None
-    template: str | None = None
-    from_field: str | None = None
 
     @classmethod
     def field(cls, field_path: str) -> ReferenceKey:
         _validate_field_path(field_path)
         return cls(field_path=field_path)
 
-    @classmethod
-    def format(cls, template: str, *, from_field: str) -> ReferenceKey:
-        if not template:
-            raise ValueError("reference key format template cannot be empty")
-        _validate_field_path(from_field)
-        return cls(template=template, from_field=from_field)
-
     def __call__(self, record: object) -> tuple[str, ...]:
         if self.field_path is not None:
             return _string_values(_field_values(record, self.field_path))
-        if self.template is not None and self.from_field is not None:
-            return tuple(
-                value
-                for item in _field_values(record, self.from_field)
-                if (value := self._format_item(item)) is not None
-            )
         raise ValueError("invalid reference key declaration")
 
     def contract_body(self) -> dict[str, str]:
         if self.field_path is not None:
             return {"kind": "field", "field": self.field_path}
-        if self.template is not None and self.from_field is not None:
-            return {
-                "kind": "format",
-                "template": self.template,
-                "from_field": self.from_field,
-            }
         raise ValueError("invalid reference key declaration")
-
-    def _format_item(self, item: object) -> str | None:
-        assert self.template is not None
-        values = _format_mapping(item)
-        try:
-            formatted = self.template.format_map(values)
-        except KeyError as exc:
-            raise ValueError(f"reference key format field is missing: {exc.args[0]!r}") from exc
-        if not formatted:
-            return None
-        return formatted
 
 
 @dataclass(frozen=True)
@@ -290,9 +254,6 @@ class FamilyReferenceIndex(Generic[TRecord]):
 
     def exists(self, reference: object) -> bool:
         return self.resolve_id(reference) is not None
-
-    def ids(self) -> tuple[str, ...]:
-        return tuple(self.records_by_id)
 
     def resolve(
         self,
@@ -396,17 +357,6 @@ def _validate_field_path(field_path: str) -> None:
 
 def _string_values(values: Iterable[object]) -> tuple[str, ...]:
     return tuple(value for value in values if isinstance(value, str) and value)
-
-
-def _format_mapping(item: object) -> Mapping[str, object]:
-    if isinstance(item, Mapping):
-        return item
-    names = tuple(
-        name
-        for name in dir(item)
-        if not name.startswith("_") and not callable(getattr(item, name))
-    )
-    return MappingProxyType({name: getattr(item, name) for name in names})
 
 
 def _key_values(key: ReferenceKeySpec[TRecord], record: TRecord) -> tuple[str, ...]:

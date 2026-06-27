@@ -103,7 +103,7 @@ def test_reference_index_reports_ambiguous_keys_without_guessing() -> None:
     assert resolution is not None
     assert not resolution.found
     assert resolution.ambiguous
-    assert resolution.target_kind == "concept"
+    assert resolution.target_family == "concept"
     assert resolution.ambiguous_candidates == ("concept:1", "concept:2")
 
 
@@ -118,7 +118,7 @@ def test_reference_index_resolve_id_signals_ambiguous_keys() -> None:
     assert index.exists("F0") is False
 
 
-def test_family_reference_index_resolves_declarative_field_and_format_keys() -> None:
+def test_family_reference_index_resolves_declarative_field_keys() -> None:
     records = (
         RichRecord(
             artifact_id="claim:1",
@@ -140,14 +140,13 @@ def test_family_reference_index_resolves_declarative_field_and_format_keys() -> 
         keys=(
             ReferenceKey.field("artifact_id"),
             ReferenceKey.field("logical_ids[].value"),
-            ReferenceKey.format("{namespace}:{value}", from_field="logical_ids[]"),
             _rich_aliases,
         ),
     )
 
     assert index.require_id("claim:1") == "claim:1"
     assert index.require_id("c1") == "claim:1"
-    assert index.require_id("paper:main") == "claim:1"
+    assert index.require_id("main") == "claim:1"
     assert index.resolve_id("alpha") == "claim:1"
     assert index.resolve_id("missing") is None
     with pytest.raises(MissingReferenceError) as exc_info:
@@ -163,12 +162,12 @@ def test_family_reference_index_resolve_accepts_match_kind() -> None:
     index = FamilyReferenceIndex.from_records(
         (record,),
         artifact_id=lambda item: item.artifact_id,
-        keys=(ReferenceKey.format("{namespace}:{value}", from_field="logical_ids[]"),),
+        keys=(ReferenceKey.field("logical_ids[].value"),),
         family="claim",
     )
 
     resolution = index.resolve(
-        "paper:c1",
+        "c1",
         match_kind=lambda requested, resolved_id, resolved_record: (
             "logical_id",
             f"{requested}->{resolved_id}:{resolved_record.artifact_id if resolved_record else ''}",
@@ -178,7 +177,7 @@ def test_family_reference_index_resolve_accepts_match_kind() -> None:
     assert resolution is not None
     assert resolution.resolved_id == "claim:1"
     assert resolution.matched_by == "logical_id"
-    assert resolution.matched_text == "paper:c1->claim:1:claim:1"
+    assert resolution.matched_text == "c1->claim:1:claim:1"
 
 
 def test_reference_key_rejects_malformed_field_paths_at_declaration_time() -> None:
