@@ -32,6 +32,8 @@ from quire.charters import (
     FamilyCharter,
     FamilyModel,
     charter_catalog,
+    charter_field_foreign_keys,
+    registry_from_charters,
 )
 from quire.documents.batch import DocumentBatchCodec, DocumentBatchSpec, document_batch_codec
 from quire.derived_store import (
@@ -237,6 +239,7 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_json_sha256",
     "charter_catalog",
+    "charter_field_foreign_keys",
     "check_contract_manifest",
     "checkpoint_and_close_sqlite",
     "coerce_tree_path",
@@ -267,6 +270,7 @@ __all__ = [
     "read_derived_store_schema_version",
     "read_git_note",
     "read_dependency_pins",
+    "registry_from_charters",
     "run_transition",
     "run_transition_batch",
     "single_field_ref_type",

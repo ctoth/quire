@@ -346,20 +346,20 @@ def _vector_caches_from_catalog(catalog: SchemaCatalog) -> dict[str, SchemaVecto
     caches: dict[str, SchemaVectorCache] = {}
     for schema_object in catalog.objects:
         field_names = {field.name for field in schema_object.fields}
-        for cache in schema_object.vector_caches:
+        for vector_cache in schema_object.vector_caches:
             missing = {
-                cache.entity_id_field,
-                cache.source_seq_field,
-                cache.source_content_hash_field,
+                vector_cache.entity_id_field,
+                vector_cache.source_seq_field,
+                vector_cache.source_content_hash_field,
             } - field_names
             if missing:
                 joined = ", ".join(sorted(missing))
                 raise ValueError(
-                    f"Vector cache {cache.name!r} references unknown field(s): {joined}."
+                    f"Vector cache {vector_cache.name!r} references unknown field(s): {joined}."
                 )
-            if cache.name in caches:
-                raise ValueError(f"duplicate vector cache name {cache.name!r}.")
-            caches[cache.name] = cache
+            if vector_cache.name in caches:
+                raise ValueError(f"duplicate vector cache name {vector_cache.name!r}.")
+            caches[vector_cache.name] = vector_cache
     return caches
 
 

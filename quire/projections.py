@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, field as dataclass_field, is_dataclass
 from enum import Enum
-from typing import Any
 
 import msgspec
 
-from quire.charters import CharterField, FamilyCharter
+from quire.charters import CharterField, FamilyCharter, charter_field_foreign_keys
 from quire.hashing import canonical_json_sha256
 from quire.references import ForeignKeySpec
 
@@ -113,7 +112,7 @@ def iter_artifact_dependencies(
     for field in charter.fields:
         if not field.artifact_dependency:
             continue
-        foreign_keys = _field_foreign_keys(field)
+        foreign_keys = charter_field_foreign_keys(field)
         if not foreign_keys:
             raise ValueError(
                 f"{charter.family.name}.{field.name}: artifact dependency "
@@ -147,7 +146,7 @@ def iter_graph_edges(
     for field in charter.fields:
         if not field.graph_edge:
             continue
-        foreign_keys = _field_foreign_keys(field)
+        foreign_keys = charter_field_foreign_keys(field)
         if not foreign_keys:
             raise ValueError(
                 f"{charter.family.name}.{field.name}: graph edge requires a foreign key"
@@ -171,14 +170,6 @@ def iter_graph_edges(
                         if isinstance(key, str)
                     },
                 )
-
-
-def _field_foreign_keys(field: CharterField) -> tuple[ForeignKeySpec, ...]:
-    if field.foreign_keys:
-        return field.foreign_keys
-    if field.foreign_key is not None:
-        return (field.foreign_key,)
-    return ()
 
 
 def _graph_edge_source(
