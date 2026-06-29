@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 
 import msgspec
 
-from quire.charters import CharterField, FamilyCharter
+from quire.charters import CharterField, FamilyCharter, charter_field_foreign_keys
 from quire.canonical import canonical_json_sha256
 from quire.projection_kinds import (
     ProjectionKind,
@@ -167,7 +167,7 @@ class _GraphEdgeKind:
         record: object,
         field: CharterField,
     ) -> Iterator[GraphEdgeProjection]:
-        foreign_keys = _field_foreign_keys(field)
+        foreign_keys = charter_field_foreign_keys(field)
         if not foreign_keys:
             raise ValueError(
                 f"{charter.family.name}.{field.name}: graph edge requires a foreign key"
@@ -214,7 +214,7 @@ class _ArtifactDependencyKind:
         field: CharterField,
         source: ArtifactIdentity,
     ) -> Iterator[ArtifactDependency]:
-        foreign_keys = _field_foreign_keys(field)
+        foreign_keys = charter_field_foreign_keys(field)
         if not foreign_keys:
             raise ValueError(
                 f"{charter.family.name}.{field.name}: artifact dependency "
@@ -476,14 +476,6 @@ def iter_graph_hyperedges(
         for kind in kinds:
             if kind.applies(field):
                 yield from kind.iter_hyperedges(charter, record, field)
-
-
-def _field_foreign_keys(field: CharterField) -> tuple[ForeignKeySpec, ...]:
-    if field.foreign_keys:
-        return field.foreign_keys
-    if field.foreign_key is not None:
-        return (field.foreign_key,)
-    return ()
 
 
 def _graph_edge_source(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import re
 from typing import Any, Literal, Optional, cast
@@ -18,7 +18,7 @@ from quire.documents.codecs import (
 )
 from quire.canonical import canonical_json_sha256
 from quire.documents.batch import DocumentBatchSpec
-from quire.families import FamilyDefinition
+from quire.families import FamilyDefinition, FamilyRegistry
 from quire.lifecycle import (
     FamilyState,
     FamilyTransition,
@@ -463,6 +463,65 @@ def charter_catalog(
     return SchemaCatalog(
         objects=tuple(charter.to_schema_object() for charter in charters),
         metadata={} if metadata is None else metadata,
+    )
+
+
+def charter_field_foreign_keys(field: CharterField) -> tuple[ForeignKeySpec, ...]:
+    """Return the foreign-key specs declared on a single charter field.
+
+    ``CharterField.foreign_key`` (one spec) and ``CharterField.foreign_keys``
+    (a tuple) are mutually exclusive (enforced in ``CharterField.__post_init__``);
+    this collapses both spellings to the one canonical tuple form so callers do
+    not re-derive the rule. It is the public spelling of the rule previously
+    duplicated privately across the projection and SQL-schema builders.
+    """
+    if field.foreign_keys:
+        return field.foreign_keys
+    if field.foreign_key is not None:
+        return (field.foreign_key,)
+    return ()
+
+
+def registry_from_charters(
+    *charters: FamilyCharter,
+    name: str,
+    contract_version: VersionId,
+    validate_foreign_keys: bool = True,
+) -> FamilyRegistry[Any, Any]:
+    """Build a :class:`FamilyRegistry` by reflecting over family charters.
+
+    Each charter's field-level foreign-key annotations
+    (:func:`charter_field_foreign_keys`) are lifted onto the owning
+    :class:`FamilyDefinition.foreign_keys`, so the registry's foreign-key graph
+    is *derived* from the charter field annotations rather than hand-authored as
+    a separate literal table. Any foreign keys already declared at family level
+    (``@charter(family_foreign_keys=...)``) are preserved and the field-level
+    specs are appended.
+
+    ``FamilyRegistry.__post_init__`` validates the resulting graph (every spec's
+    ``source_family`` must match its owning family and every ``target_family``
+    must be a registered family), so a misdirected charter annotation fails at
+    registry construction.
+    """
+    definitions: list[FamilyDefinition[Any, Any, Any, Any]] = []
+    for charter in charters:
+        field_specs = tuple(
+            spec
+            for charter_field_ in charter.fields
+            for spec in charter_field_foreign_keys(charter_field_)
+        )
+        family = charter.family
+        if field_specs:
+            family = replace(
+                family,
+                foreign_keys=family.foreign_keys + field_specs,
+            )
+        definitions.append(family)
+    return FamilyRegistry(
+        name=name,
+        contract_version=contract_version,
+        families=tuple(definitions),
+        validate_foreign_keys=validate_foreign_keys,
     )
 
 
