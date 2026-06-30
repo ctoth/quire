@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
 from quire.charters import (
@@ -1257,3 +1257,91 @@ def _foreign_key(
         source_field=source_field,
         target_family=target_family,
     )
+
+def _slug_fk_schema() -> Any:
+    version = VersionId("2026.05.18", allow_placeholder=False)
+    sources = FamilyDefinition(
+        key="slug_sources",
+        name="slug_sources",
+        contract_version=version,
+        artifact_family=ArtifactFamily(
+            name="slug_sources",
+            contract_version=version,
+            doc_type=SlugSource,
+            placement=FlatYamlPlacement("slug_sources", str),
+        ),
+        identity_field="slug",
+    )
+    claims = FamilyDefinition(
+        key="slug_claims",
+        name="slug_claims",
+        contract_version=version,
+        artifact_family=ArtifactFamily(
+            name="slug_claims",
+            contract_version=version,
+            doc_type=SlugClaim,
+            placement=FlatYamlPlacement("slug_claims", str),
+        ),
+        identity_field="id",
+    )
+    return build_sqlalchemy_schema(
+        charter_catalog(
+            FamilyCharter(
+                family=sources,
+                model=SlugSource,
+                fields=(
+                    CharterField("slug", str, primary_key=True, nullable=False),
+                    CharterField("title", str, nullable=False),
+                ),
+            ),
+            FamilyCharter(
+                family=claims,
+                model=SlugClaim,
+                fields=(
+                    CharterField("id", str, primary_key=True, nullable=False),
+                    CharterField(
+                        "source_slug",
+                        str,
+                        nullable=False,
+                        foreign_key=ForeignKeySpec(
+                            name="slug_claim_source",
+                            contract_version=version,
+                            source_family="slug_claims",
+                            source_field="source_slug",
+                            target_family="slug_sources",
+                            target_field="slug",
+                        ),
+                    ),
+                    CharterField("text", str, nullable=False),
+                ),
+            ),
+        )
+    )
+
+
+def test_writable_session_enforces_foreign_keys_by_default(tmp_path: Path) -> None:
+    schema = _slug_fk_schema()
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+    with pytest.raises(IntegrityError):
+        with writable_session(store_path, schema) as session:
+            # Dangling FK: no slug_sources row named "missing".
+            session.add(SlugClaim("claim:1", "missing", "Claim text"))
+            session.commit()
+
+
+def test_writable_session_advisory_foreign_keys_quarantine(tmp_path: Path) -> None:
+    """enforce_foreign_keys=False keeps the FK advisory: a dangling ref inserts."""
+    schema = _slug_fk_schema()
+    store_path = tmp_path / "derived.sqlite"
+    create_sqlalchemy_store(store_path, schema)
+    with writable_session(store_path, schema, enforce_foreign_keys=False) as session:
+        session.add(SlugClaim("claim:1", "missing", "Claim text"))
+        session.commit()
+
+    # The reader opens with enforcement on; SELECT is unaffected and the
+    # dangling-but-stored row is visible (render policy decides what to do).
+    with readonly_session(store_path, schema) as session:
+        claim = session.get(SlugClaim, "claim:1")
+        assert claim is not None
+        assert claim.source_slug == "missing"
