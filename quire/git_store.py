@@ -409,6 +409,19 @@ class GitStore:
         return HeadBoundTransaction(self, branch)
 
     @contextmanager
+    def mutation_guard(self) -> Iterator[None]:
+        """Public re-entrant guard for a sequence of repository mutations.
+
+        Holds the store's process/file mutation lock for the duration of the
+        ``with`` block (re-entrant within a single store instance), so callers
+        outside the store can bracket a multi-step write without reaching for the
+        private guard.
+        """
+
+        with self._mutation_guard():
+            yield
+
+    @contextmanager
     def _mutation_guard(self) -> Iterator[None]:
         with self._mutation_lock:
             if self._mutation_depth > 0:
