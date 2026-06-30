@@ -200,3 +200,29 @@ def test_json_blob_sqlalchemy_round_trips_none_value(tmp_path: Path) -> None:
 
     assert record is not None
     assert record.items is None
+
+
+def test_json_struct_default_factory_serializes_in_catalog(tmp_path: Path) -> None:
+    """A json-boundary field whose default is a struct must not break the
+    schema catalog payload (which is canonicalized to JSON for hashing and
+    persisted via json.dumps). Regression for charter-derived schemas over
+    families that carry a msgspec.Struct default_factory on a json field."""
+
+    schema = build_sqlalchemy_schema(
+        charter_catalog(
+            _charter(
+                CharterField("id", str, primary_key=True, nullable=False),
+                CharterField(
+                    "decision",
+                    Inner,
+                    nullable=False,
+                    default=Inner(value=0),
+                    parse_boundary="json",
+                ),
+            )
+        )
+    )
+    # Catalog payload must be JSON-serializable (this is what create stores).
+    assert isinstance(schema.catalog_hash, str)
+    # create_sqlalchemy_store writes the catalog via json.dumps; must not raise.
+    create_sqlalchemy_store(tmp_path / "derived.sqlite", schema)

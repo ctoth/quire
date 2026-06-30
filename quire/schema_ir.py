@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from types import UnionType
 from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
+import msgspec
+
 from quire.documents.batch import DocumentBatchSpec
 from quire.lifecycle import FamilyState, FamilyTransition
 from quire.projection_kinds import iter_projection_kinds
@@ -103,7 +105,7 @@ class SchemaField:
         return {
             "canonical_only": self.canonical_only,
             "contract_version": self.contract_version,
-            "default": self.default,
+            "default": _default_payload(self.default),
             "default_sql": self.default_sql,
             "document": self.document,
             "document_name": self.document_name,
@@ -327,6 +329,22 @@ def _payload(value: object) -> object:
     if callable(payload):
         return payload()
     return value
+
+
+def _default_payload(value: object) -> object:
+    """Render a charter field default into JSON-serializable builtins.
+
+    ``CharterField.default`` may be a complex object (e.g. a ``msgspec.Struct``
+    produced by a field ``default_factory``) because the same value also drives
+    document regeneration. The schema catalog, however, is canonicalized to JSON
+    for hashing and persistence, so the payload representation must be builtins.
+    ``msgspec.to_builtins`` leaves JSON-native scalars/lists/dicts unchanged
+    (no catalog-hash churn) and lowers structs/enums to builtins.
+    """
+
+    if value is None:
+        return None
+    return msgspec.to_builtins(value)
 
 
 def _sort_by_name(items: Sequence[Any]) -> tuple[Any, ...]:
