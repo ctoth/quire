@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from dulwich.index import build_index_from_tree
 from dulwich.graph import find_merge_base
-from dulwich.objects import Blob, Commit, Tree
+from dulwich.objects import Blob, Commit, ObjectID, Tree
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
 
 from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
@@ -693,7 +693,7 @@ class GitStore:
             commit.commit_timezone = 0
             commit.author_timezone = 0
             commit.parents = [
-                parent if isinstance(parent, bytes) else parent.encode("ascii")
+                ObjectID(parent if isinstance(parent, bytes) else parent.encode("ascii"))
                 for parent in parents
             ]
             self._repo.object_store.add_object(commit)
@@ -1161,11 +1161,11 @@ class GitStore:
             _assert_ref_equals(self._repo.refs, branch_name, branch_ref, expected_head.encode("ascii"))
         if tip_sha is None:
             base_tree = None
-            parents: list[bytes] = []
+            parents: list[ObjectID] = []
         else:
             parent_commit = self._commit_object(tip_sha)
             base_tree = self._tree_object(parent_commit.tree)
-            parents = [tip_sha]
+            parents = [ObjectID(tip_sha)]
 
         add_blobs: dict[tuple[str, ...], Blob] = {}
         for path, content in adds.items():
