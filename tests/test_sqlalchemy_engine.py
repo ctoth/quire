@@ -1259,7 +1259,7 @@ def _foreign_key(
     )
 
 def _slug_fk_schema() -> Any:
-    version = VersionId("2026.05.18", allow_placeholder=False)
+    version = contract_version("2026.05.18")
     sources = FamilyDefinition(
         key="slug_sources",
         name="slug_sources",

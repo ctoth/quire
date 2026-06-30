@@ -26,8 +26,8 @@ from quire.references import ForeignKeySpec
 from quire.versions import VersionId
 
 
-_VERSION = VersionId("2026.06.29", allow_placeholder=False)
-_FK_VERSION = VersionId("2026.06.29", allow_placeholder=False)
+_VERSION = VersionId("2026.06.29")
+_FK_VERSION = VersionId("2026.06.29")
 
 
 @charter(
