@@ -128,8 +128,26 @@ def validate_sqlalchemy_store(path: str | PathLike[str], schema: SqlAlchemySchem
 def writable_session(
     path: str | PathLike[str],
     schema: SqlAlchemySchema,
+    *,
+    enforce_foreign_keys: bool = True,
 ) -> Iterator[DerivedSession]:
-    engine = _engine(Path(path), readonly=False, load_vector=schema.has_vector_caches)
+    """Open a writable session over a derived store.
+
+    ``enforce_foreign_keys=False`` writes with ``PRAGMA foreign_keys = OFF`` so
+    the schema's foreign keys are *advisory* for the duration of the write: a row
+    that references a not-yet-present (or deliberately quarantined) parent still
+    inserts rather than raising ``IntegrityError``. The reader opens with
+    enforcement on; ``PRAGMA foreign_keys`` only affects mutations, not ``SELECT``.
+    Consumers that need a quarantine-on-dangling-ref build (rather than an
+    abort-on-dangling-ref build) pass ``False`` here.
+    """
+
+    engine = _engine(
+        Path(path),
+        readonly=False,
+        load_vector=schema.has_vector_caches,
+        enforce_foreign_keys=enforce_foreign_keys,
+    )
     session = Session(engine)
     try:
         yield DerivedSession(session=session, schema=schema)
@@ -208,7 +226,13 @@ def search_fts_index(
     )
 
 
-def _engine(path: Path, *, readonly: bool, load_vector: bool = False) -> Engine:
+def _engine(
+    path: Path,
+    *,
+    readonly: bool,
+    load_vector: bool = False,
+    enforce_foreign_keys: bool = True,
+) -> Engine:
     engine = create_engine(_sqlite_url(path), future=True)
 
     @event.listens_for(engine, "connect")
@@ -216,7 +240,10 @@ def _engine(path: Path, *, readonly: bool, load_vector: bool = False) -> Engine:
         cursor = dbapi_connection.cursor()
         try:
             cursor.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
-            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute(
+                "PRAGMA foreign_keys = "
+                + ("ON" if enforce_foreign_keys else "OFF")
+            )
             if load_vector:
                 from quire.sqlite_vec_store import load_sqlite_vec_extension
 
