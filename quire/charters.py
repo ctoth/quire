@@ -16,6 +16,7 @@ from quire.documents.codecs import (
     encode_document,
     render_document,
 )
+from quire.artifacts import ArtifactFamily
 from quire.documents.batch import DocumentBatchSpec
 from quire.families import FamilyDefinition, FamilyRegistry
 from quire.hashing import canonical_json_sha256
@@ -539,18 +540,51 @@ def registry_from_charters(
             for charter_field_ in charter.fields
             for spec in charter_field_foreign_keys(charter_field_)
         )
-        family = charter.family
-        if field_specs:
-            family = replace(
-                family,
-                foreign_keys=family.foreign_keys + field_specs,
-            )
+        family = replace(
+            charter.family,
+            foreign_keys=charter.family.foreign_keys + field_specs,
+            artifact_family=_storage_complete_artifact_family(
+                charter.family.artifact_family, charter.document_codec()
+            ),
+        )
         definitions.append(family)
     return FamilyRegistry(
         name=name,
         contract_version=contract_version,
         families=tuple(definitions),
         validate_foreign_keys=validate_foreign_keys,
+    )
+
+
+def _storage_complete_artifact_family(
+    artifact_family: ArtifactFamily[Any, Any, Any],
+    codec: DocumentCodec,
+) -> ArtifactFamily[Any, Any, Any]:
+    """Attach a charter's document codec to its artifact family.
+
+    A charter's authored document (with its json-blob fields) round-trips only
+    through that charter's :meth:`FamilyCharter.document_codec`. A bound
+    multi-family ``DocumentFamilyStore`` carries a single default codec, so the
+    per-family codec must live on the family itself for the store to encode and
+    decode each family's documents. This wires the codec onto the artifact
+    family's per-family hooks, which the store prefers over its default codec.
+    """
+
+    doc_type = artifact_family.doc_type
+
+    def coerce_payload(payload: object, source: str) -> Any:
+        return codec.convert(payload, doc_type, source=source)
+
+    def decode_bytes(raw: bytes, source: str) -> Any:
+        return codec.decode(raw, doc_type, source=source)
+
+    return replace(
+        artifact_family,
+        coerce_payload=coerce_payload,
+        decode_bytes=decode_bytes,
+        encode_document=codec.encode,
+        render_document=codec.render,
+        document_payload=codec.payload,
     )
 
 
