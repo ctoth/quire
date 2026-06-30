@@ -9,6 +9,7 @@ on: a foreign key declared with ``charter_field(foreign_key=...)`` (or
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated, cast
 
 import pytest
@@ -19,6 +20,8 @@ from quire.charters import (
     charter_field_foreign_keys,
     registry_from_charters,
 )
+from quire.family_store import DocumentFamilyStore
+from quire.git_store import GitStore
 from quire.references import ForeignKeySpec
 from quire.versions import VersionId
 
@@ -79,6 +82,23 @@ class Gadget(CharterDoc):
     ] = ()
 
 
+@charter(
+    key="blob",
+    name="blob",
+    contract_version="2026.06.29",
+    placement="blobs",
+    identity_field="blob_id",
+)
+class Blob(CharterDoc):
+    blob_id: str
+    payload: Annotated[tuple[str, ...], charter_field(json=True)] = ()
+
+
+@dataclass(frozen=True)
+class _Owner:
+    branch: str = "master"
+
+
 def _charter(model: type[CharterDoc]) -> FamilyCharter:
     return cast("FamilyCharter", model.__charter__)
 
@@ -118,6 +138,26 @@ def test_registry_lifts_field_foreign_keys_onto_definition() -> None:
     assert related.source_field == "related_widgets[]"
     assert related.target_family == "widget"
     assert related.many is True
+
+
+def test_registry_families_round_trip_through_a_bound_store() -> None:
+    # A bound multi-family DocumentFamilyStore carries one default codec; the
+    # registry must make each family storage-complete (its charter document codec
+    # wired onto the artifact family) so an authored document with a json-blob
+    # field round-trips through save/load.
+    registry = registry_from_charters(
+        _charter(Blob),
+        name="derivation",
+        contract_version=_VERSION,
+    )
+    store: DocumentFamilyStore[object] = DocumentFamilyStore[object](
+        owner=_Owner(), backend=GitStore.init_memory()
+    )
+    bound = registry.bind(_Owner(), store)
+    blob = Blob(blob_id="b1", payload=("a", "b"))
+    bound.blob.save("b1", blob, message="author blob")
+    loaded = bound.blob.load("b1")
+    assert loaded == blob
 
 
 def test_registry_rejects_foreign_key_to_unregistered_family() -> None:
