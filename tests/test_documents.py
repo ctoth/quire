@@ -10,6 +10,7 @@ from quire.documents import (
     DocumentSchemaError,
     DocumentStruct,
     decode_document_bytes,
+    decode_json_document_bytes,
     decode_json_mapping,
     decode_text_document,
     encode_json_mapping,
@@ -41,6 +42,34 @@ def test_decode_document_bytes_is_strict():
             b"name: demo\nvalue: 3\nextra: nope\n",
             ExampleDocument,
             source="example.yaml",
+        )
+
+
+def test_decode_json_document_bytes_decodes_strict_typed_document():
+    document = decode_json_document_bytes(
+        b'{"name":"demo","value":3}',
+        ExampleDocument,
+        source="example.json",
+    )
+
+    assert document == ExampleDocument(name="demo", value=3)
+
+
+def test_decode_json_document_bytes_rejects_unknown_fields():
+    with pytest.raises(DocumentSchemaError, match="extra"):
+        decode_json_document_bytes(
+            b'{"name":"demo","value":3,"extra":"nope"}',
+            ExampleDocument,
+            source="example.json",
+        )
+
+
+def test_decode_json_document_bytes_does_not_accept_yaml_syntax():
+    with pytest.raises(DocumentSchemaError):
+        decode_json_document_bytes(
+            b"name: demo\nvalue: 3\n",
+            ExampleDocument,
+            source="example.json",
         )
 
 

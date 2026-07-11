@@ -49,6 +49,20 @@ def decode_document_bytes(
         raise DocumentSchemaError(source, str(exc)) from exc
 
 
+def decode_json_document_bytes(
+    payload: bytes,
+    document_type: type[TDocument],
+    *,
+    source: str,
+) -> TDocument:
+    """Decode one strict typed JSON document without accepting YAML syntax."""
+
+    try:
+        return msgspec.json.decode(payload, type=document_type, strict=True)
+    except msgspec.DecodeError as exc:
+        raise DocumentSchemaError(source, str(exc)) from exc
+
+
 def convert_document_value(
     payload: object,
     document_type: type[TDocument],
