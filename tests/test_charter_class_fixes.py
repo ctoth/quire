@@ -72,6 +72,33 @@ def test_document_codec_uses_the_decorated_class() -> None:
     assert type(decoded) is SameAsAssertionDocument
 
 
+def test_document_from_model_uses_charter_fields_and_document_names() -> None:
+    @charter(
+        key="renamed_document",
+        name="renamed_document",
+        contract_version="2026.05.25",
+        placement=".derived/renamed_document",
+        identity_field="id",
+        extra_columns=(column("id", str, primary_key=True, nullable=False),),
+    )
+    class RenamedDocument(CharterDoc):
+        display_name: Annotated[
+            str,
+            charter_field(column_name="stored_name"),
+        ]
+
+    charter_obj: FamilyCharter = RenamedDocument.__charter__
+    model = RenamedDocument.__charter_model__(
+        id="storage-only",
+        stored_name="canonical",
+    )
+
+    document = charter_obj.document_from_model(model)
+
+    assert document == RenamedDocument(display_name="canonical")
+    assert type(document) is RenamedDocument
+
+
 def test_generated_document_with_state_returns_class_when_no_field_states() -> None:
     # A charter with no state-conditional field returns the SAME decorated class
     # for any state (parity with the hand-written _field_matches_state behaviour,

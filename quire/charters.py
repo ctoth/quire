@@ -400,6 +400,41 @@ class FamilyCharter:
         self._document_codec_cache[state] = codec
         return codec
 
+    def document_from_model(
+        self,
+        model: object,
+        state: str | None = None,
+    ) -> msgspec.Struct:
+        """Decode one generated family model as this charter's document.
+
+        SQLAlchemy models carry storage field names and may include
+        storage-only columns. The charter owns which fields belong to the
+        document and any storage-to-document name mapping, so callers must not
+        repeat that schema knowledge when crossing back to the document graph.
+        """
+
+        payload: dict[str, object] = {}
+        for charter_field in self.fields:
+            if not charter_field.document or not _field_matches_state(
+                charter_field, state
+            ):
+                continue
+            if not charter_field.storage:
+                raise ValueError(
+                    f"{self.family.name}: document field {charter_field.name!r} "
+                    "has no storage value"
+                )
+            payload[charter_field.document_name or charter_field.name] = getattr(
+                model, charter_field.name
+            )
+
+        document_type = self.generated_document(state)
+        return self.document_codec(state).convert(
+            payload,
+            document_type,
+            source=f"{self.family.name} model",
+        )
+
     def version_payload(self, document: object, state: str | None = None) -> object:
         payload = self.document_codec(state).payload(document)
         if not isinstance(payload, Mapping):
@@ -681,5 +716,4 @@ def _decode_json_blob_fields(
         else:
             decoded[name] = msgspec.convert(value, type=python_type, strict=True)
     return decoded
-
 
