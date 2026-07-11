@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 import re
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, Optional, TypeVar, cast
 
 import msgspec
 
@@ -42,6 +42,7 @@ from quire.versions import VersionId
 
 
 _UNSPECIFIED_NULLABLE = object()
+_TDocument = TypeVar("_TDocument", bound=msgspec.Struct)
 
 
 class FamilyModel:
@@ -403,8 +404,9 @@ class FamilyCharter:
     def document_from_model(
         self,
         model: object,
+        document_type: type[_TDocument],
         state: str | None = None,
-    ) -> msgspec.Struct:
+    ) -> _TDocument:
         """Decode one generated family model as this charter's document.
 
         SQLAlchemy models carry storage field names and may include
@@ -412,6 +414,13 @@ class FamilyCharter:
         document and any storage-to-document name mapping, so callers must not
         repeat that schema knowledge when crossing back to the document graph.
         """
+
+        expected_document_type = self.generated_document(state)
+        if document_type is not expected_document_type:
+            raise TypeError(
+                f"{self.family.name}: expected document type "
+                f"{expected_document_type.__name__}, got {document_type.__name__}"
+            )
 
         payload: dict[str, object] = {}
         for charter_field in self.fields:
@@ -428,7 +437,6 @@ class FamilyCharter:
                 model, charter_field.name
             )
 
-        document_type = self.generated_document(state)
         return self.document_codec(state).convert(
             payload,
             document_type,
@@ -716,4 +724,3 @@ def _decode_json_blob_fields(
         else:
             decoded[name] = msgspec.convert(value, type=python_type, strict=True)
     return decoded
-

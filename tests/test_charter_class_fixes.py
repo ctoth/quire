@@ -93,7 +93,7 @@ def test_document_from_model_uses_charter_fields_and_document_names() -> None:
         stored_name="canonical",
     )
 
-    document = charter_obj.document_from_model(model)
+    document = charter_obj.document_from_model(model, RenamedDocument)
 
     assert document == RenamedDocument(display_name="canonical")
     assert type(document) is RenamedDocument
