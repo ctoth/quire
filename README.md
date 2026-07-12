@@ -41,10 +41,10 @@ That is what quire adds.
 
 ## Non-goals
 
-- Not a git porcelain. No push/pull, no remotes, no merge resolution UI.
-  Quire does expose low-level graph plumbing such as parent inspection and
-  native merge-base calculation so downstream semantic merge code can build
-  on the object store without shelling out to git.
+- Not a git porcelain. There are no configured remotes, push workflow, or merge
+  resolution UI. Quire does expose low-level graph and transport plumbing such
+  as parent inspection, native merge-base calculation, and fetching one
+  caller-selected ref into one caller-selected local ref.
 - Not a working-tree manager. `materialize_worktree()` exists for the cases
   that need it, but it is a side door, not the front door.
 - Not a general-purpose ORM. Documents are `msgspec.Struct` values; identity,
@@ -118,7 +118,7 @@ transaction produces a single commit with both records.
 
 | Layer | Responsibility |
 | --- | --- |
-| `GitStore` + `GitStorePolicy` | Raw object store ops: `commit_files`, `commit_flat_tree`, refs, notes, branches, native merge-base. Backed by `dulwich` (`Repo` or `MemoryRepo`). Policy controls ignored paths and other generic knobs. |
+| `GitStore` + `GitStorePolicy` | Raw object store ops: `commit_files`, `commit_flat_tree`, refs, notes, branches, native merge-base, and CAS-published single-ref fetch. Backed by `dulwich` (`Repo` or `MemoryRepo`). Policy controls ignored paths and other generic knobs. |
 | `GitGcReport` | Dry-run gc reporting unreachable objects. |
 | `RefName`, `NotesRef`, `VersionId` | Validated newtypes — placeholder refs and empty versions are rejected at construction. |
 | `TreePath`, `GitTreePath`, `FilesystemTreePath`, `coerce_tree_path` | Typed path values that distinguish object-store paths from filesystem paths and agree with tree walking. |
@@ -153,6 +153,26 @@ target branch and refuse cross-branch writes.
 `GitStore` serializes filesystem-backed mutations and uses compare-and-swap
 ref updates under the hood, so concurrent writers from separate processes
 still observe a consistent ref history.
+
+For explicit federation plumbing, `fetch_ref` accepts a transport location and
+typed remote/local refs. It fetches only the selected ref's reachable objects,
+verifies that the target is a commit, and publishes the local ref only if its
+current value matches the mandatory expectation:
+
+```python
+from quire import GitStore, RefName
+
+tracking = RefName("refs/remotes/peer/master")
+fetched = store.fetch_ref(
+    "https://example.test/peer.git",
+    RefName("refs/heads/master"),
+    tracking,
+    expected_local=store.read_ref(tracking),
+)
+```
+
+The caller owns transport location, ref naming, and policy. Quire does not keep
+a remote registry or infer merge, trust, or schema semantics.
 
 ## Registry queries
 

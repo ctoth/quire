@@ -77,6 +77,40 @@ def _make_disk_repo() -> tuple[GitStore, Path, tempfile.TemporaryDirectory[str]]
     return repo, root, tmpdir
 
 
+@settings(max_examples=12)
+@given(content=raw_bytes)
+def test_fetch_ref_is_idempotent_and_preserves_unrelated_refs(content: bytes) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        source_root = Path(temp_dir) / "source"
+        source = GitStore.init(source_root)
+        source_sha = source.commit_files({"payload.bin": content}, "source")
+        source_refs = dict(source.raw_repo.refs.as_dict())
+
+        destination = GitStore.init_memory()
+        local_sha = destination.commit_files({"local.bin": b"local"}, "local")
+        tracking_ref = RefName("refs/remotes/property/master")
+        first = destination.fetch_ref(
+            str(source_root / ".git"),
+            RefName("refs/heads/master"),
+            tracking_ref,
+            expected_local=None,
+        )
+        objects_after_first = set(destination.raw_repo.object_store)
+        second = destination.fetch_ref(
+            str(source_root / ".git"),
+            RefName("refs/heads/master"),
+            tracking_ref,
+            expected_local=first,
+        )
+
+        assert first == second == source_sha
+        assert destination.read_ref(tracking_ref) == source_sha
+        assert destination.read_ref(RefName("refs/heads/master")) == local_sha
+        assert destination.read_file("payload.bin", commit=second) == content
+        assert set(destination.raw_repo.object_store) == objects_after_first
+        assert dict(source.raw_repo.refs.as_dict()) == source_refs
+
+
 def _snapshot(store: GitStore, commit: str | None = None) -> dict[str, bytes]:
     return {
         path: store.read_file(path, commit=commit)

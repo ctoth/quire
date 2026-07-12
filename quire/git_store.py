@@ -12,9 +12,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 from urllib.parse import quote
 
+from dulwich.client import get_transport_and_path
 from dulwich.index import build_index_from_tree
 from dulwich.graph import find_merge_base
 from dulwich.objects import Blob, Commit, ObjectID, Tree
+from dulwich.refs import Ref
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
 
 from quire.notes import NotesRef, read_git_note, remove_git_note, write_git_note
@@ -889,6 +891,68 @@ class GitStore:
         if sha is None:
             return None
         return sha.decode("ascii")
+
+    def fetch_ref(
+        self,
+        location: str,
+        remote_ref: RefName,
+        local_ref: RefName,
+        *,
+        expected_local: str | None,
+    ) -> str:
+        """Fetch one advertised ref closure and publish it locally under CAS."""
+
+        remote_ref_bytes = Ref(remote_ref.as_bytes())
+        local_ref_bytes = local_ref.as_bytes()
+        expected_bytes = expected_local.encode("ascii") if expected_local is not None else None
+
+        with self._mutation_guard():
+            _assert_ref_equals(
+                self._repo.refs,
+                local_ref.value,
+                local_ref_bytes,
+                expected_bytes,
+            )
+            advertised_target: ObjectID | None = None
+
+            def determine_wants(
+                refs: Mapping[Ref, ObjectID],
+                depth: int | None = None,
+            ) -> list[ObjectID]:
+                del depth
+                nonlocal advertised_target
+                advertised_target = refs.get(remote_ref_bytes)
+                if advertised_target is None:
+                    raise ValueError(f"Remote ref {remote_ref.value!r} was not advertised")
+                return [advertised_target]
+
+            client, path = get_transport_and_path(location, operation="pull")
+            result = client.fetch(
+                path,
+                self._repo,
+                determine_wants=determine_wants,
+                ref_prefix=[remote_ref_bytes],
+            )
+            fetched_target = result.refs.get(remote_ref_bytes)
+            if fetched_target is None:
+                raise ValueError(f"Remote ref {remote_ref.value!r} was not advertised")
+            if advertised_target != fetched_target:
+                raise ValueError(f"Remote ref {remote_ref.value!r} changed during fetch")
+            _commit_object(self._repo, fetched_target)
+
+            if not _ref_set_if_equals(
+                self._repo.refs,
+                local_ref_bytes,
+                expected_bytes,
+                fetched_target,
+            ):
+                actual = _ref_get(self._repo.refs, local_ref_bytes)
+                raise HeadMismatchError(
+                    branch=local_ref.value,
+                    expected_head=_format_ref_value(expected_bytes),
+                    actual_head=_format_ref_value(actual),
+                )
+            return fetched_target.decode("ascii")
 
     def write_ref(self, ref: RefName, object_id: str | bytes) -> None:
         with self._mutation_guard():

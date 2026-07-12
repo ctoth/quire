@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import threading
 from pathlib import Path
 from typing import Any, cast
+from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 import pytest
+from dulwich.errors import NotGitRepository
+from dulwich.server import DictBackend
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import MemoryRepo
+from dulwich.web import make_wsgi_chain
 
 import quire.git_store as git_store
 from quire.git_store import GitStore, GitStorePolicy, HeadMismatchError, MaterializeConflictError
@@ -420,6 +425,139 @@ def test_refs_read_write_delete_round_trip():
     assert store.read_ref(ref) == sha
     store.delete_ref(ref)
     assert store.read_ref(ref) is None
+
+
+@pytest.mark.parametrize("destination_kind", ["disk", "memory"])
+def test_fetch_ref_fetches_only_selected_commit_closure_and_advances(
+    tmp_path,
+    destination_kind,
+):
+    source_root = tmp_path / "source"
+    source = GitStore.init(source_root)
+    first = source.commit_files({"docs/example.txt": b"first"}, "first")
+    other = source.commit_files(
+        {"private.txt": b"not selected"},
+        "other",
+        branch="other",
+    )
+    source_refs = dict(source.raw_repo.refs.as_dict())
+
+    if destination_kind == "disk":
+        destination = GitStore.init(tmp_path / "destination")
+    else:
+        destination = GitStore.init_memory()
+    unrelated = destination.commit_files({"local.txt": b"local"}, "local")
+    tracking_ref = RefName("refs/remotes/source/master")
+
+    fetched = destination.fetch_ref(
+        str(source_root / ".git"),
+        RefName("refs/heads/master"),
+        tracking_ref,
+        expected_local=None,
+    )
+
+    assert fetched == first
+    assert destination.read_ref(tracking_ref) == first
+    assert destination.read_ref(RefName("refs/heads/master")) == unrelated
+    assert destination.read_file("docs/example.txt", commit=fetched) == b"first"
+    assert [(item.relpath, item.content) for item in destination.iter_tree_files(commit=fetched)] == [
+        ("docs/example.txt", b"first")
+    ]
+    assert other.encode("ascii") not in destination.raw_repo.object_store
+    assert dict(source.raw_repo.refs.as_dict()) == source_refs
+
+    second = source.commit_files({"docs/example.txt": b"second"}, "second")
+    advanced = destination.fetch_ref(
+        str(source_root / ".git"),
+        RefName("refs/heads/master"),
+        tracking_ref,
+        expected_local=first,
+    )
+
+    assert advanced == second
+    assert destination.read_ref(tracking_ref) == second
+    assert destination.read_file("docs/example.txt", commit=advanced) == b"second"
+
+
+def test_fetch_ref_failures_leave_local_refs_unchanged(tmp_path):
+    source_root = tmp_path / "source"
+    source = GitStore.init(source_root)
+    source.commit_files({"remote.txt": b"remote"}, "remote")
+    source.write_blob_ref(RefName("refs/invalid/blob"), b"not a commit")
+
+    destination = GitStore.init_memory()
+    local = destination.commit_files({"local.txt": b"local"}, "local")
+    tracking_ref = RefName("refs/remotes/source/master")
+    destination.write_ref(tracking_ref, local)
+    refs_before = dict(destination.raw_repo.refs.as_dict())
+
+    with pytest.raises(HeadMismatchError):
+        destination.fetch_ref(
+            str(source_root / ".git"),
+            RefName("refs/heads/master"),
+            tracking_ref,
+            expected_local=None,
+        )
+    assert dict(destination.raw_repo.refs.as_dict()) == refs_before
+
+    with pytest.raises(ValueError, match="not advertised"):
+        destination.fetch_ref(
+            str(source_root / ".git"),
+            RefName("refs/heads/missing"),
+            RefName("refs/remotes/source/missing"),
+            expected_local=None,
+        )
+    assert dict(destination.raw_repo.refs.as_dict()) == refs_before
+
+    with pytest.raises(TypeError, match="Expected commit object"):
+        destination.fetch_ref(
+            str(source_root / ".git"),
+            RefName("refs/invalid/blob"),
+            RefName("refs/remotes/source/invalid"),
+            expected_local=None,
+        )
+    assert dict(destination.raw_repo.refs.as_dict()) == refs_before
+
+    with pytest.raises(NotGitRepository):
+        destination.fetch_ref(
+            str(tmp_path / "not-a-repository"),
+            RefName("refs/heads/master"),
+            RefName("refs/remotes/source/broken"),
+            expected_local=None,
+        )
+    assert dict(destination.raw_repo.refs.as_dict()) == refs_before
+
+
+def test_fetch_ref_uses_smart_http_transport(tmp_path):
+    source_root = tmp_path / "source"
+    source = GitStore.init(source_root)
+    source_sha = source.commit_files({"network.txt": b"over http"}, "network")
+    application = make_wsgi_chain(DictBackend({"/source.git": source.raw_repo}))
+
+    class QuietHandler(WSGIRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+    server = make_server("127.0.0.1", 0, application, handler_class=QuietHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        destination = GitStore.init_memory()
+        tracking_ref = RefName("refs/remotes/http/master")
+        fetched = destination.fetch_ref(
+            f"http://127.0.0.1:{server.server_port}/source.git",
+            RefName("refs/heads/master"),
+            tracking_ref,
+            expected_local=None,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=5)
+
+    assert fetched == source_sha
+    assert destination.read_ref(tracking_ref) == source_sha
+    assert destination.read_file("network.txt", commit=fetched) == b"over http"
 
 
 def test_expected_head_ref_update_is_compare_and_swap(monkeypatch):
