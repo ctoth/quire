@@ -10,8 +10,8 @@ kind (``view``, ``hyperedge``, ``opinion``, ``embedding-text``) a six-site edit.
 
 This registry inverts that: a kind registers itself and the consumer loops
 iterate ``iter_projection_kinds()`` instead of testing fixed flags. Built-in
-kinds register here; downstream consumers (e.g. propstore) register new kinds
-without editing :class:`~quire.charters.CharterField` or the consumers.
+kinds register here; downstream packages register new kinds without editing
+:class:`~quire.charters.CharterField` or the consumers.
 
 The protocol is intentionally minimal. ``name`` + ``applies`` + ``schema_payload``
 are what every consumer needs in common (iteration, dispatch, deterministic

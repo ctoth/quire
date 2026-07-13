@@ -59,7 +59,7 @@ class GraphHyperedgeProjection:
     Unlike :class:`GraphEdgeProjection` (a single source -> single target), a
     hyperedge keeps the antecedent grouping intact instead of fanning out into N
     independent binary edges that duplicate the edge metadata and lose the joint
-    relationship (e.g. a parameterization: input concepts -> output via a formula).
+    relationship (for example, several input records parameterizing one output).
     """
 
     sources: tuple[ArtifactIdentity, ...]

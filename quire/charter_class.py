@@ -200,10 +200,8 @@ def charter_field(
     codec, and the contract manifest (it is still ``document=True``) but emits NO
     backing SQLAlchemy column: the lowered :class:`~quire.charters.CharterField`
     carries ``storage=False`` and ``build_sqlalchemy_schema`` skips it. Use it for
-    a projection field whose data lives in other columns (e.g. propstore's
-    ``merge`` family, where ``merge`` is a typed document view over the
-    ``branch_a`` / ``branch_b`` / ``arguments`` storage columns), closing the gap
-    that previously forced an always-populated duplicate column.
+    a typed document projection whose data lives in other physical columns,
+    avoiding an always-populated duplicate storage column.
     """
 
     return CharterFieldSpec(
@@ -415,7 +413,7 @@ def _resolve_enum_type(
 def _resolve_nullable(spec_nullable: bool | None, python_type: object) -> bool:
     """Resolve the explicit column nullability for a declarative field.
 
-    The hand-written propstore charters always pass ``nullable=`` explicitly
+    Existing imperative charters pass ``nullable=`` explicitly
     (``nullable=False`` for required NON-NULL columns, ``nullable=True`` for
     optional ones). The declarative shape reproduces this by ALWAYS setting
     ``nullable`` explicitly, derived from the annotation when not overridden:
@@ -464,7 +462,7 @@ def _charter_field_from_attribute(
     nullable = _resolve_nullable(spec.nullable, annotation_type)
 
     # Normalize an optional annotation (`T | None`) to the inner type `T` plus an
-    # explicit `nullable=True`. The hand-written propstore charters author
+    # explicit `nullable=True`. Imperative charters author
     # optional fields exactly this way (`python_type=T, nullable=True`), and the
     # explicit-nullable rule in `_document_python_type` reconstructs the `T | None`
     # *document* type identically while the storage column python_type stays `T`.
@@ -576,13 +574,13 @@ class _DeclarativeFamilyCharter(FamilyCharter):
 
     A non-``None`` ``state`` returns the SAME decorated class as ``state=None``
     whenever no field is state-conditional (no ``CharterField`` declares a
-    ``states`` set) — which is the only case propstore exercises. This restores
-    parity with the hand-written charter's ``_field_matches_state`` behaviour,
+    ``states`` set). This preserves parity with the imperative charter's
+    ``_field_matches_state`` behaviour,
     where a field with ``states is None`` matched every state, so
     ``generated_document("proposed")`` returned a document identical to
     ``generated_document(None)``. ``NotImplementedError`` is raised only for a
     genuine field-level projection (some field declares ``states`` AND a
-    non-``None`` ``state`` is requested) — subsetting that propstore never does.
+    non-``None`` ``state`` is requested).
     """
 
     def _bind_document(self, document_class: type[msgspec.Struct]) -> None:
@@ -610,8 +608,8 @@ class _DeclarativeFamilyCharter(FamilyCharter):
 
         if state is not None and self._has_state_conditional_field():
             # A genuine field-level projection would require subsetting the
-            # document by state. propstore never declares field-level states, so
-            # this stays defensive rather than implementing the subset.
+            # document by state; the declarative charter does not implement that
+            # subset operation.
             raise NotImplementedError(
                 "declarative charters do not project field-level states; "
                 f"generated_document(state={state!r}) is unsupported because a "
@@ -814,10 +812,9 @@ def charter(
         cls.__charter_model__ = model
 
         # Bind the generated model into the defining module's globals under its
-        # __qualname__ so a dotted-path loader — e.g. propstore's schema loader
-        # doing `getattr(import_module(model.__module__), model.__qualname__)` —
-        # can resolve it. Without this the name exists on the class object but
-        # not in the module namespace, and `pks build` fails to find the model.
+        # __qualname__ so a generic dotted-path loader using the model's module
+        # and qualified name can resolve it. Without this, the name exists on
+        # the class object but not in the module namespace.
         defining_module = sys.modules.get(cls.__module__)
         if defining_module is not None:
             setattr(defining_module, generated_model_name, model)

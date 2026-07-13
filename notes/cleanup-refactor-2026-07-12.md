@@ -218,6 +218,7 @@ Gate results:
 - Pass: `uv run pyright quire` -> `0 errors` with the locked Pyright dependency.
 - Pass: `uv build` produced the source distribution and wheel.
 - Pass: `uv lock --check`.
+- Fixed-point correction: removed remaining Propstore names, command names, and domain examples from Quire implementation commentary; the application-semantic search now returns zero hits.
 
 Commit:
 - `Align release and maintenance surfaces` (this iteration's commit).
