@@ -520,11 +520,15 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         prepared = self.store.prepare(self.family, ref, doc, branch=branch)
         backend = self.store._require_backend()
         prepared_branch = prepared.branch
+        publication_head = expected_head
+        if prepared_branch is not None and publication_head is None:
+            publication_head = self.store.branch_head(backend, prepared_branch)
         if self.definition is not None and self.registry is not None:
             _validate_registry_post_state(
                 self.store,
                 self.registry,
                 branch=prepared_branch,
+                commit=publication_head if prepared_branch is not None else None,
                 saves=((self.definition, ref, prepared.document),),
             )
         if isinstance(prepared.address.locator, RefBlobLocator):
@@ -540,7 +544,7 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
             deletes=[],
             message=message,
             branch=prepared_branch,
-            expected_head=expected_head,
+            expected_head=publication_head,
         )
 
     def delete(
@@ -554,11 +558,15 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         address = self.store.address(self.family, ref, branch=branch)
         backend = self.store._require_backend()
         target_branch = branch or address.branch
+        publication_head = expected_head
+        if target_branch is not None and publication_head is None:
+            publication_head = self.store.branch_head(backend, target_branch)
         if self.definition is not None and self.registry is not None:
             _validate_registry_post_state(
                 self.store,
                 self.registry,
                 branch=target_branch,
+                commit=publication_head if target_branch is not None else None,
                 deletes=((self.definition, ref),),
             )
         if isinstance(address.locator, RefBlobLocator):
@@ -571,7 +579,7 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
             deletes=[address_path(address)],
             message=message,
             branch=target_branch,
-            expected_head=expected_head,
+            expected_head=publication_head,
         )
 
     def move(
@@ -654,10 +662,17 @@ class BoundFamilyTransaction(Generic[TOwner, TKey]):
     def commit(self) -> str:
         target_branch = self.transaction.branch
         if target_branch is not None:
+            if self.transaction.expected_head is None:
+                backend = self.transaction.store._require_backend()
+                self.transaction.expected_head = self.transaction.store.branch_head(
+                    backend,
+                    target_branch,
+                )
             _validate_registry_post_state(
                 self.transaction.store,
                 self.registry,
                 branch=target_branch,
+                commit=self.transaction.expected_head,
                 saves=tuple(self._saves),
                 deletes=tuple(self._deletes),
             )
@@ -741,6 +756,7 @@ def _validate_registry_post_state(
     registry: FamilyRegistry[TOwner, Any],
     *,
     branch: str | None,
+    commit: str | None = None,
     saves: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object, object]] = (),
     deletes: Sequence[tuple[FamilyDefinition[TOwner, Any, Any, Any], object]] = (),
 ) -> None:
@@ -764,7 +780,11 @@ def _validate_registry_post_state(
             continue
         records_by_family[definition.name] = {
             handle.ref: handle.document
-            for handle in store.iter_handles(definition.artifact_family, branch=branch)
+            for handle in store.iter_handles(
+                definition.artifact_family,
+                branch=branch,
+                commit=commit,
+            )
         }
     for definition, ref in deletes:
         if definition.name not in records_by_family:

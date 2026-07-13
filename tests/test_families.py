@@ -905,6 +905,122 @@ def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> No
     assert backend.branch_sha("master") == head
 
 
+def test_registry_validation_reads_the_publication_head(monkeypatch) -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save(
+        "concept:mass",
+        IdentifiedDocument("concept:mass", ("mass",)),
+        message="save concept",
+    )
+    publication_head = backend.branch_sha("master")
+    observed_commits: list[str | None] = []
+    original_iter_handles = store.iter_handles
+
+    def recording_iter_handles(family, *, branch=None, commit=None):
+        observed_commits.append(commit)
+        return original_iter_handles(family, branch=branch, commit=commit)
+
+    monkeypatch.setattr(store, "iter_handles", recording_iter_handles)
+
+    bound.claims.save(
+        "claim:1",
+        ClaimWithConceptDocument("claim:1", "mass"),
+        message="save claim",
+    )
+
+    assert observed_commits
+    assert set(observed_commits) == {publication_head}
+
+
+def test_registry_write_rejects_branch_advance_after_validation(monkeypatch) -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save(
+        "concept:mass",
+        IdentifiedDocument("concept:mass", ("mass",)),
+        message="save concept",
+    )
+    original_commit_batch = backend.commit_batch
+    raced = False
+
+    def racing_commit_batch(adds, deletes, message, *, branch=None, expected_head=None):
+        nonlocal raced
+        if not raced:
+            raced = True
+            original_commit_batch(
+                {"race.txt": b"advanced"},
+                [],
+                "concurrent write",
+                branch=branch,
+            )
+        return original_commit_batch(
+            adds,
+            deletes,
+            message,
+            branch=branch,
+            expected_head=expected_head,
+        )
+
+    monkeypatch.setattr(backend, "commit_batch", racing_commit_batch)
+
+    with pytest.raises(HeadMismatchError):
+        bound.claims.save(
+            "claim:1",
+            ClaimWithConceptDocument("claim:1", "mass"),
+            message="save claim",
+        )
+
+    assert bound.claims.load("claim:1") is None
+
+
+def test_registry_transaction_rejects_branch_advance_after_validation(monkeypatch) -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save(
+        "concept:mass",
+        IdentifiedDocument("concept:mass", ("mass",)),
+        message="save concept",
+    )
+    original_commit_batch = backend.commit_batch
+    raced = False
+
+    def racing_commit_batch(adds, deletes, message, *, branch=None, expected_head=None):
+        nonlocal raced
+        if not raced:
+            raced = True
+            original_commit_batch(
+                {"race.txt": b"advanced"},
+                [],
+                "concurrent write",
+                branch=branch,
+            )
+        return original_commit_batch(
+            adds,
+            deletes,
+            message,
+            branch=branch,
+            expected_head=expected_head,
+        )
+
+    monkeypatch.setattr(backend, "commit_batch", racing_commit_batch)
+
+    with pytest.raises(HeadMismatchError):
+        with bound.transact(message="save claim") as transaction:
+            transaction.claims.save(
+                "claim:1",
+                ClaimWithConceptDocument("claim:1", "mass"),
+            )
+
+    assert bound.claims.load("claim:1") is None
+
+
 def test_optional_foreign_key_allows_omission_but_rejects_present_missing_value() -> None:
     registry = _reference_registry(required=False)
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())

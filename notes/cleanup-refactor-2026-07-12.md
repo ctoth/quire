@@ -107,3 +107,40 @@ Commit:
 
 Next slice:
 - Exact-head binding for registry validation and branch publication.
+
+## Iteration 3 - `Exact-head registry validation`
+
+Slice read:
+- `quire/families.py` bound single-write and transaction validation
+- `quire/family_store.py` branch-head resolution and transaction publication
+- `quire/git_store.py` commit CAS behavior
+- `tests/test_families.py` expected-head and FK validation coverage
+
+Surfaces:
+- Branch-relative registry scans before publication
+  - Disposition: rewrite
+  - Owner after cleanup: `_validate_registry_post_state` reads an explicit commit snapshot.
+  - Action: capture the branch head once, validate every relevant family at that commit, and publish with the captured SHA as `expected_head`.
+- Caller-supplied stale expectation
+  - Disposition: keep as the controlling snapshot.
+  - Owner after cleanup: the caller's explicit `expected_head` remains authoritative and the final Git CAS rejects staleness.
+- Separate validation and publication heads
+  - Disposition: delete from the execution path.
+
+Search gates:
+- Every branch-backed `_validate_registry_post_state` call supplies the commit used as the publication expectation.
+- Registry validation scans use `commit=...`, not a fresh branch-tip resolution per family.
+
+Gate results:
+- Pass: red tests showed validation scans resolving `commit=None` and a branch advance after validation being accepted.
+- Pass: validation now reads every relevant family at one captured commit and publication uses that commit as `expected_head`.
+- Pass: injected branch advances after validation are rejected for both single writes and registry transactions.
+- Pass: `uv run pytest tests/test_families.py tests/test_family_store.py tests/test_git_store.py tests/test_ref_backed_family.py -q` -> `130 passed`.
+- Pass: `uv run pyright quire` -> `0 errors`.
+- Pass: `uv run ruff check quire tests/test_families.py tests/test_ref_backed_family.py`.
+
+Commit:
+- `Bind registry validation to publication head` (this iteration's commit).
+
+Next slice:
+- Quire core versus SQL/derived capability boundary convergence.
