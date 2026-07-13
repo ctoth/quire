@@ -120,6 +120,26 @@ def test_contract_version_requires_zero_padded_calendar_dates():
             contract_version(invalid)
 
 
+def test_contract_version_accepts_a_same_day_revision():
+    # A contract body can legitimately change twice in one day. Without a
+    # same-day counter the author must either fabricate a future date or
+    # falsely mark a breaking change compatible, so the grammar carries it.
+    assert contract_version("2026.07.13.1") == VersionId("2026.07.13.1")
+    assert contract_version("2026.07.13.12") == VersionId("2026.07.13.12")
+    assert contract_version("2026.07.13") != contract_version("2026.07.13.1")
+
+
+def test_contract_same_day_revision_has_one_spelling():
+    # A bare date IS revision 0, so ".0" and leading zeros are rejected —
+    # otherwise one version would have several spellings.
+    for invalid in ("2026.07.13.0", "2026.07.13.01"):
+        with pytest.raises(ValueError, match="same-day revision"):
+            contract_version(invalid)
+
+    with pytest.raises(ValueError, match="Contract versions must use YYYY.MM.DD"):
+        contract_version("2026.07.13.x")
+
+
 def test_version_id_is_opaque():
     # VersionId carries an arbitrary non-empty token; declaration policy lives in
     # contract_version(), not in VersionId.

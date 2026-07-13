@@ -11,22 +11,34 @@ from quire.canonical import canonical_json_text, normalize_payload
 from quire.versions import VersionId
 
 _PLACEHOLDER_CONTRACT_VERSIONS = frozenset({"0", "0.0", "0.1", "1", "1.0"})
-_CALENDAR_VERSION_RE = re.compile(r"^(?P<year>\d{4})\.(?P<month>\d{2})\.(?P<day>\d{2})$")
+_CALENDAR_VERSION_RE = re.compile(
+    r"^(?P<year>\d{4})\.(?P<month>\d{2})\.(?P<day>\d{2})(?:\.(?P<revision>\d+))?$"
+)
 
 
 def contract_version(value: str) -> VersionId:
     """Validate a contract/family declaration version and wrap it in a VersionId.
 
     Contract and family declarations require a zero-padded ``YYYY.MM.DD``
-    calendar version and reject placeholder tokens. VersionId itself is opaque;
-    this declaration-time policy lives here, not in VersionId.
+    calendar version, optionally followed by a same-day revision counter
+    (``YYYY.MM.DD.N``), and reject placeholder tokens. VersionId itself is
+    opaque; this declaration-time policy lives here, not in VersionId.
+
+    The revision counter exists because a contract body may legitimately change
+    more than once in a day: a bare calendar version cannot distinguish the
+    second change from the first, which forces the author to either fabricate a
+    future date or falsely mark a breaking change as compatible. Neither is
+    acceptable, so the grammar carries the counter instead. ``2026.07.13`` and
+    ``2026.07.13.1`` are distinct versions; the counter starts at 1 (a bare date
+    is revision 0) and a leading zero is rejected so each version has one
+    spelling.
     """
     normalized = value.strip()
     if normalized in _PLACEHOLDER_CONTRACT_VERSIONS:
         raise ValueError(f"Placeholder contract version is not allowed: {normalized}")
     match = _CALENDAR_VERSION_RE.match(normalized)
     if match is None:
-        raise ValueError("Contract versions must use YYYY.MM.DD")
+        raise ValueError("Contract versions must use YYYY.MM.DD or YYYY.MM.DD.N")
     try:
         date(
             int(match.group("year")),
@@ -34,7 +46,13 @@ def contract_version(value: str) -> VersionId:
             int(match.group("day")),
         )
     except ValueError as exc:
-        raise ValueError("Contract versions must use YYYY.MM.DD") from exc
+        raise ValueError("Contract versions must use YYYY.MM.DD or YYYY.MM.DD.N") from exc
+    revision = match.group("revision")
+    if revision is not None and (revision == "0" or revision.startswith("0")):
+        raise ValueError(
+            "Contract same-day revision must be a positive integer without a "
+            f"leading zero (a bare date is revision 0): {normalized}"
+        )
     return VersionId(normalized)
 
 
