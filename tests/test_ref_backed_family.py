@@ -15,13 +15,23 @@ from quire.artifacts import (
 )
 from quire.families import FamilyDefinition, FamilyRegistry
 from quire.family_store import DocumentFamilyStore
-from quire.git_store import GitStore
+from quire.git_store import GitStore, HeadMismatchError
+from quire.references import ForeignKeySpec, ForeignKeyValidationError
 from quire.refs import RefName, singleton_ref_type
 from quire.contracts import contract_version
 
 
 class SchemaDocument(msgspec.Struct):
     body: str
+
+
+class IdentifiedDocument(msgspec.Struct):
+    artifact_id: str
+
+
+class RefClaimDocument(msgspec.Struct):
+    artifact_id: str
+    concept: str
 
 
 @dataclass(frozen=True)
@@ -154,6 +164,41 @@ def test_ref_backed_family_overwrite_replaces_blob():
     assert store.load(family, SchemaRef()) == SchemaDocument("v2")
 
 
+def test_ref_backed_family_save_rejects_stale_expected_head():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _schema_family()
+    first = store.save(family, SchemaRef(), SchemaDocument("v1"), message="v1")
+    store.save(family, SchemaRef(), SchemaDocument("v2"), message="v2")
+
+    with pytest.raises(HeadMismatchError):
+        store.save(
+            family,
+            SchemaRef(),
+            SchemaDocument("v3"),
+            message="v3",
+            expected_head=first,
+        )
+
+    assert store.load(family, SchemaRef()) == SchemaDocument("v2")
+
+
+def test_ref_backed_family_delete_rejects_stale_expected_head():
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    family = _schema_family()
+    first = store.save(family, SchemaRef(), SchemaDocument("v1"), message="v1")
+    store.save(family, SchemaRef(), SchemaDocument("v2"), message="v2")
+
+    with pytest.raises(HeadMismatchError):
+        store.delete(
+            family,
+            SchemaRef(),
+            message="delete stale",
+            expected_head=first,
+        )
+
+    assert store.load(family, SchemaRef()) == SchemaDocument("v2")
+
+
 # --- Registry: bind needs no read; cold load on demand; tree-scan absence ---
 
 
@@ -183,6 +228,47 @@ def _registry_with_schema() -> FamilyRegistry[Owner, str]:
     )
 
 
+def _registry_with_ref_foreign_key() -> FamilyRegistry[Owner, str]:
+    concepts = FamilyDefinition(
+        key="concepts",
+        name="concepts",
+        contract_version=VERSION,
+        artifact_family=ArtifactFamily(
+            name="concepts",
+            contract_version=VERSION,
+            doc_type=IdentifiedDocument,
+            placement=FlatYamlPlacement("concepts", str),
+        ),
+        identity_field="artifact_id",
+    )
+    ref_claims = FamilyDefinition(
+        key="ref_claims",
+        name="ref_claims",
+        contract_version=VERSION,
+        artifact_family=ArtifactFamily(
+            name="ref_claims",
+            contract_version=VERSION,
+            doc_type=RefClaimDocument,
+            placement=_schema_placement(),
+        ),
+        identity_field="artifact_id",
+        foreign_keys=(
+            ForeignKeySpec(
+                name="ref_claim_concept",
+                contract_version=VERSION,
+                source_family="ref_claims",
+                source_field="concept",
+                target_family="concepts",
+            ),
+        ),
+    )
+    return FamilyRegistry(
+        name="ref-fk-registry",
+        contract_version=VERSION,
+        families=(concepts, ref_claims),
+    )
+
+
 def test_bind_performs_no_content_read_even_when_ref_absent():
     backend = GitStore.init_memory()
     store = DocumentFamilyStore(owner=Owner(), backend=backend)
@@ -192,6 +278,21 @@ def test_bind_performs_no_content_read_even_when_ref_absent():
     bound = registry.bind(Owner(), store)
     assert bound is not None
     # The ref still does not exist; load is on-demand.
+    assert backend.read_blob_ref(SCHEMA_REF_NAME) is None
+
+
+def test_registry_bound_ref_save_rejects_dangling_foreign_key():
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = _registry_with_ref_foreign_key().bind(store.owner, store)
+
+    with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+        bound.ref_claims.save(
+            SchemaRef(),
+            RefClaimDocument("claim:1", "missing"),
+            message="invalid ref claim",
+        )
+
     assert backend.read_blob_ref(SCHEMA_REF_NAME) is None
 
 

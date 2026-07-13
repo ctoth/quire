@@ -61,3 +61,49 @@ Commit:
 
 Next slice:
 - Ref-backed write capability convergence.
+
+## Iteration 2 - `Ref-backed write capability convergence`
+
+Slice read:
+- `quire/artifacts.py` (`BlobRefPlacement`)
+- `quire/git_store.py` ref and blob-ref primitives
+- `quire/family_store.py` backend contract and direct family writes
+- `quire/families.py` registry-bound writes and validation
+- `tests/test_ref_backed_family.py`
+- Propstore blob-ref and `expected_head` callers
+
+Surfaces:
+- `GitStore.write_blob_ref` unconditional publication
+  - Disposition: rewrite
+  - Owner after cleanup: `GitStore` generic ref CAS mechanics.
+  - Action: capture the current ref, honor an explicit expectation, and CAS-publish the new blob.
+- `GitStore.delete_ref` unconditional deletion
+  - Disposition: rewrite
+  - Owner after cleanup: `GitStore` generic ref CAS mechanics.
+  - Action: honor an explicit expectation and CAS-delete the captured ref.
+- Registry-bound `RefBlobLocator` early returns
+  - Disposition: delete
+  - Owner after cleanup: registry post-state validation followed by the locator-specific writer.
+  - Action: validate declared FKs before ref publication just as path-backed writes do.
+- A second ref-specific family expectation parameter
+  - Disposition: delete from the design; it does not exist and will not be introduced.
+  - Evidence: the existing explicit expectation is an object ID in both branch and blob-ref storage; backend dispatch owns the locator-specific CAS.
+
+Search gates:
+- No `RefBlobLocator` write return may precede registry validation.
+- No `write_blob_ref` or `delete_ref` publication may use unconditional `_ref_set`/`_ref_delete`.
+
+Gate results:
+- Pass: new red tests demonstrated that ref-backed `save` and `delete` ignored stale expectations and registry-bound ref writes bypassed FK validation.
+- Pass: `uv run pytest tests/test_ref_backed_family.py -q` -> `19 passed` after the implementation.
+- Pass: `uv run pytest tests/test_families.py tests/test_family_store.py tests/test_git_store.py tests/test_ref_backed_family.py -q` -> `127 passed`.
+- Pass: `uv run pyright quire` -> `0 errors`.
+- Pass: `uv run ruff check quire tests/test_ref_backed_family.py`.
+- Pass: `git diff --check`.
+- Pass: ref publication search shows all family-level `write_blob_ref` and `delete_ref` calls forward the explicit expectation.
+
+Commit:
+- `Make ref-backed family writes honest` (this iteration's commit).
+
+Next slice:
+- Exact-head binding for registry validation and branch publication.

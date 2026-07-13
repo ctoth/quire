@@ -959,16 +959,53 @@ class GitStore:
             sha = object_id if isinstance(object_id, bytes) else object_id.encode("ascii")
             _ref_set(self._repo.refs, ref.as_bytes(), sha)
 
-    def delete_ref(self, ref: RefName) -> None:
+    def delete_ref(self, ref: RefName, *, expected_ref: str | None = None) -> None:
         with self._mutation_guard():
-            if self.read_ref(ref) is not None:
-                _ref_delete(self._repo.refs, ref.as_bytes())
+            ref_name = ref.as_bytes()
+            current = _ref_get(self._repo.refs, ref_name)
+            if expected_ref is not None:
+                current = _assert_ref_equals(
+                    self._repo.refs,
+                    ref.value,
+                    ref_name,
+                    expected_ref.encode("ascii"),
+                )
+            if current is None:
+                return
+            if not _ref_delete_if_equals(self._repo.refs, ref_name, current):
+                actual = _ref_get(self._repo.refs, ref_name)
+                raise HeadMismatchError(
+                    branch=ref.value,
+                    expected_head=_format_ref_value(current),
+                    actual_head=_format_ref_value(actual),
+                )
 
-    def write_blob_ref(self, ref: RefName, payload: bytes) -> str:
+    def write_blob_ref(
+        self,
+        ref: RefName,
+        payload: bytes,
+        *,
+        expected_ref: str | None = None,
+    ) -> str:
         with self._mutation_guard():
+            ref_name = ref.as_bytes()
+            current = _ref_get(self._repo.refs, ref_name)
+            if expected_ref is not None:
+                current = _assert_ref_equals(
+                    self._repo.refs,
+                    ref.value,
+                    ref_name,
+                    expected_ref.encode("ascii"),
+                )
             blob = Blob.from_string(payload)
             self._repo.object_store.add_object(blob)
-            self.write_ref(ref, blob.id)
+            if not _ref_set_if_equals(self._repo.refs, ref_name, current, blob.id):
+                actual = _ref_get(self._repo.refs, ref_name)
+                raise HeadMismatchError(
+                    branch=ref.value,
+                    expected_head=_format_ref_value(current),
+                    actual_head=_format_ref_value(actual),
+                )
             return blob.id.decode("ascii")
 
     def read_blob_ref(self, ref: RefName) -> bytes | None:

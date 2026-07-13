@@ -41,10 +41,16 @@ class DocumentStoreBackend(ReadOnlyDocumentStoreBackend, Protocol):
     ) -> str:
         ...
 
-    def write_blob_ref(self, ref: RefName, payload: bytes) -> str:
+    def write_blob_ref(
+        self,
+        ref: RefName,
+        payload: bytes,
+        *,
+        expected_ref: str | None = None,
+    ) -> str:
         ...
 
-    def delete_ref(self, ref: RefName) -> None:
+    def delete_ref(self, ref: RefName, *, expected_ref: str | None = None) -> None:
         ...
 
 
@@ -285,7 +291,11 @@ class DocumentFamilyStore(Generic[TOwner]):
         backend = self._require_backend()
         prepared = self.prepare(family, ref, doc, branch=branch)
         if isinstance(prepared.address.locator, RefBlobLocator):
-            return backend.write_blob_ref(prepared.address.locator.ref, prepared.content)
+            return backend.write_blob_ref(
+                prepared.address.locator.ref,
+                prepared.content,
+                expected_ref=expected_head,
+            )
         return backend.commit_batch(
             adds={address_path(prepared.address): prepared.content},
             deletes=[],
@@ -321,7 +331,7 @@ class DocumentFamilyStore(Generic[TOwner]):
         backend = self._require_backend()
         address = self.address(family, ref)
         if isinstance(address.locator, RefBlobLocator):
-            backend.delete_ref(address.locator.ref)
+            backend.delete_ref(address.locator.ref, expected_ref=expected_head)
             return ""
         target_branch = branch or address.branch
         return backend.commit_batch(
