@@ -25,7 +25,7 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.orm import clear_mappers, registry, relationship
+from sqlalchemy.orm import registry, relationship
 from sqlalchemy.sql.type_api import TypeEngine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy_fts5 import FTS5Table
@@ -365,9 +365,9 @@ class SqlAlchemySchema:
 
 
 def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
-    clear_mappers()
     metadata = MetaData()
     mapper_registry = registry(metadata=metadata)
+    catalog_hash = catalog.schema_hash()
     catalog_family_names = frozenset(
         schema_object.family_name for schema_object in catalog.objects
     )
@@ -383,16 +383,38 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
         for name, index in fts_indexes.items()
     }
     vector_caches = _vector_caches_from_catalog(catalog)
-    models_by_family = {
+    authored_models = {
         schema_object.family_name: _load_type(schema_object.model_path)
         for schema_object in catalog.objects
     }
-    polymorphic_models_by_family = {
-        schema_object.family_name: MappingProxyType({
+    models_by_family = {
+        family_name: type(
+            f"{authored_model.__name__}QuireMapped_{catalog_hash[:12]}",
+            (authored_model,),
+            {"__module__": authored_model.__module__},
+        )
+        for family_name, authored_model in authored_models.items()
+    }
+    authored_polymorphic_models = {
+        schema_object.family_name: {
             model.identity: _load_type(model.model_path)
             for model in schema_object.polymorphic_models
-        })
+        }
         for schema_object in catalog.objects
+    }
+    polymorphic_models_by_family = {
+        family_name: MappingProxyType({
+            identity: type(
+                f"{authored_model.__name__}QuireMapped_{catalog_hash[:12]}",
+                (
+                    authored_model,
+                    models_by_family[family_name],
+                ),
+                {"__module__": authored_model.__module__},
+            )
+            for identity, authored_model in authored_models_for_family.items()
+        })
+        for family_name, authored_models_for_family in authored_polymorphic_models.items()
     }
     schema = SqlAlchemySchema(
         catalog=catalog,
@@ -404,7 +426,7 @@ def build_sqlalchemy_schema(catalog: SchemaCatalog) -> SqlAlchemySchema:
         vector_caches=MappingProxyType(vector_caches),
         models_by_family=MappingProxyType(models_by_family),
         polymorphic_models_by_family=MappingProxyType(polymorphic_models_by_family),
-        catalog_hash=catalog.schema_hash(),
+        catalog_hash=catalog_hash,
     )
     _map_models(schema)
     return schema

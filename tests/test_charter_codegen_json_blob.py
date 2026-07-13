@@ -163,15 +163,16 @@ def test_json_blob_sqlalchemy_round_trips_tuple_value(tmp_path: Path) -> None:
         ),
     )
     schema = build_sqlalchemy_schema(charter_catalog(charter))
+    DemoRow = schema.model("demos")
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
 
     with writable_session(store_path, schema) as session:
-        session.add(Demo(id="demo", items=(Inner(1), Inner(2))))
+        session.add(DemoRow(id="demo", items=(Inner(1), Inner(2))))
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        record = session.get(Demo, "demo")
+        record = session.get(DemoRow, "demo")
 
     assert record is not None
     assert record.items == (Inner(1), Inner(2))
@@ -188,15 +189,16 @@ def test_json_blob_sqlalchemy_round_trips_none_value(tmp_path: Path) -> None:
         ),
     )
     schema = build_sqlalchemy_schema(charter_catalog(charter))
+    DemoRow = schema.model("demos")
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
 
     with writable_session(store_path, schema) as session:
-        session.add(Demo(id="demo", items=None))
+        session.add(DemoRow(id="demo", items=None))
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        record = session.get(Demo, "demo")
+        record = session.get(DemoRow, "demo")
 
     assert record is not None
     assert record.items is None

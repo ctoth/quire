@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from quire.artifacts import ArtifactFamily, FlatYamlPlacement
@@ -224,18 +224,22 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
     create_sqlalchemy_store(store_path, schema)
     validate_sqlalchemy_store(store_path, schema)
 
+    SourceRow = schema.model("sources")
+    ConceptRow = schema.model("concepts")
+    ClaimRow = schema.model("claims")
+    ClaimConceptLinkRow = schema.model("claim_concept_links")
     with writable_session(store_path, schema) as session:
-        source = Source("source:1", "reserved field survives", SourceTrust(0.9, "curated"))
-        concept = Concept("concept:mass", "Mass")
-        force = Concept("concept:force", "Force")
-        claim = Claim("claim:1", "source:1", "Mass is invariant.", ClaimStatus.ACCEPTED)
-        force_link = ClaimConceptLink("claim:1", "concept:force", "related", 1, "f")
-        link = ClaimConceptLink("claim:1", "concept:mass", "subject", 0, "m")
+        source = SourceRow("source:1", "reserved field survives", SourceTrust(0.9, "curated"))
+        concept = ConceptRow("concept:mass", "Mass")
+        force = ConceptRow("concept:force", "Force")
+        claim = ClaimRow("claim:1", "source:1", "Mass is invariant.", ClaimStatus.ACCEPTED)
+        force_link = ClaimConceptLinkRow("claim:1", "concept:force", "related", 1, "f")
+        link = ClaimConceptLinkRow("claim:1", "concept:mass", "subject", 0, "m")
         session.add_all((source, concept, force, claim, force_link, link))
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        claim = session.get(Claim, "claim:1")
+        claim = session.get(ClaimRow, "claim:1")
         assert claim is not None
         assert claim.status is ClaimStatus.ACCEPTED
         assert claim.source.metadata == "reserved field survives"
@@ -244,7 +248,7 @@ def test_generated_tables_catalog_and_mappings_round_trip(tmp_path: Path) -> Non
         assert claim.concept_links[0].binding_name == "m"
         assert [link.binding_name for link in claim.concept_links] == ["m", "f"]
 
-        session.add(Concept("concept:energy", "Energy"))
+        session.add(ConceptRow("concept:energy", "Energy"))
         with pytest.raises(OperationalError):
             session.commit()
 
@@ -328,15 +332,17 @@ def test_foreign_key_can_target_declared_non_id_field(tmp_path: Path) -> None:
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
 
+    SlugSourceRow = schema.model("slug_sources")
+    SlugClaimRow = schema.model("slug_claims")
     with writable_session(store_path, schema) as session:
         session.add_all((
-            SlugSource("alpha", "Alpha Source"),
-            SlugClaim("claim:1", "alpha", "Claim text"),
+            SlugSourceRow("alpha", "Alpha Source"),
+            SlugClaimRow("claim:1", "alpha", "Claim text"),
         ))
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        claim = session.get(SlugClaim, "claim:1")
+        claim = session.get(SlugClaimRow, "claim:1")
         assert claim is not None
         assert claim.source.title == "Alpha Source"
 
@@ -444,24 +450,28 @@ def test_polymorphic_charter_maps_subclasses_on_one_table(tmp_path: Path) -> Non
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
 
+    RelationEdgeRow = schema.model("relation_edge")
+    StanceRow = schema.polymorphic_model("relation_edge", "stance")
+    ConceptRelationRow = schema.polymorphic_model("relation_edge", "concept_relation")
     with writable_session(store_path, schema) as session:
         session.add_all((
-            Stance(1, "stance", "claim:a", "claim:b"),
-            ConceptRelation(2, "concept_relation", "concept:a", "concept:b"),
+            StanceRow(1, "stance", "claim:a", "claim:b"),
+            ConceptRelationRow(2, "concept_relation", "concept:a", "concept:b"),
         ))
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        assert [type(edge) for edge in session.scalars(select(RelationEdge))] == [
-            Stance,
-            ConceptRelation,
+        assert [type(edge) for edge in session.scalars(select(RelationEdgeRow))] == [
+            StanceRow,
+            ConceptRelationRow,
         ]
-        assert [edge.id for edge in session.scalars(select(Stance))] == [1]
-        assert schema.polymorphic_model("relation_edge", "stance") is Stance
+        assert [edge.id for edge in session.scalars(select(StanceRow))] == [1]
+        assert issubclass(StanceRow, Stance)
 
 
 def test_session_constructs_and_routes_objects_from_charter_fields(tmp_path: Path) -> None:
     schema = build_sqlalchemy_schema(_catalog())
+    ClaimRow = schema.model("claims")
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
 
@@ -494,7 +504,7 @@ def test_session_constructs_and_routes_objects_from_charter_fields(tmp_path: Pat
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        claim = session.get(Claim, "claim:1")
+        claim = session.get(ClaimRow, "claim:1")
         assert claim is not None
         assert claim.status is ClaimStatus.ACCEPTED
         assert claim.source.trust == SourceTrust(0.9, "curated")
@@ -533,7 +543,7 @@ def test_schema_resolves_family_references_from_charter_metadata(tmp_path: Path)
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        assert schema.model("concepts") is Concept
+        assert issubclass(schema.model("concepts"), Concept)
         assert schema.identity_field("concepts") == "id"
         assert schema.resolve_reference_id(session, "concepts", "Mass") == "concept:mass"
         assert schema.require_reference_id(session, "concepts", "Force") == "concept:force"
@@ -590,6 +600,7 @@ def test_family_model_subclass_uses_charter_fields_and_keeps_behavior(tmp_path: 
             )
         )
     )
+    BehavioralClaimRow = schema.model("behavioral_claims")
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
 
@@ -603,7 +614,7 @@ def test_family_model_subclass_uses_charter_fields_and_keeps_behavior(tmp_path: 
         session.commit()
 
     with readonly_session(store_path, schema) as session:
-        claim = session.get(BehavioralClaim, "claim:1")
+        claim = session.get(BehavioralClaimRow, "claim:1")
         assert claim is not None
         assert claim.text == "  Mass Is Invariant  "
         assert claim.normalized_text() == "mass is invariant"
@@ -635,6 +646,20 @@ def test_schema_hash_changes_when_charter_shape_changes() -> None:
     assert base.catalog_hash != changed.catalog_hash
 
 
+def test_repeated_schema_builds_keep_each_mapper_registry_live() -> None:
+    first = build_sqlalchemy_schema(_catalog())
+    second = build_sqlalchemy_schema(_catalog())
+
+    first_source = first.model("sources")
+    second_source = second.model("sources")
+
+    assert first_source is not second_source
+    assert issubclass(first_source, Source)
+    assert issubclass(second_source, Source)
+    assert inspect(first_source).persist_selectable is first.table("sources")
+    assert inspect(second_source).persist_selectable is second.table("sources")
+
+
 def test_mapper_supports_tables_without_database_primary_keys(tmp_path: Path) -> None:
     schema = build_sqlalchemy_schema(_no_database_primary_key_catalog())
     alias_table = schema.table("alias_without_database_primary_key")
@@ -642,18 +667,19 @@ def test_mapper_supports_tables_without_database_primary_keys(tmp_path: Path) ->
 
     store_path = tmp_path / "no-primary-key.sqlite"
     create_sqlalchemy_store(store_path, schema)
+    AliasRow = schema.model("alias_without_database_primary_key")
     with writable_session(store_path, schema) as session:
         session.add_all(
             (
-                AliasWithoutDatabasePrimaryKey("concept:mass", "mass", "label"),
-                AliasWithoutDatabasePrimaryKey("concept:mass", "m", "symbol"),
+                AliasRow("concept:mass", "mass", "label"),
+                AliasRow("concept:mass", "m", "symbol"),
             )
         )
         session.commit()
 
     with readonly_session(store_path, schema) as session:
         rows = (
-            session.query(AliasWithoutDatabasePrimaryKey)
+            session.query(AliasRow)
             .order_by(text("owner_id"), text("alias_name"))
             .all()
         )
@@ -670,31 +696,33 @@ def test_fts_declarations_create_populate_and_query_with_sessions(tmp_path: Path
     create_sqlalchemy_store(store_path, schema)
     validate_sqlalchemy_store(store_path, schema)
 
+    SearchConceptRow = schema.model("search_concepts")
+    SearchClaimRow = schema.model("search_claims")
     with writable_session(store_path, schema) as session:
         session.add_all(
             (
-                SearchConcept(
+                SearchConceptRow(
                     "concept:mass",
                     "Mass",
                     "m",
                     "inertial mass gravitational mass",
                     "measure of matter resistance to acceleration",
                 ),
-                SearchConcept(
+                SearchConceptRow(
                     "concept:force",
                     "Force",
                     "F",
                     "interaction push pull",
                     "cause of acceleration",
                 ),
-                SearchClaim(
+                SearchClaimRow(
                     "claim:newton-2",
                     "Force equals mass times acceleration.",
                     "F = m a",
                     "Newton mechanics source",
                     "A net force accelerates mass.",
                 ),
-                SearchClaim(
+                SearchClaimRow(
                     "claim:energy",
                     "Energy is conserved in an isolated system.",
                     "dE/dt = 0",
@@ -725,8 +753,9 @@ def test_fts_search_classifies_query_syntax_errors(tmp_path: Path) -> None:
     store_path = tmp_path / "search.sqlite"
     create_sqlalchemy_store(store_path, schema)
 
+    SearchConceptRow = schema.model("search_concepts")
     with writable_session(store_path, schema) as session:
-        session.add(SearchConcept("concept:mass", "Mass", "m", "", "measure"))
+        session.add(SearchConceptRow("concept:mass", "Mass", "m", "", "measure"))
         session.commit()
         populate_fts_index(session, "concept_search")
         session.commit()
@@ -744,18 +773,20 @@ def test_fts_source_query_can_populate_joined_index_with_custom_key(tmp_path: Pa
     create_sqlalchemy_store(store_path, schema)
     validate_sqlalchemy_store(store_path, schema)
 
+    JoinedSearchClaimRow = schema.model("joined_search_claims")
+    JoinedSearchClaimTextPayloadRow = schema.model("joined_search_claim_text_payload")
     with writable_session(store_path, schema) as session:
         session.add_all(
             (
-                JoinedSearchClaim("claim:gravity", 1),
-                JoinedSearchClaimTextPayload(
+                JoinedSearchClaimRow("claim:gravity", 1),
+                JoinedSearchClaimTextPayloadRow(
                     "claim:gravity",
                     "Gravity curves spacetime.",
                     '["relativity", "orbit"]',
                     "G m_1 m_2 / r^2",
                 ),
-                JoinedSearchClaim("claim:energy", 2),
-                JoinedSearchClaimTextPayload(
+                JoinedSearchClaimRow("claim:energy", 2),
+                JoinedSearchClaimTextPayloadRow(
                     "claim:energy",
                     "Energy is conserved.",
                     '["conservation"]',
@@ -783,11 +814,12 @@ def test_vector_cache_create_insert_search_snapshot_and_restore(tmp_path: Path) 
     create_sqlalchemy_store(store_path, schema)
     validate_sqlalchemy_store(store_path, schema)
 
+    VectorEntityRow = schema.model("vector_entities")
     with writable_session(store_path, schema) as session:
         session.add_all(
             (
-                VectorEntity("entity:near", 1, "hash-near", "near text"),
-                VectorEntity("entity:far", 2, "hash-far", "far text"),
+                VectorEntityRow("entity:near", 1, "hash-near", "near text"),
+                VectorEntityRow("entity:far", 2, "hash-far", "far text"),
             )
         )
         session.commit()
@@ -836,8 +868,8 @@ def test_vector_cache_create_insert_search_snapshot_and_restore(tmp_path: Path) 
     with writable_session(restored_path, schema) as session:
         session.add_all(
             (
-                VectorEntity("entity:near", 10, "hash-near", "near text"),
-                VectorEntity("entity:far", 20, "hash-far", "far text"),
+                VectorEntityRow("entity:near", 10, "hash-near", "near text"),
+                VectorEntityRow("entity:far", 20, "hash-far", "far text"),
             )
         )
         session.commit()
@@ -868,11 +900,12 @@ def test_vector_cache_can_use_model_registered_dimensions(tmp_path: Path) -> Non
     create_sqlalchemy_store(store_path, schema)
     validate_sqlalchemy_store(store_path, schema)
 
+    VectorEntityRow = schema.model("model_dimension_vector_entities")
     with writable_session(store_path, schema) as session:
         session.add_all(
             (
-                VectorEntity("entity:near", 1, "hash-near", "near text"),
-                VectorEntity("entity:far", 2, "hash-far", "far text"),
+                VectorEntityRow("entity:near", 1, "hash-near", "near text"),
+                VectorEntityRow("entity:far", 2, "hash-far", "far text"),
             )
         )
         session.commit()
@@ -1321,27 +1354,29 @@ def _slug_fk_schema() -> Any:
 
 def test_writable_session_enforces_foreign_keys_by_default(tmp_path: Path) -> None:
     schema = _slug_fk_schema()
+    SlugClaimRow = schema.model("slug_claims")
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
     with pytest.raises(IntegrityError):
         with writable_session(store_path, schema) as session:
             # Dangling FK: no slug_sources row named "missing".
-            session.add(SlugClaim("claim:1", "missing", "Claim text"))
+            session.add(SlugClaimRow("claim:1", "missing", "Claim text"))
             session.commit()
 
 
 def test_writable_session_advisory_foreign_keys_quarantine(tmp_path: Path) -> None:
     """enforce_foreign_keys=False keeps the FK advisory: a dangling ref inserts."""
     schema = _slug_fk_schema()
+    SlugClaimRow = schema.model("slug_claims")
     store_path = tmp_path / "derived.sqlite"
     create_sqlalchemy_store(store_path, schema)
     with writable_session(store_path, schema, enforce_foreign_keys=False) as session:
-        session.add(SlugClaim("claim:1", "missing", "Claim text"))
+        session.add(SlugClaimRow("claim:1", "missing", "Claim text"))
         session.commit()
 
     # The reader opens with enforcement on; SELECT is unaffected and the
     # dangling-but-stored row is visible (render policy decides what to do).
     with readonly_session(store_path, schema) as session:
-        claim = session.get(SlugClaim, "claim:1")
+        claim = session.get(SlugClaimRow, "claim:1")
         assert claim is not None
         assert claim.source_slug == "missing"
