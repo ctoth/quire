@@ -123,7 +123,6 @@ from quire.references import (
     finalize_reference_lookup,
     validate_foreign_key,
 )
-from quire.sqlalchemy_schema import SqlAlchemySchema, build_sqlalchemy_schema
 from quire.tree_path import FilesystemTreePath, GitTreePath, TreePath, coerce_tree_path
 from quire.versions import VersionId
 from quire.families import (
@@ -136,20 +135,6 @@ from quire.families import (
     TransactionalBoundFamily,
 )
 from quire.canonical import canonical_json_bytes, canonical_json_sha256
-from quire.sqlite_vec_store import (
-    EMBEDDING_MODEL_TABLE,
-    RestoreReport,
-    SqlAlchemyVecEntityStore,
-    SqlAlchemyVecRegistry,
-    SqlAlchemyVecSnapshotStore,
-    VecEntitySnapshot,
-    VecSnapshot,
-    create_vector_cache_schema,
-    is_missing_table_error,
-    load_sqlite_vec_extension,
-    validate_vector_cache_schema,
-)
-
 __all__ = [
     "AmbiguousReferenceError",
     "ArtifactAddress",
@@ -184,7 +169,6 @@ __all__ = [
     "DerivedStoreHandle",
     "DerivedStoreManager",
     "DerivedStoreMaterialization",
-    "EMBEDDING_MODEL_TABLE",
     "FamilyDefinition",
     "FamilyIdentityPolicy",
     "FamilyCharter",
@@ -222,17 +206,12 @@ __all__ = [
     "ReferenceKey",
     "ReferenceIndex",
     "ReferenceResolution",
-    "RestoreReport",
     "SchemaCatalog",
     "SingletonFilePlacement",
-    "SqlAlchemySchema",
     "SQLITE_READONLY_POLICY",
     "SQLITE_WRITE_POLICY",
     "SqliteConnectionPolicy",
     "SqliteFileMaterialization",
-    "SqlAlchemyVecEntityStore",
-    "SqlAlchemyVecRegistry",
-    "SqlAlchemyVecSnapshotStore",
     "SubdirFixedFilePlacement",
     "TemplateFilePlacement",
     "TransactionalBoundFamily",
@@ -245,8 +224,6 @@ __all__ = [
     "TransitionResult",
     "UnscannablePlacementError",
     "VersionId",
-    "VecEntitySnapshot",
-    "VecSnapshot",
     "canonical_json_bytes",
     "canonical_json_sha256",
     "charter_catalog",
@@ -263,22 +240,18 @@ __all__ = [
     "digest_directory",
     "documents",
     "document_batch_codec",
-    "create_vector_cache_schema",
     "artifact_digest",
     "artifact_identity",
     "artifact_payload",
     "build_reference_lookup",
-    "build_sqlalchemy_schema",
     "batch_artifact_family",
     "encode_ref_value",
     "extend_reference_lookup",
     "finalize_reference_lookup",
     "graph_node_projection",
-    "is_missing_table_error",
     "iter_artifact_dependencies",
     "iter_graph_edges",
     "iter_graph_hyperedges",
-    "load_sqlite_vec_extension",
     "materialize_sqlite_file",
     "order_projection_steps",
     "read_derived_store_schema_version",
@@ -291,7 +264,6 @@ __all__ = [
     "singleton_ref_type",
     "sqlite_table_exists",
     "validate_foreign_key",
-    "validate_vector_cache_schema",
     "write_derived_store_schema_metadata",
     "write_git_note",
 ]

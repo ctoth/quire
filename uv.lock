@@ -324,9 +324,6 @@ dependencies = [
     { name = "dulwich" },
     { name = "msgspec" },
     { name = "pyyaml" },
-    { name = "sqlalchemy" },
-    { name = "sqlalchemy-fts5" },
-    { name = "sqlite-vec" },
 ]
 
 [package.optional-dependencies]
@@ -335,6 +332,15 @@ dev = [
     { name = "pytest-benchmark" },
     { name = "pytest-timeout" },
 ]
+sql = [
+    { name = "sqlalchemy" },
+    { name = "sqlalchemy-fts5" },
+]
+vector = [
+    { name = "sqlalchemy" },
+    { name = "sqlalchemy-fts5" },
+    { name = "sqlite-vec" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -342,6 +348,8 @@ dev = [
     { name = "pytest" },
     { name = "pytest-benchmark" },
     { name = "pytest-timeout" },
+    { name = "sqlalchemy" },
+    { name = "sqlalchemy-fts5" },
     { name = "sqlite-vec" },
 ]
 
@@ -353,11 +361,13 @@ requires-dist = [
     { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=5.1" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "sqlalchemy", specifier = ">=2.0" },
-    { name = "sqlalchemy-fts5", git = "https://github.com/ctoth/sqlalchemy-fts5?rev=ac6d05968f2f3bcf61c20a09efa41de4a605560d" },
-    { name = "sqlite-vec", specifier = ">=0.1" },
+    { name = "sqlalchemy", marker = "extra == 'sql'", specifier = ">=2.0" },
+    { name = "sqlalchemy", marker = "extra == 'vector'", specifier = ">=2.0" },
+    { name = "sqlalchemy-fts5", marker = "extra == 'sql'", git = "https://github.com/ctoth/sqlalchemy-fts5?rev=ac6d05968f2f3bcf61c20a09efa41de4a605560d" },
+    { name = "sqlalchemy-fts5", marker = "extra == 'vector'", git = "https://github.com/ctoth/sqlalchemy-fts5?rev=ac6d05968f2f3bcf61c20a09efa41de4a605560d" },
+    { name = "sqlite-vec", marker = "extra == 'vector'", specifier = ">=0.1" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["sql", "vector", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -365,6 +375,8 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-benchmark", specifier = ">=5.1" },
     { name = "pytest-timeout", specifier = ">=2.3" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "sqlalchemy-fts5", git = "https://github.com/ctoth/sqlalchemy-fts5?rev=ac6d05968f2f3bcf61c20a09efa41de4a605560d" },
     { name = "sqlite-vec", specifier = ">=0.1" },
 ]
 

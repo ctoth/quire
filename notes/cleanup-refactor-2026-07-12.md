@@ -144,3 +144,42 @@ Commit:
 
 Next slice:
 - Quire core versus SQL/derived capability boundary convergence.
+
+## Iteration 4 - `Explicit SQL and vector capability boundary`
+
+Slice read:
+- `pyproject.toml` and `uv.lock`
+- `quire/__init__.py`
+- SQL, vector, derived-store, and projection module imports
+- Quire and Propstore import sites
+
+Surfaces:
+- SQLAlchemy, SQLAlchemy FTS5, and sqlite-vec as unconditional Quire dependencies
+  - Disposition: move out of core.
+  - Owner after cleanup: explicit `sql` and `vector` installation extras; the dev group installs the complete test capability set.
+- SQL and vector implementation objects re-exported from `quire.__init__`
+  - Disposition: delete.
+  - Owner after cleanup: `quire.sqlalchemy_schema`, `quire.sqlalchemy_store`, and `quire.sqlite_vec_store` are explicit capability modules.
+- Generic derived-store mechanics
+  - Disposition: keep in Quire core.
+  - Evidence: the manager/runtime own generic cache, SQLite-file, and schema-metadata mechanics and use late SQL imports only when SQL sessions are requested.
+
+Search gates:
+- `quire/__init__.py` imports no SQLAlchemy or sqlite-vec capability module.
+- Core project dependencies contain no SQLAlchemy or sqlite-vec distribution.
+- Propstore uses explicit Quire capability modules and declares the dependencies it consumes.
+
+Gate results:
+- Pass: boundary tests failed before the change because no `sql` extra existed and importing `quire` loaded SQLAlchemy.
+- Pass: `uv run pytest tests/test_package_boundary.py -q` -> `2 passed`.
+- Pass: `uv run pytest tests/test_charters_schema_ir.py tests/test_sqlalchemy_engine.py tests/test_derived_store.py -q` -> `36 passed`.
+- Pass: `uv run pyright quire tests/test_package_boundary.py` -> `0 errors`.
+- Pass: `uv run ruff check quire tests/test_package_boundary.py`.
+- Pass: `uv run pytest -q` -> `498 passed, 12 deselected`.
+- Propstore dependency integration pending immediately after this Quire commit.
+
+Commit:
+- `Make SQL and vector capabilities explicit` (this iteration's Quire commit).
+
+Next slice:
+- Documentation, metadata, CI, and changelog convergence.

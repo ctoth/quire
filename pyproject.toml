@@ -37,9 +37,6 @@ dependencies = [
     "dulwich>=1.2.5",
     "msgspec>=0.19.0",
     "pyyaml>=6.0",
-    "sqlalchemy>=2.0",
-    "sqlalchemy-fts5",
-    "sqlite-vec>=0.1",
 ]
 
 [project.urls]
@@ -48,6 +45,15 @@ Repository = "https://github.com/ctoth/quire"
 Issues = "https://github.com/ctoth/quire/issues"
 
 [project.optional-dependencies]
+sql = [
+    "sqlalchemy>=2.0",
+    "sqlalchemy-fts5",
+]
+vector = [
+    "sqlalchemy>=2.0",
+    "sqlalchemy-fts5",
+    "sqlite-vec>=0.1",
+]
 dev = [
     "pytest-benchmark>=5.1",
     "pytest>=8.0",
@@ -60,6 +66,8 @@ dev = [
     "pytest-benchmark>=5.1",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
+    "sqlalchemy>=2.0",
+    "sqlalchemy-fts5",
     "sqlite-vec>=0.1",
 ]
 
