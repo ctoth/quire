@@ -71,6 +71,7 @@ build-backend = "hatchling.build"
 packages = ["quire"]
 
 [tool.pytest.ini_options]
+addopts = ["-m", "not benchmark"]
 timeout = 300
 timeout_method = "thread"
 

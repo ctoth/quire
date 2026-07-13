@@ -58,6 +58,20 @@ pip install quire
 
 Requires Python 3.11+. Depends on `dulwich`, `msgspec`, and `pyyaml`.
 
+## Testing
+
+The ordinary suite excludes performance benchmarks:
+
+```bash
+uv run pytest
+```
+
+Run the benchmark suite explicitly with:
+
+```bash
+uv run pytest -m benchmark --benchmark-only tests/test_benchmarks.py
+```
+
 ## A small example
 
 ```python
