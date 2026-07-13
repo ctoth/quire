@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reorganized the README around reader entry points and added generic guides for architecture, document families, charters, and derived schemas.
 - Split performance benchmarks from the ordinary test suite while retaining an explicit benchmark command.
 - Replaced process-global SQLAlchemy mapper resets with schema-local mapped classes and registries.
 - Added compare-and-swap publication and deletion for ref-backed family artifacts.

@@ -1,306 +1,273 @@
-# quire
+# Quire
 
-A typed, schema-aware document store built on git plumbing.
+Quire is a typed, schema-aware document store built directly on Git object
+plumbing. It writes blobs, trees, commits, refs, and notes without requiring a
+checkout or materializing documents in a working tree.
 
-Quire treats git as a content-addressable object store with branches, refs, and
-notes — not as a version-control tool. There is no working tree, no checkout,
-no file materialization. A commit is a transaction against the object store;
-a document is a validated struct addressed by a pluggable placement policy;
-a schema change is a contract version bump that the library refuses to let you
-forget.
+Applications define their own document types and semantics. Quire supplies the
+generic storage machinery: typed families, placement policies, contract
+manifests, atomic multi-document writes, foreign-key validation, and optional
+derived SQL and vector stores.
 
-It is the generic storage substrate — semantic applications (claim stores,
-concept graphs, knowledge bases) layer on top without depending on a
-checked-out tree.
+## Why Quire
 
-## Why it exists
+Git already provides content-addressed objects, immutable history, branches,
+and atomic ref updates. Quire adds the typed application boundary that raw Git
+lacks:
 
-Most document stores bolt history onto a database. Quire inverts that:
-git is already a transactional, content-addressable, branch-native store —
-so skip the database. What git lacks is a typed, schema-checked surface.
-That is what quire adds.
+- **Typed documents.** Documents decode into strict `msgspec.Struct` values.
+- **Explicit placement.** A family decides how a logical reference maps to a
+  branch and path or to a dedicated blob ref.
+- **Schema contracts.** Persisted family and registry shapes carry a
+  `VersionId`; incompatible drift must be accompanied by a version change.
+- **Safe publication.** Compare-and-swap writes reject a stale expected branch
+  head before creating new objects.
+- **Atomic family transactions.** Adds, moves, and deletes across families can
+  publish as one commit and validate references against the staged result.
+- **Lazy discovery.** APIs that scan refs, commits, trees, and families return
+  iterators; callers choose when to materialize them.
 
-- **Object-store-first.** Commit without materializing files. `init_memory()`
-  gives you a fully functional in-RAM repo for tests.
-- **Placements separate identity from storage.** A ref maps to
-  `(branch, path)` through a pluggable codec — flat YAML per namespace,
-  hash-scattered for large collections, fixed files, templated paths,
-  nested or subdir layouts, singletons, or per-identity branches.
-- **Contracts are first-class.** Every family declares a `VersionId`.
-  `check_contract_manifest` refuses silent shape drift: bump the version,
-  or file a `CompatibilityMarker` with a written reason. You cannot quietly
-  break a persisted ABI.
-- **Compare-and-swap writes.** Every writer accepts `expected_head`. If the
-  branch tip moved between read and commit, you get a typed
-  `HeadMismatchError` before any objects are written.
-- **Batched transactions.** `transact()` coalesces adds, deletes, and moves
-  into a single commit, with foreign-key validation against the
-  post-transaction state.
-- **Structural typing throughout.** `ArtifactFamily[TOwner, TRef, TDoc]`,
-  `Protocol` backends, msgspec-validated decode.
+Quire is useful when Git history and branch identity are part of the storage
+model, but a checked-out filesystem is not.
 
-## Non-goals
+## Choose the layer you need
 
-- Not a git porcelain. There are no configured remotes, push workflow, or merge
-  resolution UI. Quire does expose low-level graph and transport plumbing such
-  as parent inspection, native merge-base calculation, and fetching one
-  caller-selected ref into one caller-selected local ref.
-- Not a working-tree manager. `materialize_worktree()` exists for the cases
-  that need it, but it is a side door, not the front door.
-- Not a general-purpose ORM. Documents are `msgspec.Struct` values; identity,
-  placement, and contract are explicit.
+| Need | Start with |
+| --- | --- |
+| Strict YAML or JSON document decoding | `quire.documents` |
+| Typed documents stored in Git | `ArtifactFamily`, `DocumentFamilyStore` |
+| Several related document families | `FamilyRegistry` and `registry.bind(...)` |
+| One declaration for document, storage, and derived schema | `quire.charter_class` |
+| Raw commits, refs, notes, history, or a selected-ref fetch | `GitStore` |
+| Rebuildable content-addressed SQLite output | `quire.derived_store` |
+| SQLAlchemy or FTS5 projections | install `quire[sql]` |
+| sqlite-vec caches | install `quire[vector]` |
+
+The [documentation index](docs/index.md) gives a guided path through these
+layers. The [architecture guide](docs/architecture.md) explains their ownership
+boundaries and invariants.
 
 ## Install
+
+Quire requires Python 3.11 or newer.
 
 ```bash
 uv add quire
 ```
 
-Requires Python 3.11+. Depends on `dulwich`, `msgspec`, and `pyyaml`.
-
-SQL sidecar support and vector-cache support are explicit capabilities:
+Optional capabilities are installed explicitly:
 
 ```bash
 uv add "quire[sql]"     # SQLAlchemy schemas, sessions, and FTS5
 uv add "quire[vector]"  # SQL support plus sqlite-vec
 ```
 
-Import those capabilities from their owning modules, for example
-`quire.sqlalchemy_schema`, `quire.sqlalchemy_store`, and
-`quire.sqlite_vec_store`. The root `quire` package exports the core Git,
-document, family, contract, projection, and generic derived-store surface and
-can be imported without SQL or vector dependencies installed.
+The root `quire` package exports the core Git, document-family, contract,
+projection, lifecycle, and generic derived-store APIs. SQL and vector APIs live
+in their owning modules, such as `quire.sqlalchemy_schema`,
+`quire.sqlalchemy_store`, and `quire.sqlite_vec_store`; importing core Quire does
+not require those optional dependencies.
 
-## Testing
+## Quick start
 
-The ordinary suite excludes performance benchmarks:
-
-```bash
-uv run pytest
-```
-
-Run the benchmark suite explicitly with:
-
-```bash
-uv run pytest -m benchmark --benchmark-only tests/test_benchmarks.py
-```
-
-## A small example
+This example declares a family, stores two typed documents in one commit, and
+reads them back. `GitStore.init_memory()` uses Dulwich's in-memory repository,
+so it does not touch the filesystem.
 
 ```python
-import msgspec
+from dataclasses import dataclass
 
-from quire import (
-    ArtifactFamily,
-    BoundFamilyRegistry,
-    DocumentFamilyStore,
-    FamilyDefinition,
-    FamilyRegistry,
-    FlatYamlPlacement,
-    GitStore,
-    VersionId,
+from quire import DocumentFamilyStore, GitStore, VersionId, registry_from_charters
+from quire.charter_class import CharterDoc, charter
+
+
+@charter(
+    key="notes",
+    name="notes",
+    contract_version="2026.07.01",
+    placement="notes",
+    identity_field="note_id",
 )
+class Note(CharterDoc):
+    note_id: str
+    title: str
+    body: str = ""
 
 
-class Claim(msgspec.Struct):
-    name: str
-    strength: float = 0.0
-
-
-V = VersionId("2026.05.01")
-
-claims = ArtifactFamily(
-    name="claims",
-    contract_version=V,
-    doc_type=Claim,
-    placement=FlatYamlPlacement("claims", str),  # claims/<ref>.yaml
-)
-
-registry = FamilyRegistry(
-    name="demo",
-    contract_version=V,
-    families=(FamilyDefinition(key="claims", name="claims", contract_version=V, artifact_family=claims),),
-)
-
-
+@dataclass(frozen=True)
 class Owner:
-    branch = "master"
+    branch: str = "master"
 
 
-store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
-bound = registry.bind(store.owner, store)
+version = VersionId("2026.07.01")
+registry = registry_from_charters(
+    Note.__charter__,
+    name="notebook",
+    contract_version=version,
+)
+owner = Owner()
+store = DocumentFamilyStore(owner=owner, backend=GitStore.init_memory())
+bound = registry.bind(owner, store)
 
-with bound.transact(message="seed") as txn:
-    txn.claims.save("alpha", Claim(name="alpha", strength=0.8))
-    txn.claims.save("beta",  Claim(name="beta"))
+with bound.transact(message="seed notebook") as transaction:
+    transaction.notes.save("welcome", Note("welcome", "Welcome"))
+    transaction.notes.save("todo", Note("todo", "Next steps", "Write more."))
 
-assert list(bound.claims.iter_refs()) == ["alpha", "beta"]
-assert bound.claims.require("alpha").strength == 0.8
+assert list(bound.notes.iter_refs()) == ["todo", "welcome"]
+assert bound.notes.require("welcome").title == "Welcome"
 ```
 
-No filesystem was touched. The repo lives in process memory; the
-transaction produces a single commit with both records.
+The decorated class is the document type. Its attached `FamilyCharter` derives
+the artifact family, document codec, schema metadata, and registry definition;
+the application does not maintain those as parallel declarations.
 
-## Concept map
+The same example is available as a
+[runnable file](docs/examples/quickstart.py).
 
-| Layer | Responsibility |
-| --- | --- |
-| `GitStore` + `GitStorePolicy` | Raw object store ops: `commit_files`, `commit_flat_tree`, refs, notes, branches, native merge-base, and CAS-published single-ref fetch. Backed by `dulwich` (`Repo` or `MemoryRepo`). Policy controls ignored paths and other generic knobs. |
-| `GitGcReport` | Dry-run gc reporting unreachable objects. |
-| `RefName`, `NotesRef`, `VersionId` | Validated newtypes — placeholder refs and empty versions are rejected at construction. |
-| `TreePath`, `GitTreePath`, `FilesystemTreePath`, `coerce_tree_path` | Typed path values that distinguish object-store paths from filesystem paths and agree with tree walking. |
-| `ArtifactFamily` | A typed document family: `doc_type`, placement, optional codec/render/normalize/validate hooks. |
-| Placements | `FlatYamlPlacement`, `HashScatteredYamlPlacement`, `NestedFlatYamlPlacement`, `FixedFilePlacement`, `SubdirFixedFilePlacement`, `TemplateFilePlacement`, `SingletonFilePlacement` — all pluggable. |
-| `BranchPlacement` | `owner` / `primary` / `current` / `fixed` / `template` — where the artifact is written. Templates can derive a branch name from the ref itself. |
-| Ref codecs | `encode_ref_value` plus `single_field_ref_type` / `singleton_ref_type` helpers; reversible `stem`, `base64url`, and `uri` codecs for ref-to-filename mapping. |
-| `FamilyIdentityPolicy` | Per-family hooks for artifact id, version id, canonical payload, logical id fields, source-local fields. |
-| `FamilyRegistry` → `BoundFamilyRegistry` → `BoundFamily` | Grouped families with duplicate-key/name/accessor checks; `bound.<accessor>.save(...)` attribute access. |
-| `DocumentFamilyStore` + `BoundFamilyTransaction` + `TransactionalBoundFamily` | Load/save/move/delete, prepare-then-commit, batched transactions with per-family attribute access inside the transaction. |
-| `HeadMismatchError` | Typed compare-and-swap failure raised before any object writes happen. |
-| `ContractManifest` + `check_contract_manifest` | Persisted ABI. Body drift without a version bump or compatibility marker raises. |
-| `ReferenceKey`, `FamilyReferenceIndex`, `CrossFamilyReferenceIndex`, `ReferenceResolution`, `ForeignKeySpec` | Declarative family references, alias indexing with match provenance, and mandatory cross-family FK validation. |
-| `canonical_json_bytes`, `canonical_json_sha256` | Deterministic payload canonicalization for hashing and contract bodies. |
-| `quire.derived_store`, `quire.derived_runtime` | Generic content-addressed derived-store materialization and SQLite runtime mechanics; part of core. |
-| `quire.sqlalchemy_schema`, `quire.sqlalchemy_store` | Optional SQL schema/session capability installed with `quire[sql]`. |
-| `quire.sqlite_vec_store` | Optional vector-cache capability installed with `quire[vector]`. |
+For custom placement and codec policies, families can also be assembled
+directly. See [Working with document families](docs/families.md).
 
-## Transactions and concurrency
+## Core guarantees
 
-Writers and transactions accept `expected_head`:
+### Object-store-first Git
+
+`GitStore.init(path)` creates a repository, but ordinary reads and writes
+operate on Git objects. A call such as `commit_files()` does not write the
+corresponding files into the repository directory. `materialize()` and
+`materialize_worktree()` are explicit side doors for callers that need files.
+
+`GitStore` also provides lazy tree and history traversal, typed refs and notes,
+merge-base and parent inspection, dry-run unreachable-object reporting, and a
+selected-ref fetch primitive. It is deliberately not a remote registry, merge
+policy, trust system, or Git porcelain.
+
+### Transactions and concurrency
+
+Writers accept an `expected_head` when a branch might advance between planning
+and publication:
 
 ```python
 head = store.backend.branch_sha("master")
-# ... think about it, plan changes ...
-with bound.transact(message="apply plan", expected_head=head) as txn:
-    txn.claims.save("alpha", Claim(name="alpha", strength=0.9))
+
+# Compute or validate the proposed changes.
+
+with bound.transact(message="apply plan", expected_head=head) as transaction:
+    transaction.notes.save("welcome", Note("welcome", "Hello again"))
 ```
 
-If another writer advanced `master` in between, `HeadMismatchError` fires
-before any tree, blob, or commit object is written — no orphaned objects,
-no partial state. Multi-artifact transactions stay pinned to a single
-target branch and refuse cross-branch writes.
+If another writer advances `master`, Quire raises `HeadMismatchError` before
+writing a blob, tree, or commit. A multi-family transaction is pinned to one
+target branch and rejects accidental cross-branch writes.
 
-`GitStore` serializes filesystem-backed mutations and uses compare-and-swap
-ref updates under the hood, so concurrent writers from separate processes
-still observe a consistent ref history.
+Filesystem-backed mutation paths are serialized within a process and guarded
+by a repository lock across processes. The expected-head check still matters:
+locking makes publication consistent, while compare-and-swap expresses which
+state the caller intended to replace.
 
-For explicit federation plumbing, `fetch_ref` accepts a transport location and
-typed remote/local refs. It fetches only the selected ref's reachable objects,
-verifies that the target is a commit, and publishes the local ref only if its
-current value matches the mandatory expectation:
+### Contracts
+
+A registry can emit a deterministic manifest for its persisted ABI:
+
+```python
+from quire import check_contract_manifest
+
+baseline = registry.contract_manifest(
+    package_name="notebook",
+    package_version="0.1.0",
+)
+
+# Build the manifest again after changing a family declaration.
+updated = changed_registry.contract_manifest(
+    package_name="notebook",
+    package_version="0.1.0",
+)
+
+check_contract_manifest(baseline, updated)
+```
+
+Changing a contract body without changing its version raises
+`ContractManifestError`. A caller may instead provide a documented
+`CompatibilityMarker` for an intentionally compatible change. Quire forces the
+compatibility decision; it does not define an application's migration policy.
+
+### References and foreign keys
+
+Families can declare their identity field, alternate reference keys, and
+cross-family `ForeignKeySpec` values. Registry construction validates the
+foreign-key graph. Bound writes validate references against one captured commit
+and publish with that same commit as the compare-and-swap expectation.
+
+A transaction validates its complete staged result, so it can add a target and
+its dependent together. Deleting or replacing a target that would leave an
+existing dependent dangling fails before publication. Only the touched portion
+of the foreign-key graph is scanned.
+
+### Explicit federation plumbing
+
+`fetch_ref` transfers one caller-selected remote ref into one caller-selected
+local ref. Publication requires an expected local value:
 
 ```python
 from quire import GitStore, RefName
 
 tracking = RefName("refs/remotes/peer/master")
-fetched = store.fetch_ref(
+fetched = store.backend.fetch_ref(
     "https://example.test/peer.git",
     RefName("refs/heads/master"),
     tracking,
-    expected_local=store.read_ref(tracking),
+    expected_local=store.backend.read_ref(tracking),
 )
 ```
 
-The caller owns transport location, ref naming, and policy. Quire does not keep
-a remote registry or infer merge, trust, or schema semantics.
+The caller owns transport locations, ref naming, authentication, trust, merge,
+and schema policy. Quire only supplies generic object transfer and atomic ref
+publication.
 
-## Registry queries
+## What Quire does not own
 
-`FamilyRegistry` has generic lookup helpers for storage applications that need
-to select families without hard-coding their catalog. Metadata stays
-application-owned, but Quire provides the mechanics:
+- Application concepts, commands, workflows, and user-facing policy.
+- A configured-remotes model, automatic synchronization, or merge resolution
+  interface.
+- A working-tree lifecycle.
+- Application-specific undo rules. Quire may expose generic commit/tree revert
+  mechanics; the application decides what may be undone.
+- An authoritative query database. Derived SQL and vector stores are explicit,
+  rebuildable projections of authored data.
 
-```python
-semantic = registry.select_by_metadata("semantic", True)
-rules = registry.by_metadata("root", "rules")
-ordered = registry.select(lambda family: family.metadata_value("rank", 100) < 50)
+## Documentation
+
+- [Documentation index](docs/index.md)
+- [Architecture and boundaries](docs/architecture.md)
+- [Working with document families](docs/families.md)
+- [Charters and derived schemas](docs/charters.md)
+- [Changelog](CHANGELOG.md)
+
+The public API is also reflected by `quire/__init__.py`. Optional capability
+modules define their own `__all__` exports.
+
+## Development
+
+Install the locked development environment and run the ordinary gates with:
+
+```bash
+uv sync --all-extras --dev
+uv run ruff check .
+uv run pyright quire
+uv run pytest
+uv build
 ```
 
-Placement-backed roots are also queryable without inspecting
-`placement.contract_body()`:
+The ordinary test command excludes performance benchmarks. Run them explicitly:
 
-```python
-assert registry.by_storage_root("claims").name == "claims"
-assert registry.family_for_path("claims/example.yaml").name == "claims"
-assert registry.by_name("claims").storage_root() == "claims"
+```bash
+uv run pytest -m benchmark --benchmark-only tests/test_benchmarks.py
 ```
-
-Query-only views can pass `validate_foreign_keys=False` when they intentionally
-contain only a subset of a larger registry. Duplicate keys, names, and
-accessors are still rejected.
-
-## References and foreign keys
-
-Families can declare the artifact identity field and any additional reference
-keys that should resolve to that identity. Quire builds `FamilyReferenceIndex`
-values from loaded family records and raises typed errors for missing or
-ambiguous references. Each resolution carries `match provenance` so callers
-can tell whether a hit came from the primary identity field or an alias.
-
-```python
-from quire import ForeignKeySpec, ReferenceKey
-
-concepts = FamilyDefinition(
-    key="concepts",
-    name="concepts",
-    contract_version=V,
-    artifact_family=concept_family,
-    identity_field="artifact_id",
-    reference_keys=(
-        ReferenceKey.field("artifact_id"),
-        ReferenceKey.field("aliases[]"),
-    ),
-)
-
-claims = FamilyDefinition(
-    key="claims",
-    name="claims",
-    contract_version=V,
-    artifact_family=claim_family,
-    identity_field="artifact_id",
-    foreign_keys=(
-        ForeignKeySpec(
-            name="claim_concept",
-            contract_version=V,
-            source_family="claims",
-            source_field="concept",
-            target_family="concepts",
-        ),
-    ),
-)
-```
-
-Bound family writes and transactions validate declared foreign keys before
-committing. Validation reads one captured branch commit, and publication uses
-that same commit as its compare-and-swap expectation. A transaction can add a
-target record and a dependent record together because validation applies the
-whole staged post-transaction state. Deleting or replacing a target that would
-leave existing dependents dangling fails before the commit is written. FK
-validation is scoped to the foreign-key graph touched by the transaction, so
-unrelated families pay no scan cost.
-
-## Contracts, briefly
-
-```python
-baseline = registry.contract_manifest(package_name="demo", package_version="0.2.0")
-# ... later, after changing a placement namespace ...
-updated  = changed_registry.contract_manifest(package_name="demo", package_version="0.2.0")
-
-check_contract_manifest(baseline, updated)
-# ContractManifestError: Contract body changed without version bump or
-# compatibility marker: family:claims
-```
-
-Either raise the family's `contract_version`, or add a `CompatibilityMarker`
-explaining why the shape change is backwards-compatible. The library forces
-the question.
 
 ## Status
 
-`0.2.x`. The package surface is small and deliberate; breaking changes in this
-phase are announced via contract-version bumps rather than silent shape drift.
-See `quire/__init__.py` for the core exports and the explicit capability modules
-for SQL and vector APIs.
+Quire is currently `0.2.x` and alpha-quality. The package surface is deliberate,
+but breaking changes are still possible. Persisted shape changes should be made
+visible through contract-version changes rather than silent drift.
 
 ## License
 
