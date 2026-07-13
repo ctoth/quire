@@ -52,11 +52,24 @@ That is what quire adds.
 
 ## Install
 
-```
-pip install quire
+```bash
+uv add quire
 ```
 
 Requires Python 3.11+. Depends on `dulwich`, `msgspec`, and `pyyaml`.
+
+SQL sidecar support and vector-cache support are explicit capabilities:
+
+```bash
+uv add "quire[sql]"     # SQLAlchemy schemas, sessions, and FTS5
+uv add "quire[vector]"  # SQL support plus sqlite-vec
+```
+
+Import those capabilities from their owning modules, for example
+`quire.sqlalchemy_schema`, `quire.sqlalchemy_store`, and
+`quire.sqlite_vec_store`. The root `quire` package exports the core Git,
+document, family, contract, projection, and generic derived-store surface and
+can be imported without SQL or vector dependencies installed.
 
 ## Testing
 
@@ -94,7 +107,7 @@ class Claim(msgspec.Struct):
     strength: float = 0.0
 
 
-V = VersionId("2026.05.01", allow_placeholder=False)
+V = VersionId("2026.05.01")
 
 claims = ArtifactFamily(
     name="claims",
@@ -121,7 +134,7 @@ with bound.transact(message="seed") as txn:
     txn.claims.save("alpha", Claim(name="alpha", strength=0.8))
     txn.claims.save("beta",  Claim(name="beta"))
 
-assert list(bound.claims.iter()) == ["alpha", "beta"]
+assert list(bound.claims.iter_refs()) == ["alpha", "beta"]
 assert bound.claims.require("alpha").strength == 0.8
 ```
 
@@ -147,6 +160,9 @@ transaction produces a single commit with both records.
 | `ContractManifest` + `check_contract_manifest` | Persisted ABI. Body drift without a version bump or compatibility marker raises. |
 | `ReferenceKey`, `FamilyReferenceIndex`, `CrossFamilyReferenceIndex`, `ReferenceResolution`, `ForeignKeySpec` | Declarative family references, alias indexing with match provenance, and mandatory cross-family FK validation. |
 | `canonical_json_bytes`, `canonical_json_sha256` | Deterministic payload canonicalization for hashing and contract bodies. |
+| `quire.derived_store`, `quire.derived_runtime` | Generic content-addressed derived-store materialization and SQLite runtime mechanics; part of core. |
+| `quire.sqlalchemy_schema`, `quire.sqlalchemy_store` | Optional SQL schema/session capability installed with `quire[sql]`. |
+| `quire.sqlite_vec_store` | Optional vector-cache capability installed with `quire[vector]`. |
 
 ## Transactions and concurrency
 
@@ -255,11 +271,13 @@ claims = FamilyDefinition(
 ```
 
 Bound family writes and transactions validate declared foreign keys before
-committing. Validation uses the post-transaction state, so a transaction can add
-a target record and a dependent record together. Deleting or replacing a target
-that would leave existing dependents dangling fails before the commit is
-written. FK validation is scoped to the foreign-key graph touched by the
-transaction, so unrelated families pay no scan cost.
+committing. Validation reads one captured branch commit, and publication uses
+that same commit as its compare-and-swap expectation. A transaction can add a
+target record and a dependent record together because validation applies the
+whole staged post-transaction state. Deleting or replacing a target that would
+leave existing dependents dangling fails before the commit is written. FK
+validation is scoped to the foreign-key graph touched by the transaction, so
+unrelated families pay no scan cost.
 
 ## Contracts, briefly
 
@@ -281,7 +299,8 @@ the question.
 
 `0.2.x`. The package surface is small and deliberate; breaking changes in this
 phase are announced via contract-version bumps rather than silent shape drift.
-See `quire/__init__.py` for the exported surface.
+See `quire/__init__.py` for the core exports and the explicit capability modules
+for SQL and vector APIs.
 
 ## License
 

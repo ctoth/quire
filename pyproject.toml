@@ -54,18 +54,15 @@ vector = [
     "sqlalchemy-fts5",
     "sqlite-vec>=0.1",
 ]
-dev = [
-    "pytest-benchmark>=5.1",
-    "pytest>=8.0",
-    "pytest-timeout>=2.3",
-]
 
 [dependency-groups]
 dev = [
     "hypothesis>=6.152.1",
+    "pyright>=1.1.407",
     "pytest-benchmark>=5.1",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
+    "ruff>=0.12.0",
     "sqlalchemy>=2.0",
     "sqlalchemy-fts5",
     "sqlite-vec>=0.1",

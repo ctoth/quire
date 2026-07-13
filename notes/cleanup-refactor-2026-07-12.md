@@ -183,3 +183,44 @@ Commit:
 
 Next slice:
 - Documentation, metadata, CI, and changelog convergence.
+
+## Iteration 5 - `Release and maintenance surface convergence`
+
+Slice read:
+- `README.md`
+- `docs/git-backend.md`
+- `CHANGELOG.md`
+- `pyproject.toml` and `uv.lock`
+- repository CI configuration
+
+Surfaces:
+- README installation and example commands
+  - Disposition: rewrite stale calls and document core, SQL, and vector installs.
+  - Owner after cleanup: README is the package entry point; explicit capability modules own SQL/vector imports.
+- Propstore-specific `docs/git-backend.md` inside Quire
+  - Disposition: delete.
+  - Evidence: it names removed Propstore files and eager `list_*` APIs, contradicting both Quire's storage boundary and iterator-first API.
+- CI configuration
+  - Disposition: add the package's actual locked install, lint, type, test, and build gates.
+- Release history
+  - Disposition: add an Unreleased record for the shipped behavior changes.
+
+Search gates:
+- User-facing docs contain no `VersionId(..., allow_placeholder=...)`, `bound.*.iter()`, stale `list_*` storage APIs, or Propstore ownership claims.
+- CI runs the ordinary non-benchmark test suite and a package build from the lockfile.
+- README names explicit SQL/vector installation and module boundaries.
+
+Gate results:
+- Pass: stale user-facing `allow_placeholder`, `.iter()`, `list_dir`, `list_yaml`, `list_branches`, and Propstore backend ownership searches return no hits.
+- Pass: README documents core, `sql`, and `vector` installs plus their owning modules.
+- Pass: `uv run pytest tests/test_package_boundary.py tests/test_ref_backed_family.py tests/test_families.py -q` -> `61 passed`.
+- Pass: `uv run ruff check quire tests`.
+- Pass: `uv run pyright quire` -> `0 errors` with the locked Pyright dependency.
+- Pass: `uv build` produced the source distribution and wheel.
+- Pass: `uv lock --check`.
+
+Commit:
+- `Align release and maintenance surfaces` (this iteration's commit).
+
+Next slice:
+- Final Quire and Propstore acceptance gates plus fixed-point searches.

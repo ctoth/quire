@@ -24,8 +24,12 @@ def test_sql_dependencies_are_explicit_extras() -> None:
     vector = {_dependency_name(item) for item in extras["vector"]}
 
     assert core.isdisjoint(SQL_DISTRIBUTIONS)
+    assert set(extras) == {"sql", "vector"}
     assert sql == {"sqlalchemy", "sqlalchemy-fts5"}
     assert vector == SQL_DISTRIBUTIONS
+
+    dev = {_dependency_name(item) for item in metadata["dependency-groups"]["dev"]}
+    assert {"pyright", "ruff"}.issubset(dev)
 
 
 def test_core_package_imports_without_sql_or_vector_dependencies(tmp_path: Path) -> None:
