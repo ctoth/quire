@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EnumText",
     "JsonValueObject",
+    "MessagePackValue",
     "SqlAlchemySchema",
     "build_sqlalchemy_schema",
 ]
@@ -92,6 +93,31 @@ class JsonValueObject(TypeDecorator[Any]):
         if isinstance(payload, Mapping):
             return self.value_type(**payload)
         return payload
+
+
+class MessagePackValue(TypeDecorator[Any]):
+    """Store one charter-declared Python value as a typed MessagePack BLOB."""
+
+    impl = LargeBinary
+    cache_ok = True
+
+    def __init__(self, value_type: object) -> None:
+        super().__init__()
+        self.value_type = value_type
+
+    def process_bind_param(self, value: object, dialect: object) -> bytes | None:
+        if value is None:
+            return None
+        converted = msgspec.convert(value, type=cast(Any, self.value_type), strict=True)
+        return msgspec.msgpack.encode(converted)
+
+    def process_result_value(self, value: object, dialect: object) -> object:
+        if value is None:
+            return None
+        decoded = msgspec.msgpack.decode(cast(Any, value), type=cast(Any, self.value_type))
+        if decoded is None:
+            raise ValueError("encoded MessagePack nil is not a stored value; use SQL NULL")
+        return decoded
 
 
 @cache
@@ -551,6 +577,8 @@ def _sqlalchemy_type(field: SchemaField) -> TypeEngine[Any]:
         return Boolean()
     if sql_type.sqlalchemy_type == "LargeBinary":
         return LargeBinary()
+    if sql_type.sqlalchemy_type == "MessagePackValue":
+        return MessagePackValue(field.charter_field.python_type)
     if sql_type.sqlalchemy_type == "EnumText":
         enum_type = cast(type[Enum], _load_type(field.python_type))
         return EnumText(enum_type)

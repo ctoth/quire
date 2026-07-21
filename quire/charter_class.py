@@ -26,6 +26,7 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Literal,
     TypeVar,
     cast,
     get_args,
@@ -120,6 +121,7 @@ class CharterFieldSpec:
     column_name: str | None = None
     nullable: bool | None = None
     json: bool = False
+    storage_codec: Literal["messagepack"] | None = None
     document_only: bool = False
     artifact: bool = False
     primary_key: bool = False
@@ -157,6 +159,7 @@ def charter_field(
     column_name: str | None = None,
     nullable: bool | None = None,
     json: bool = False,
+    storage_codec: Literal["messagepack"] | None = None,
     document_only: bool = False,
     artifact: bool = False,
     primary_key: bool = False,
@@ -208,6 +211,7 @@ def charter_field(
         column_name=column_name,
         nullable=nullable,
         json=json,
+        storage_codec=storage_codec,
         document_only=document_only,
         artifact=artifact,
         primary_key=primary_key,
@@ -508,6 +512,7 @@ def _charter_field_from_attribute(
         local_id_policy=spec.local_id_policy,
         contract_version=spec.contract_version,
         parse_boundary="json" if is_json else None,
+        storage_codec=spec.storage_codec,
         metadata=spec.metadata,
     )
 

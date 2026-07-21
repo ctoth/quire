@@ -97,6 +97,7 @@ class CharterField:
     local_id_policy: str | None = None
     contract_version: VersionId | None = None
     parse_boundary: Literal["yaml", "json", "sqlite"] | None = None
+    storage_codec: Literal["messagepack"] | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
     _nullable_explicit: bool = field(default=False, init=False, repr=False, compare=False)
 
@@ -109,6 +110,10 @@ class CharterField:
             raise ValueError(
                 "CharterField.foreign_key and CharterField.foreign_keys are mutually exclusive"
             )
+        if self.storage_codec is not None and self.parse_boundary is not None:
+            raise ValueError(
+                "CharterField.storage_codec and CharterField.parse_boundary are mutually exclusive"
+            )
 
     def to_schema_field(self) -> SchemaField:
         schema_python_type = str if self.parse_boundary == "json" else self.python_type
@@ -116,6 +121,7 @@ class CharterField:
             schema_python_type,
             json_value_object=False if self.parse_boundary == "json" else self.json_value_object,
             enum_type=None if self.parse_boundary == "json" else self.enum_type,
+            storage_codec=self.storage_codec,
         )
         return SchemaField(
             name=self.name,

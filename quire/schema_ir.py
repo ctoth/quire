@@ -124,6 +124,7 @@ class SchemaField:
             "sql_type": _payload(self.sql_type),
             "states": self.states,
             "storage": self.storage,
+            "storage_codec": self.charter_field.storage_codec,
             "versioned": self.versioned,
         }
 

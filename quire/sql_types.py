@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from types import UnionType
-from typing import Union, cast, get_args, get_origin
+from typing import Literal, Union, cast, get_args, get_origin
 
 from quire.schema_ir import python_type_path
 
@@ -33,8 +33,16 @@ def python_type_to_sql(
     *,
     json_value_object: bool = False,
     enum_type: type[Enum] | None = None,
+    storage_codec: Literal["messagepack"] | None = None,
 ) -> SqlTypeSpec:
     python_type = optional_inner_type(python_type)
+    if storage_codec == "messagepack":
+        return SqlTypeSpec(
+            storage_kind="messagepack",
+            ddl_name="BLOB",
+            sqlalchemy_type="MessagePackValue",
+            python_type=python_type_path(python_type),
+        )
     if json_value_object:
         return SqlTypeSpec(
             storage_kind="json",
