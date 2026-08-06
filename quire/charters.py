@@ -290,7 +290,7 @@ class FamilyCharter:
         for lifecycle_state in self.states:
             if lifecycle_state.name == name:
                 return lifecycle_state
-        raise KeyError(name)
+        raise KeyError(f"unknown lifecycle state: {name}")
 
     def transition(self, name: str) -> FamilyTransition:
         for lifecycle_transition in self.transitions:
@@ -299,6 +299,9 @@ class FamilyCharter:
         raise KeyError(name)
 
     def generated_document(self, state: str | None = None) -> type[msgspec.Struct]:
+        if state is not None and self.states:
+            self.state(state)
+
         cached = self._generated_document_cache.get(state)
         if cached is not None:
             return cached

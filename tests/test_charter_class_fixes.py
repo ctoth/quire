@@ -102,8 +102,8 @@ def test_document_from_model_uses_charter_fields_and_document_names() -> None:
 def test_generated_document_with_state_returns_class_when_no_field_states() -> None:
     # A charter with no state-conditional field returns the SAME decorated class
     # for any state (parity with the hand-written _field_matches_state behaviour,
-    # which matched every field when field.states is None). The NotImplementedError
-    # path now applies only to genuine field-level projections — see
+    # which matches every field when field.states is None). State-conditional
+    # declarative projections use the generic charter machinery — see
     # test_charter_class_lifecycle_state.py.
     charter_obj: FamilyCharter = SameAsAssertionDocument.__charter__
     assert charter_obj.generated_document("proposed") is SameAsAssertionDocument

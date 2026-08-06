@@ -579,13 +579,9 @@ class _DeclarativeFamilyCharter(FamilyCharter):
 
     A non-``None`` ``state`` returns the SAME decorated class as ``state=None``
     whenever no field is state-conditional (no ``CharterField`` declares a
-    ``states`` set). This preserves parity with the imperative charter's
-    ``_field_matches_state`` behaviour,
-    where a field with ``states is None`` matched every state, so
-    ``generated_document("proposed")`` returned a document identical to
-    ``generated_document(None)``. ``NotImplementedError`` is raised only for a
-    genuine field-level projection (some field declares ``states`` AND a
-    non-``None`` ``state`` is requested).
+    ``states`` set). This preserves the authored class and its validators when
+    a lifecycle state does not alter the document shape. State-conditional
+    fields use the base charter's generated-document projection machinery.
     """
 
     def _bind_document(self, document_class: type[msgspec.Struct]) -> None:
@@ -598,6 +594,9 @@ class _DeclarativeFamilyCharter(FamilyCharter):
         return any(field.states is not None for field in self.fields)
 
     def generated_document(self, state: str | None = None) -> type[msgspec.Struct]:
+        if state is not None and self.states:
+            self.state(state)
+
         cached = self._generated_document_cache.get(state)
         if cached is not None:
             return cached
@@ -612,14 +611,7 @@ class _DeclarativeFamilyCharter(FamilyCharter):
             )
 
         if state is not None and self._has_state_conditional_field():
-            # A genuine field-level projection would require subsetting the
-            # document by state; the declarative charter does not implement that
-            # subset operation.
-            raise NotImplementedError(
-                "declarative charters do not project field-level states; "
-                f"generated_document(state={state!r}) is unsupported because a "
-                "field declares a state-conditional `states` set"
-            )
+            return super().generated_document(state)
 
         # No field is filtered by state -> the state-projected document equals
         # the full document, so return (and memoize) the decorated class.
