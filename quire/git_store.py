@@ -49,14 +49,6 @@ class GitBranch:
 
 
 @dataclass(frozen=True)
-class GitGcReport:
-    total_objects: int
-    reachable_objects: int
-    orphan_objects: int
-    orphan_shas: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class TreeFile:
     relpath: str
     content: bytes
@@ -635,8 +627,8 @@ class GitStore:
             self._remember_object(blob)
             return blob.id.decode("ascii")
 
-    def gc(self, *, dry_run: bool = True) -> GitGcReport:
-        all_objects: set[bytes] = {cast(bytes, object_id) for object_id in self._repo.object_store}
+    def iter_unreachable_object_ids(self) -> Iterator[str]:
+        """Yield object IDs that are not reachable from any ref."""
         reachable: set[bytes] = set()
         stack = list(self._repo.refs.as_dict().values())
         while stack:
@@ -650,15 +642,11 @@ class GitStore:
                 stack.extend(obj.parents)
             elif isinstance(obj, Tree):
                 stack.extend(entry.sha for entry in obj.items())
-        orphan_ids = tuple(sorted(all_objects - reachable))
-        if orphan_ids and not dry_run:
-            raise NotImplementedError("GitStore.gc currently reports unreachable objects; deletion is not implemented")
-        return GitGcReport(
-            total_objects=len(all_objects),
-            reachable_objects=len(reachable),
-            orphan_objects=len(orphan_ids),
-            orphan_shas=tuple(object_id.decode("ascii") for object_id in orphan_ids),
-        )
+
+        for object_id in self._repo.object_store:
+            raw_object_id = cast(bytes, object_id)
+            if raw_object_id not in reachable:
+                yield raw_object_id.decode("ascii")
 
     def commit_flat_tree(
         self,

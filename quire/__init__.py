@@ -73,7 +73,7 @@ from quire.derived_runtime import (
     write_derived_store_schema_metadata,
 )
 from quire.family_store import DocumentFamilyStore
-from quire.git_store import GitGcReport, GitStore, GitStorePolicy, HeadMismatchError
+from quire.git_store import GitStore, GitStorePolicy, HeadMismatchError
 from quire.lifecycle import (
     ConflictPolicy,
     FamilyRecordDelete,
@@ -184,7 +184,6 @@ __all__ = [
     "FlatYamlPlacement",
     "ForeignKeySpec",
     "ForeignKeyValidationError",
-    "GitGcReport",
     "GitStore",
     "GitStorePolicy",
     "GitTreePath",

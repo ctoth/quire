@@ -11,6 +11,7 @@
 - Split SQLAlchemy and sqlite-vec support into explicit `sql` and `vector` installation extras and capability modules.
 - Removed stale Propstore-specific backend documentation from the generic Quire package.
 - Added locked lint, typecheck, test, and package-build CI gates.
+- Replaced the nonfunctional `GitStore.gc` mutation flag with lazy unreachable-object iteration.
 
 ## 0.2.0 - 2026-04-27
 
