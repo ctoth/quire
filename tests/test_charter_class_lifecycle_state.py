@@ -1,17 +1,4 @@
-"""Regression tests for declarative-charter generated_document(state=...).
-
-propstore's proposal->canonical lifecycle (rules/predicates/stances) calls
-``generated_document(state="proposed")`` via ``lifecycle._bind_context``. No
-propstore CharterField is state-conditional (none declares ``states=``), so the
-old hand-written charter returned a document IDENTICAL to ``state=None`` for any
-state. A declarative charter must match that parity:
-
-- ``state=None`` -> the decorated class;
-- ``state="..."`` with NO field-level ``states`` -> STILL the decorated class
-  (no field is filtered, so the projected document equals the full document);
-- ``state="..."`` with a field that DOES declare ``states`` -> NotImplementedError
-  (genuine field-level projection; propstore never does this).
-"""
+"""Regression tests for declarative charter lifecycle projections."""
 
 from __future__ import annotations
 
@@ -21,6 +8,7 @@ import pytest
 
 from quire.charter_class import CharterDoc, charter, charter_field, column
 from quire.charters import FamilyCharter
+from quire.documents.schema import DocumentSchemaError
 from quire.lifecycle import ConflictPolicy, FamilyState, FamilyTransition
 
 
@@ -82,9 +70,13 @@ def test_lifecycle_state_document_has_unfiltered_fields() -> None:
     identity_field="id",
     semantic="propstore.world",
     extra_columns=(column("id", str, primary_key=True, nullable=False),),
+    states=(FamilyState("proposed"), FamilyState("canonical")),
 )
 class ProjectedDocument(CharterDoc):
     always: str
+    proposed_only: Annotated[
+        str | None, charter_field(states=frozenset({"proposed"}))
+    ] = None
     canonical_only: Annotated[
         str | None, charter_field(states=frozenset({"canonical"}))
     ] = None
@@ -95,7 +87,79 @@ def test_field_level_state_still_returns_class_for_none() -> None:
     assert charter_obj.generated_document(None) is ProjectedDocument
 
 
-def test_field_level_state_raises_for_non_none_state() -> None:
+@pytest.mark.parametrize(
+    ("state", "expected_fields"),
+    [
+        ("proposed", ("always", "proposed_only")),
+        ("canonical", ("always", "canonical_only")),
+    ],
+)
+def test_field_level_state_projects_declarative_document(
+    state: str,
+    expected_fields: tuple[str, ...],
+) -> None:
     charter_obj: FamilyCharter = ProjectedDocument.__charter__
-    with pytest.raises(NotImplementedError):
-        charter_obj.generated_document("canonical")
+    assert charter_obj.generated_document(state).__struct_fields__ == expected_fields
+
+
+def test_state_specific_codecs_round_trip_strictly() -> None:
+    charter_obj: FamilyCharter = ProjectedDocument.__charter__
+
+    proposed_type = charter_obj.generated_document("proposed")
+    proposed_codec = charter_obj.document_codec("proposed")
+    proposed = proposed_type(always="shared", proposed_only="draft")
+    proposed_payload = proposed_codec.encode(proposed)
+    assert proposed_codec.decode(
+        proposed_payload,
+        proposed_type,
+        source="proposed.yaml",
+    ) == proposed
+
+    canonical_type = charter_obj.generated_document("canonical")
+    canonical_codec = charter_obj.document_codec("canonical")
+    canonical = canonical_type(always="shared", canonical_only="published")
+    canonical_payload = canonical_codec.encode(canonical)
+    assert canonical_codec.decode(
+        canonical_payload,
+        canonical_type,
+        source="canonical.yaml",
+    ) == canonical
+
+    with pytest.raises(DocumentSchemaError, match="unknown field"):
+        proposed_codec.decode(
+            canonical_payload,
+            proposed_type,
+            source="proposed.yaml",
+        )
+
+
+def test_declarative_state_projection_matches_imperative_charter() -> None:
+    declarative: FamilyCharter = ProjectedDocument.__charter__
+    imperative = FamilyCharter(
+        family=declarative.family,
+        model=declarative.model,
+        fields=declarative.fields,
+        states=declarative.states,
+    )
+
+    for state in ("proposed", "canonical"):
+        assert (
+            declarative.generated_document(state).__struct_fields__
+            == imperative.generated_document(state).__struct_fields__
+        )
+
+
+def test_unknown_lifecycle_state_fails_at_charter_boundary() -> None:
+    declarative: FamilyCharter = ProjectedDocument.__charter__
+    imperative = FamilyCharter(
+        family=declarative.family,
+        model=declarative.model,
+        fields=declarative.fields,
+        states=declarative.states,
+    )
+
+    for charter_obj in (declarative, imperative):
+        with pytest.raises(KeyError, match="unknown lifecycle state: missing"):
+            charter_obj.generated_document("missing")
+        with pytest.raises(KeyError, match="unknown lifecycle state: missing"):
+            charter_obj.document_codec("missing")
