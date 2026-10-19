@@ -285,6 +285,53 @@ def test_transaction_rejects_cross_branch_writes():
             transaction.save(family, BranchRef("other", "two"), DemoDocument("two"))
 
 
+@pytest.mark.parametrize("operation", ["delete", "move"])
+@pytest.mark.parametrize("explicit_branch", [False, True])
+def test_transaction_delete_and_move_respect_branch_selection(operation, explicit_branch):
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    family = ArtifactFamily[Owner, BranchRef, DemoDocument](
+        name="branching",
+        contract_version=contract_version("2026.04.18"),
+        doc_type=DemoDocument,
+        placement=FlatYamlPlacement(
+            "demo",
+            lambda name: BranchRef("master", name),
+            ref_field="name",
+            branch=BranchPlacement(policy="template", template="{stem}", ref_field="branch"),
+        ),
+    )
+    master_ref = BranchRef("master", "victim")
+    other_ref = BranchRef("other", "victim")
+    store.save(family, master_ref, DemoDocument("master victim"), message="seed master")
+    store.save(family, other_ref, DemoDocument("other victim"), message="seed other")
+    master_head = backend.branch_sha("master")
+    other_head = backend.branch_sha("other")
+
+    def stage():
+        with store.transact(
+            message="branch selection", branch="master" if explicit_branch else None
+        ) as transaction:
+            transaction.save(family, BranchRef("master", "one"), DemoDocument("one"))
+            if operation == "delete":
+                transaction.delete(family, other_ref)
+            else:
+                transaction.move(family, other_ref, BranchRef("master", "new"), DemoDocument("moved"))
+
+    if explicit_branch:
+        stage()
+        assert store.load(family, master_ref) is None
+        if operation == "move":
+            assert store.require(family, BranchRef("master", "new")) == DemoDocument("moved")
+    else:
+        with pytest.raises(ValueError, match="Transaction branch mismatch"):
+            stage()
+        assert backend.branch_sha("master") == master_head
+        assert store.require(family, master_ref) == DemoDocument("master victim")
+    assert backend.branch_sha("other") == other_head
+    assert store.require(family, other_ref) == DemoDocument("other victim")
+
+
 def test_move_deletes_old_path_and_writes_new_path():
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
     family = _demo_family()

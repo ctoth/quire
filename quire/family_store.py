@@ -531,7 +531,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         ref: TRef,
     ) -> tuple[str | None, ArtifactAddress]:
         address = family.address_for(self.owner, ref)
-        branch = self.branch or address.branch
+        branch = self.branch if self._explicit_branch else address.branch
         if self.branch is None:
             self.branch = branch
         elif branch != self.branch:
