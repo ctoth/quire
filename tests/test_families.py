@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, cast
 
@@ -903,6 +903,53 @@ def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> No
             message="save invalid claim",
         )
     assert backend.branch_sha("master") == head
+
+
+@pytest.mark.parametrize("operation", ["save", "move"])
+@pytest.mark.parametrize("normalized_target", ["mass", "missing"])
+def test_registry_transactions_validate_normalized_documents(operation, normalized_target) -> None:
+    calls: list[str] = []
+
+    def normalize(context, document, store):
+        calls.append(document.concept)
+        return ClaimWithConceptDocument(document.artifact_id, normalized_target)
+
+    registry = _reference_registry()
+    claims, concepts = registry.families
+    registry = replace(registry, families=(
+        replace(claims, artifact_family=replace(claims.artifact_family, normalize_for_write=normalize)),
+        concepts,
+    ))
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save("mass", IdentifiedDocument("mass"), message="seed target")
+    backend.commit_files(
+        {"claims/old.yaml": msgspec.yaml.encode(ClaimWithConceptDocument("old", "mass"))},
+        "seed source",
+    )
+    head = backend.head_sha()
+    authored_target = "missing" if normalized_target == "mass" else "mass"
+
+    def stage():
+        with bound.transact(message="normalized write") as transaction:
+            document = ClaimWithConceptDocument("new", authored_target)
+            if operation == "save":
+                transaction.claims.save("new", document)
+            else:
+                transaction.claims.move("old", "new", document)
+
+    if normalized_target == "mass":
+        stage()
+        assert bound.claims.require("new").concept == "mass"
+        assert bound.claims.exists("old") is (operation == "save")
+    else:
+        with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+            stage()
+        assert backend.head_sha() == head
+        assert bound.claims.load("new") is None
+        assert bound.claims.require("old").concept == "mass"
+    assert calls == [authored_target]
 
 
 def test_registry_validation_reads_the_publication_head(monkeypatch) -> None:
