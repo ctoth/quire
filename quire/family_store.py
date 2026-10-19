@@ -486,15 +486,19 @@ class DocumentFamilyTransaction(Generic[TOwner]):
     ) -> PreparedArtifact[TOwner, TRef, TDoc]:
         self._ensure_open()
         self._advisory_head_check()
-        prepared = self.save(family, new_ref, doc)
-        old_branch, old_address = self._addressed_target(family, old_ref)
-        new_branch, new_address = self._addressed_target(family, new_ref)
+        branch = self.branch if self._explicit_branch else None
+        old_address = self.store.address(family, old_ref, branch=branch)
+        new_address = self.store.address(family, new_ref, branch=branch)
+        old_branch, new_branch = old_address.branch, new_address.branch
         if old_branch != new_branch:
             raise ValueError(
                 f"Transaction branch mismatch for move: expected {new_branch!r}, got {old_branch!r}"
             )
+        if self.branch is not None and new_branch != self.branch:
+            raise ValueError(f"Transaction branch mismatch: expected {self.branch!r}, got {new_branch!r}")
         old_path = address_path(old_address)
         new_path = address_path(new_address)
+        prepared = self.save(family, new_ref, doc)
         if old_path != new_path:
             self._deletes.add(old_path)
             self._adds.pop(old_path, None)
@@ -537,7 +541,7 @@ class DocumentFamilyTransaction(Generic[TOwner]):
         ref: TRef,
     ) -> tuple[str | None, ArtifactAddress]:
         address = family.address_for(self.owner, ref)
-        branch = self.branch or address.branch
+        branch = self.branch if self._explicit_branch else address.branch
         if self.branch is None:
             self.branch = branch
         elif branch != self.branch:
