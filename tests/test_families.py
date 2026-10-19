@@ -905,6 +905,34 @@ def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> No
     assert backend.branch_sha("master") == head
 
 
+@pytest.mark.parametrize("invalid_kind", ["outgoing", "incoming", "valid"])
+def test_bound_family_move_validates_registry_post_state(invalid_kind) -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    with bound.transact(message="seed graph") as transaction:
+        transaction.concepts.save("mass", IdentifiedDocument("mass"))
+        transaction.claims.save("old", ClaimWithConceptDocument("old", "mass"))
+    head = backend.head_sha()
+
+    if invalid_kind == "valid":
+        bound.claims.move("old", "new", ClaimWithConceptDocument("new", "mass"), message="move")
+        assert bound.claims.load("old") is None
+        assert bound.claims.require("new").concept == "mass"
+    else:
+        with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+            if invalid_kind == "outgoing":
+                bound.claims.move("old", "new", ClaimWithConceptDocument("new", "missing"), message="move")
+            else:
+                bound.concepts.move("mass", "weight", IdentifiedDocument("weight"), message="move")
+        assert backend.head_sha() == head
+        assert bound.claims.require("old").concept == "mass"
+        assert bound.concepts.require("mass").artifact_id == "mass"
+        assert bound.claims.load("new") is None
+        assert bound.concepts.load("weight") is None
+
+
 def test_registry_validation_reads_the_publication_head(monkeypatch) -> None:
     registry = _reference_registry()
     backend = GitStore.init_memory()

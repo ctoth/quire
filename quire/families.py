@@ -592,6 +592,12 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
+        if self.registry is not None and self.definition is not None:
+            with self.registry.bind(self.store.owner, self.store).transact(
+                message=message, branch=branch, expected_head=expected_head
+            ) as bound_transaction:
+                bound_transaction.by_artifact_family(self.family).move(old_ref, new_ref, doc)
+            return cast(str, bound_transaction.commit_sha)
         with self.store.transact(message=message, branch=branch, expected_head=expected_head) as transaction:
             transaction.move(self.family, old_ref, new_ref, doc)
         return cast(str, transaction.commit_sha)
