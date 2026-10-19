@@ -16,4 +16,8 @@ The Git transaction already stages the correct final tree; only the registry val
 `tests/test_families.py --basetemp .pytest-post-state-temp`: 50 passed in 3.67s with the existing interpreter via uv. Ten new sequence cases passed.
 
 ## Next step
-Publish this branch as a draft PR and inspect CI. Preserve all existing checkouts and dirty work.
+PR18 was published with ten sequence cases passing and eight original CI checks green. Parent now requests sequential integration after PR15 is merged, then PR14. Verify the preceding GitHub merge and fetch current master before merging default into this existing branch; do not force-push or merge a GitHub PR independently.
+
+Smallest integration: preserve PR15 prepared = lower.move(...), this branch's prior-source-save and destination-delete ledger cleanup, and append prepared.document. Preserve PR13 address/path preflight at the lower layer. Add two focused valid/invalid final-reference cases (~40 lines) where a concept normalizer lowercases identifiers and a staged concept is moved; only the normalized final target may satisfy claims. Existing sequence cases cover original identities; these cases exercise the combined normalization/ledger behavior explicitly.
+
+Current prerequisite: PR15 integrated head 7221f197c8157a1a6f70b755c8dc0fc32a0f6853 is pushed and fresh CI is running. Wait for parent's review/merge before integrating PR18. PR16 is handled independently. Preserve all existing checkouts and dirty work; no external prose edits or ready action.
