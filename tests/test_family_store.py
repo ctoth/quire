@@ -332,6 +332,45 @@ def test_transaction_delete_and_move_respect_branch_selection(operation, explici
     assert store.require(family, other_ref) == DemoDocument("other victim")
 
 
+@pytest.mark.parametrize("staged_before", [False, True])
+@pytest.mark.parametrize("continue_after", [False, True])
+def test_caught_cross_branch_move_leaves_no_partial_write(staged_before, continue_after):
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    family = ArtifactFamily[Owner, BranchRef, DemoDocument](
+        name="branching",
+        contract_version=contract_version("2026.04.18"),
+        doc_type=DemoDocument,
+        placement=FlatYamlPlacement(
+            "demo", lambda name: BranchRef("master", name), ref_field="name",
+            branch=BranchPlacement(policy="template", template="{stem}", ref_field="branch"),
+        ),
+    )
+    source = BranchRef("other", "old")
+    destination = BranchRef("master", "new")
+    store.save(family, source, DemoDocument("original"), message="seed source")
+    store.save(family, destination, DemoDocument("existing"), message="seed destination")
+    master_head = backend.branch_sha("master")
+    other_head = backend.branch_sha("other")
+
+    with store.transact(message="catch rejected move") as transaction:
+        if staged_before:
+            transaction.save(family, BranchRef("master", "pending"), DemoDocument("pending"))
+        with pytest.raises(ValueError, match="Transaction branch mismatch"):
+            transaction.move(family, source, destination, DemoDocument("rejected"))
+        if continue_after:
+            transaction.save(family, BranchRef("master", "continued"), DemoDocument("continued"))
+
+    assert store.require(family, source) == DemoDocument("original")
+    assert store.require(family, destination) == DemoDocument("existing")
+    assert backend.branch_sha("other") == other_head
+    assert store.exists(family, BranchRef("master", "pending")) is staged_before
+    assert store.exists(family, BranchRef("master", "continued")) is continue_after
+    if not staged_before and not continue_after:
+        assert transaction.commit_sha is None
+        assert backend.branch_sha("master") == master_head
+
+
 def test_move_deletes_old_path_and_writes_new_path():
     store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
     family = _demo_family()

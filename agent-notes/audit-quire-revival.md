@@ -62,10 +62,22 @@ Worktree prefix: C:/Users/Q/Documents/Codex/2026-10-19/task-16/.
 - Initial codec file run: 14 passed, four existing tmp_path fixture setup errors (WinError 5 under default Temp/pytest-of-Q). Corrected invocation with --basetemp inside the isolated worktree; 18 passed. This was an environment access error, not a source finding.
 - Issue/PR body files and audit_probe.py are intentionally untracked task artifacts in quire-audit. No unrelated local work was adopted.
 
-## Final state
+## Initial publication state
 - Five issues filed once and verified; five focused fixes published as draft PRs; all 40 attached CI checks succeeded at the source commits above. CI includes lint, package typecheck, full ordinary tests and package build.
 - No remaining execution blocker, denial, or uncertain publication outcome. No PRs merged or marked ready.
 - This final handoff note is committed locally on audit/quire-revival after publication; its final documentation-only commit is intentionally not pushed, preserving the verified draft PR source heads. All five source/test fix commits are pushed.
 
-## Next step
-Parent can read this handoff and review the drafts. Integration worker owns eventual combination and Propstore dependency pin; retain normalized-document capture and ledger reconciliation when combining PRs #15/#18. No further work scheduled.
+## PR13 independent-review follow-up
+Independent review found a PR13 blocker: move stages its destination before checking its source branch, so catching the error inside the context commits a partial write. Verified with the real DocumentFamilyStore/GitStore: caught branch mismatch, destination persisted, source unchanged, commit returned.
+
+Smallest correction: resolve and validate both addresses, paths, and effective branches before calling save (about 10 lines), with four regression cases catching the exception inside the context before/after other valid work. The initial regression incorrectly relied on the exception escaping the context; this follow-up directly exercises recovery inside it.
+
+Other move PRs #14/#15/#18 all delegate to this same lower transaction method; #15 adds prepared-document capture, which must remain after preflight when combined. No separate issue/PR or duplicated lower-layer fix is needed. Update existing PR13, inspect fresh CI, report exact new head; do not edit external issue/PR prose or merge independently. Parent owns combination/merges.
+
+Implementation: resolve both addresses with only the explicitly requested branch override; compare their effective branches and the already-bound transaction branch; resolve both paths; only then call save and stage deletion. Rejected moves leave branch binding untouched as well as document state.
+
+Validation: tests/test_family_store.py --basetemp .pytest-caught-move-temp: 30 passed in 0.92s. Four new cases catch the error inside the with-block, with/without prior valid staging and with/without continuing valid work. They verify the source and pre-existing destination remain unchanged; a transaction containing only the rejected move creates no commit.
+
+Integration detail: PR15 must keep `prepared = self.save(...)` after this preflight and keep `return prepared`; do not restore its current save-before-address-check ordering. PR14's BoundFamily.move and PR18's ledger updates run only after the lower operation succeeds.
+
+Next step: push this correction to the existing PR13 branch, read fresh CI and report its exact head. No issue/PR prose edits and no independent merge.
