@@ -18,4 +18,8 @@ The loss originates in root-commit recursive pruning, not MessagePack or a consu
 The initial invocation omitted --basetemp and hit WinError 5 in four existing tmp_path fixture setups under the user's default Temp/pytest-of-Q. All 14 non-fixture tests passed. Corrected the invocation to honor Q's instruction that test artifacts stay in this worktree; no source change was needed for that environment error.
 
 ## Next step
-Publish this branch as a draft PR and inspect CI. No dependencies installed or synchronized.
+PR16 was published and its original eight CI checks passed. Parent now requests integration with current default using a merge commit, with no force-push, external prose edits, ready action or independent GitHub merge.
+
+Smallest integration: merge origin/master (5e65d0b, verified merged PR13) into this existing isolated branch. No codec overlap is expected. Run document regressions and fresh CI, report the exact head; parent owns review/merge. No dependencies installed or synchronized.
+
+Merge completed cleanly. Integrated document regressions: tests/test_documents.py --basetemp .pytest-integrated-null-temp: 18 passed in 0.77s. Ready to commit/push the merge and read fresh CI.
