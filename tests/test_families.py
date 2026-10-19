@@ -905,6 +905,53 @@ def test_bound_family_save_validates_declared_foreign_keys_before_commit() -> No
     assert backend.branch_sha("master") == head
 
 
+@pytest.mark.parametrize("sequence", ["save_move", "chain", "same_ref", "delete_after", "save_after"])
+@pytest.mark.parametrize("valid", [False, True])
+def test_transaction_moves_validate_only_final_staged_targets(sequence, valid) -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save("a", IdentifiedDocument("A"), message="seed target")
+    head = backend.head_sha()
+    final_target = "B"
+    stale_target = "A"
+    if sequence in {"chain", "delete_after"}:
+        final_target = "C"
+        stale_target = "B" if sequence == "chain" else "A"
+    if sequence == "save_after":
+        final_target = "A2"
+
+    def stage():
+        with bound.transact(message="move sequence") as transaction:
+            if sequence in {"save_move", "same_ref", "delete_after"}:
+                transaction.concepts.save("a", IdentifiedDocument("A"))
+            destination = "a" if sequence == "same_ref" else "b"
+            transaction.concepts.move("a", destination, IdentifiedDocument("B"))
+            if sequence == "chain":
+                transaction.concepts.move("b", "c", IdentifiedDocument("C"))
+            elif sequence == "delete_after":
+                transaction.concepts.delete("b")
+                transaction.concepts.save("c", IdentifiedDocument("C"))
+            elif sequence == "save_after":
+                transaction.concepts.save("a", IdentifiedDocument("A2"))
+            transaction.claims.save(
+                "claim", ClaimWithConceptDocument("claim", final_target if valid else stale_target)
+            )
+
+    if valid:
+        stage()
+        assert bound.claims.require("claim").concept == final_target
+        assert final_target in {handle.document.artifact_id for handle in bound.concepts.iter_handles()}
+        assert stale_target not in {handle.document.artifact_id for handle in bound.concepts.iter_handles()}
+    else:
+        with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+            stage()
+        assert backend.head_sha() == head
+        assert bound.concepts.require("a").artifact_id == "A"
+        assert bound.claims.load("claim") is None
+
+
 def test_registry_validation_reads_the_publication_head(monkeypatch) -> None:
     registry = _reference_registry()
     backend = GitStore.init_memory()
