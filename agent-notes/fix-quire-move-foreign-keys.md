@@ -16,4 +16,6 @@ The move path bypassed registry validation added in 57e665fc, despite save and d
 `tests/test_families.py`: 43 passed in 3.67s with the existing Quire interpreter via uv. Three new cases cover outgoing/incoming FK rejection without branch advancement and a valid move.
 
 ## Next step
-Commit, push this branch, open a draft PR and read CI.
+PR14 was published and its original eight CI checks passed. Parent requests sequential integration: merge PR15, then PR18, then prepare this branch against current default. Verify the preceding merged states and fetch master before a history-preserving merge into this existing branch.
+
+Smallest integration: retain the existing six-line registry-bound move dispatch; take lower-layer preflight, prepared-document handling and ledger cleanup from default. Run focused family regressions and fresh CI, report the exact head; parent owns review and GitHub merges. No force-push, external prose edits, ready action or independent GitHub merge.
