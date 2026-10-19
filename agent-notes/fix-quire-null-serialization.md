@@ -23,3 +23,5 @@ PR16 was published and its original eight CI checks passed. Parent now requests 
 Smallest integration: merge origin/master (5e65d0b, verified merged PR13) into this existing isolated branch. No codec overlap is expected. Run document regressions and fresh CI, report the exact head; parent owns review/merge. No dependencies installed or synchronized.
 
 Merge completed cleanly. Integrated document regressions: tests/test_documents.py --basetemp .pytest-integrated-null-temp: 18 passed in 0.77s. Ready to commit/push the merge and read fresh CI.
+
+Published integrated head: 052f7ee1f8fe5b9454f8ff666659c32602127d70, merging master 5e65d0b into the original PR16 head fb16f31. All eight fresh checks succeeded (PR workflow 39341800566; push workflow 39341796435). Reported this exact head for parent's review/merge. No external prose edits, ready action or GitHub merge. This final evidence note is committed locally only to preserve the verified PR head.
