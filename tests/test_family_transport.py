@@ -11,6 +11,8 @@ from quire.charters import registry_from_charters
 from quire.family_transport import FamilyInstanceMap, UnsupportedFamilyTransportError
 from quire.references import ForeignKeySpec, ForeignKeyValidationError, map_foreign_keys
 from quire.versions import VersionId
+from quire.family_store import DocumentFamilyStore
+from quire.git_store import GitStore
 
 
 def _fk(name: str, field: str) -> ForeignKeySpec:
@@ -161,3 +163,35 @@ def test_complete_instance_validation_rejects_dangling_result() -> None:
 
 def test_identity_callback_is_part_of_the_family_contract() -> None:
     assert _registry().by_name("edge").contract_body()["transport_identity"].endswith("._edge_identity")
+
+
+@dataclass(frozen=True)
+class Owner:
+    branch: str = "master"
+
+
+@pytest.mark.parametrize("identity", ["bundle", "edge", "ni:///sha-256;original", "tag:example:node/path"])
+def test_declared_document_identity_preserves_raw_paths_and_exact_refs(identity: str) -> None:
+    owner = Owner()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=owner, backend=backend)
+    family = _registry().bind(owner, store).by_name("node")
+    document = Node(identity)
+    commit = family.save(identity, document, message="original raw identity")
+    assert family.address(identity).require_path() == f"nodes/{identity}.yaml"
+    assert family.require(identity, commit=commit) == document
+    handles = tuple(family.iter_handles(commit=commit))
+    assert len(handles) == 1
+    assert handles[0].ref == identity
+    assert handles[0].document == document
+    assert tuple(family.iter_refs(commit=commit)) == (identity,)
+
+
+def test_document_identity_cannot_silently_relabel_a_different_storage_path() -> None:
+    owner = Owner()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=owner, backend=backend)
+    family = _registry().bind(owner, store).by_name("node")
+    commit = family.save("different", Node("actual"), message="mismatched path")
+    with pytest.raises(ValueError, match="does not match its storage path"):
+        tuple(family.iter_handles(commit=commit))

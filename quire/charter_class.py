@@ -19,7 +19,7 @@ by the SAME code path (``quire.charters``).
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field as _dc_field
+from dataclasses import dataclass, field as _dc_field, replace
 from enum import Enum
 import sys
 from typing import (
@@ -688,6 +688,8 @@ def charter(
         else placement
     )
     resolved_artifact_name = artifact_family_name or name
+    if isinstance(resolved_placement, FlatYamlPlacement) and identity_field is not None:
+        resolved_placement = replace(resolved_placement, document_identity_field=identity_field)
 
     def decorate(cls: _T) -> _T:
         # Bind the decorated class into its own module namespace under its
