@@ -2,6 +2,7 @@
 
 import pytest
 
+from quire import git_store
 from quire.git_store import GitStore
 
 
@@ -56,3 +57,33 @@ def test_unknown_input_is_rejected_during_enumeration(store):
     iterator = store.iter_merge_bases("missing", base)
     with pytest.raises(ValueError, match="does not exist"):
         next(iterator)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("timestamps", [(100, 100, 100, 100), (100, 100, 100, 101), (300, 100, 200, 400), (100, 200, 300, 400)])
+def test_inferior_candidate_is_removed_by_ancestry_not_clock(store, monkeypatch, reverse, timestamps):
+    clock = timestamps[0]
+    monkeypatch.setattr(git_store.time, "time", lambda: clock)
+    for attempt in range(128):
+        clock = timestamps[0]
+        p2 = store.commit_files({"item": b"P2"}, f"P2 {attempt}")
+        clock = timestamps[1]
+        p1 = store.commit_files({"item": b"P1"}, f"P1 {attempt}")
+        clock = timestamps[2]
+        q = store.commit_files({"item": b"Q"}, f"Q {attempt}")
+        if p2 < q < p1:
+            break
+    else:
+        pytest.fail("fixed-time commit messages did not produce the regression SHA ordering")
+    clock = timestamps[3]
+    entries = dict(store.iter_flat_tree_entries(q))
+    left = store.commit_flat_tree(entries, "L", parents=[q, p2], branch="left")
+    right = store.commit_flat_tree(entries, "R", parents=[q, p2], branch="right")
+    inputs = (right, left) if reverse else (left, right)
+    refs_before = store.raw_repo.refs.as_dict()
+    objects_before = set(store.raw_repo.object_store)
+    assert p2 in store.ancestor_distances(q)
+    assert tuple(store.iter_merge_bases(*inputs)) == (q,)
+    assert store.merge_base(*inputs) == q
+    assert store.raw_repo.refs.as_dict() == refs_before
+    assert set(store.raw_repo.object_store) == objects_before

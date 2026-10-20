@@ -925,7 +925,13 @@ class GitStore:
             self._repo,
             cast(Any, [sha_a.encode("ascii"), sha_b.encode("ascii")]),
         )
-        yield from sorted(merge_base.decode("ascii") for merge_base in merge_bases)
+        candidates = {merge_base.decode("ascii") for merge_base in merge_bases}
+        inferior: set[str] = set()
+        # The timestamp-ordered backend can leave ancestors of other candidates.
+        if len(candidates) > 1:
+            for candidate in candidates:
+                inferior.update(candidates.intersection(self.ancestor_distances(candidate)) - {candidate})
+        yield from sorted(candidates - inferior)
 
     def merge_base(self, branch_a: str, branch_b: str) -> str:
         """Return the smallest best-base ID; content mergers must inspect all bases."""
