@@ -10,6 +10,7 @@ from quire.artifacts import (
     ArtifactFamily,
     ArtifactHandle,
     ArtifactPlacementPolicy,
+    FlatYamlPlacement,
     PreparedArtifact,
     RefBlobLocator,
 )
@@ -177,6 +178,18 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
             artifact_id=lambda record: next(iter(identity_key(record)), None),
             keys=self.reference_keys,
         )
+
+    def ref_from_document(self, document: TDoc) -> TRef:
+        """Construct a flat document's typed ref with its declared factory."""
+        placement = self.artifact_family.placement
+        if not isinstance(placement, FlatYamlPlacement):
+            raise TypeError(f"family {self.name!r} does not have a flat identity placement")
+        if self.identity_field is None:
+            raise ValueError(f"family {self.name!r} has no identity field")
+        identities = ReferenceKey.field(self.identity_field)(document)
+        if len(identities) != 1:
+            raise ValueError("a document ref requires a single identity")
+        return placement.ref_factory(identities[0])
 
     def contract_body(self) -> dict[str, object]:
         body: dict[str, object] = {
