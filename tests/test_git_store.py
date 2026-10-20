@@ -57,6 +57,27 @@ def test_commit_and_read_are_object_store_operations(tmp_path):
     assert not (root / "docs" / "example.yaml").exists()
 
 
+@pytest.mark.parametrize("size", [8182, 8183, 200_000])
+def test_reopened_disk_store_reads_blob_past_loose_header_window(tmp_path, size):
+    # Dulwich 1.2.9 incorrectly applied its 8192-byte header limit to content.
+    # The 10-byte header plus 8182 bytes fits; 8183 bytes crosses that boundary.
+    root = tmp_path / "repo"
+    content = b"x" * size
+    store = GitStore.init(root)
+    try:
+        commit = store.commit_files({"docs/large.txt": content}, "store blob")
+        blob_id = Blob.from_string(content).id.decode("ascii")
+        assert (root / ".git" / "objects" / blob_id[:2] / blob_id[2:]).is_file()
+    finally:
+        store.raw_repo.close()
+
+    reopened = GitStore.open(root)
+    try:
+        assert reopened.read_file("docs/large.txt", commit=commit) == content
+    finally:
+        reopened.raw_repo.close()
+
+
 def test_head_bound_transaction_captures_head_and_passes_expected_head(monkeypatch):
     store = GitStore.init_memory()
     first = store.commit_files({"seed.txt": b"seed"}, "seed")
