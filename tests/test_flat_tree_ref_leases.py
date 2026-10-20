@@ -114,3 +114,24 @@ def test_merge_base_accepts_captured_commits_after_refs_move(store):
     assert store.merge_base(left, left) == left
     with pytest.raises(ValueError, match="does not exist"):
         store.merge_base("missing", right)
+
+
+@pytest.mark.parametrize("name", ["HEAD", "refs/heads/x", "a" * 20, "z" * 40, "é" * 40])
+def test_merge_base_resolves_literal_branch_names_with_divergent_ancestry(store, name):
+    base = store.commit_files({"base": b"base"}, "base")
+    left = store.commit_files({"left": b"left"}, "left")
+    store.create_branch("x", source_commit=left)
+    store.create_branch(name, source_commit=base)
+    assert store.branch_sha(name) == base
+    assert store.branch_sha("x") == left
+    assert store.merge_base(name, "x") == base
+    assert store.merge_base("x", name) == base
+
+
+@pytest.mark.parametrize("name", ["HEAD", "refs/heads/x"])
+def test_merge_base_does_not_admit_ref_aliases_as_missing_branches(store, name):
+    base = store.commit_files({"base": b"base"}, "base")
+    store.create_branch("x", source_commit=base)
+    assert store.branch_sha(name) is None
+    with pytest.raises(ValueError, match="does not exist"):
+        store.merge_base(name, "x")

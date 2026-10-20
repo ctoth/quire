@@ -15,7 +15,7 @@ from urllib.parse import quote
 from dulwich.client import get_transport_and_path
 from dulwich.index import build_index_from_tree
 from dulwich.graph import find_merge_base
-from dulwich.objects import Blob, Commit, ObjectID, Tree
+from dulwich.objects import Blob, Commit, ObjectID, Tree, valid_hexsha
 from dulwich.refs import Ref
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
 
@@ -887,12 +887,17 @@ class GitStore:
         """Find the base of branch names or full commit IDs (IDs take precedence)."""
         shas: list[str] = []
         for revision in (branch_a, branch_b):
-            try:
-                sha = self._commit_object(revision.encode("ascii")).id.decode("ascii")
-            except (KeyError, ValueError, TypeError) as exc:
+            sha = None
+            encoded = revision.encode("utf-8")
+            if valid_hexsha(encoded):
+                try:
+                    sha = self._commit_object(encoded).id.decode("ascii")
+                except (KeyError, ValueError, TypeError):
+                    pass
+            if sha is None:
                 sha = self.branch_sha(revision)
-                if sha is None:
-                    raise ValueError(f"Branch or commit {revision!r} does not exist") from exc
+            if sha is None:
+                raise ValueError(f"Branch or commit {revision!r} does not exist")
             shas.append(sha)
         sha_a, sha_b = shas
         if sha_a == sha_b:
