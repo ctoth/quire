@@ -664,10 +664,14 @@ class GitStore:
             if expected_head is not None:
                 _assert_ref_equals(self._repo.refs, branch_name, branch_ref, expected_head.encode("ascii"))
 
-            normalized_entries = {
-                _normalize_path(path): sha if isinstance(sha, bytes) else sha.encode("ascii")
-                for path, sha in entries.items()
-            }
+            normalized_entries: dict[str, bytes] = {}
+            for path, sha in entries.items():
+                normalized = PurePosixPath(_normalize_path(path)).as_posix()
+                object_id = sha if isinstance(sha, bytes) else sha.encode("ascii")
+                previous = normalized_entries.get(normalized)
+                if previous is not None and previous != object_id:
+                    raise ValueError(f"different blobs for normalized path {normalized!r}")
+                normalized_entries[normalized] = object_id
             _assert_ref_equals(self._repo.refs, branch_name, branch_ref, current_head)
             root_tree = self._build_tree_from_flat(normalized_entries)
 
