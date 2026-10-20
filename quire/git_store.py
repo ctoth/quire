@@ -79,6 +79,19 @@ class HeadMismatchError(ValueError):
         self.actual_head = actual_head
 
 
+class AmbiguousMergeBaseError(ValueError):
+    """A content merge cannot choose among multiple best common ancestors."""
+
+    def __init__(self, left_sha: str, right_sha: str, base_shas: Sequence[str]) -> None:
+        self.left_sha = left_sha
+        self.right_sha = right_sha
+        self.base_shas = tuple(base_shas)
+        super().__init__(
+            f"Multiple best merge bases between {left_sha!r} and {right_sha!r}: "
+            f"{', '.join(self.base_shas)}"
+        )
+
+
 class MaterializeConflictError(ValueError):
     def __init__(self, conflict_paths: Sequence[str]) -> None:
         paths = tuple(sorted(conflict_paths))
@@ -883,8 +896,12 @@ class GitStore:
                     queue.append(parent_sha)
         return distances
 
-    def merge_base(self, branch_a: str, branch_b: str) -> str:
-        """Find the base of branch names or full commit IDs (IDs take precedence)."""
+    def iter_merge_bases(self, branch_a: str, branch_b: str) -> Iterator[str]:
+        """Enumerate every best common ancestor in object-ID order.
+
+        Full commit IDs take precedence over literal branch names. Unrelated
+        histories yield no bases; unknown inputs raise when enumerated.
+        """
         shas: list[str] = []
         for revision in (branch_a, branch_b):
             sha = None
@@ -901,15 +918,21 @@ class GitStore:
             shas.append(sha)
         sha_a, sha_b = shas
         if sha_a == sha_b:
-            return sha_a
+            yield sha_a
+            return
 
         merge_bases = find_merge_base(
             self._repo,
             cast(Any, [sha_a.encode("ascii"), sha_b.encode("ascii")]),
         )
+        yield from sorted(merge_base.decode("ascii") for merge_base in merge_bases)
+
+    def merge_base(self, branch_a: str, branch_b: str) -> str:
+        """Return the smallest best-base ID; content mergers must inspect all bases."""
+        merge_bases = tuple(self.iter_merge_bases(branch_a, branch_b))
         if not merge_bases:
             raise ValueError(f"No common ancestor between {branch_a!r} and {branch_b!r}")
-        return min(merge_base.decode("ascii") for merge_base in merge_bases)
+        return min(merge_bases)
 
     def read_ref(self, ref: RefName) -> str | None:
         sha = _ref_get(self._repo.refs, ref.as_bytes())
