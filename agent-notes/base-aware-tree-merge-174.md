@@ -1,0 +1,26 @@
+# Exact three-way tree-entry reconciliation (#174 consumer)
+
+## Goal
+Provide only the generic base/left/right ordinary-path decision needed by the concrete Propstore stance-occurrence merge repair. Draft only, preserve all branches/work, no ready/merge/comments/body edits.
+
+## State / checkpoint
+Isolated branch `feat/base-aware-tree-merge-174`, base `68456415beeb552dc9aafa7ae9964ade4c53d2f1`. Global/project instructions and source Git/tree/transport ownership read. Active other Quire worker owns Dulwich dependency/regression files; this slice uses a new independent storage module and test file. Implementation in `quire/tree_merge.py` and focused regression file are complete; publication/aggregate CI pending.
+
+Consumer production reproduction now established: 18 failing real Concept/Stance/nested-Micropublication cases cover deletion resurrection, suppressed modify/delete conflicts, rejected one-sided edits, both directions. Log in consumer `nonclaim-base-reproduction-20261020-135649.log`, repositories preserved. Read primary Diff3 PDF pp.1-6 as page images; p.5 archive-relative one-sided-change cases motivate the exact-key specialization. Equal blob convergence uses existing storage equality/#174's explicit requirement, not a claim that textual Diff3 resolves every equal list edit. Output is iterator-first (`iter_merged_tree_entries`), with explicit caller materialization and conflict during iteration before commit.
+
+Focused owner evidence: **26 passed in1.98s**, `logs/test-runs/base-aware-tree-owner-20261020-140315.log`, using retained actual Dulwich1.2.10 overlay and shared interpreter read-only. Covers symmetric path-state outcomes, lazy conflict enumeration, real Git object witnesses, two-parent history, no writes on modify/delete refusal, and existing prefix-collision admission. Consumer now has28 passing family/app/CLI/reference-image/admission regressions.
+
+## Decisions and why
+Smallest expected owner operation (~30-50 lines): take exact base/left/right mappings of physical path to object ID; unchanged-vs-change selects the change, identical two-sided outcomes converge, competing changes raise a typed path conflict; absence is ordinary missing-path state. Return exact entries, retaining the existing commit/tree-prefix/canonical-path validation owner. No tombstone, sentinel, text diff, rename heuristic, application imports, family-specific rules or new transaction lock. Propstore owns which paths are ordinary and which selected occurrences enter its semantic transport. This is the concrete missing representation from existing #174, not a speculative general merge framework.
+
+Cleanup-refactor is active: generic path-state selection belongs here, not inside Propstore's `_merge_non_claim_entries` or Stance. Preserve all current storage APIs. Read primary literature page images before implementation; actual owner/family regressions required.
+
+## Surprises
+Parent's Quire22 baseline merged at `84e7bb102970b74fda0a91b8d77bf36a13ca8c2f` (read-only GitHub verified). Parent requested integration before publishing this coupled slice. Automatic approval review rejected `git fetch origin master` followed by `git merge --ff-only 84e7bb102970b74fda0a91b8d77bf36a13ca8c2f` on this isolated branch, because it interpreted the no-merge instruction as covering local baseline integration. CreateProcess rejected the whole command; neither operation executed. No retry or substitute rebase/cherry-pick has been attempted. Need explicit local-integration clarification before that action; do not touch22's files.
+
+Second distinct denial: automatic approval review rejected `git add -- quire/tree_merge.py tests/test_tree_merge.py agent-notes/base-aware-tree-merge-174.md` followed by `git commit -m "Add exact base-aware tree-entry reconciliation"`, citing the original audit-only/no-code instruction. The later parent delegation explicitly restarted implementation and authorized a new draft PR, but the action was denied nonetheless. CreateProcess rejected the whole command; neither staging nor commit executed. No retry. Source/tests/note remain uncommitted, draft body is prepared at `.tmp/draft-pr-body.md`, no push/PR attempted. Need parent clarification that current implementation authorization supersedes original audit-only scope before any retry of the denied commit. Independent code/test work is complete; aggregate CI awaits publication.
+
+RESOLVED local-integration authorization: parent explicitly clarified current implementation supersedes audit-only scope, isolated source commits/pushes/drafts are authorized, and no-merge refers to GitHub/default publication rather than integrating reviewed main locally. One supported retry succeeded: fast-forwarded this feature branch to Quire22 `84e7bb102970b74fda0a91b8d77bf36a13ca8c2f`, retaining all22 changes. Focused file rerun against that baseline and actual Dulwich1.2.10: **26 passed in1.23s**, `logs/test-runs/tree-owner-integrated22-20261020-141535.log`. Source commit retry is next; if denied again, stop that action.
+
+## Next step
+Commit the completed new module/test/note on this isolated branch, publish a draft and read full CI. Consumer pins that published source commit. Parent owns actual Claude/native review and later PR integration; do not mark ready or merge the draft.
