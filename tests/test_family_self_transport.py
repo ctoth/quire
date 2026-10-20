@@ -143,3 +143,28 @@ def test_transported_document_uses_declared_typed_ref_for_preparation() -> None:
     assert prepared.address.require_path() == "links/link:new-a.yaml"
     assert prepared.document == result
     assert result.evidence == document.evidence
+
+
+def test_generic_batch_still_allows_noninjective_images_without_family_policy() -> None:
+    documents = (Link("old-a", "a", ("old-b",)), Link("old-b", "a", ("old-a",)))
+    instance = _instance(documents)
+    instance.assign("item", "a", "new-a")
+    results = instance.transport_family(_registry().by_name("link"), documents)
+    assert results == (Link("link:new-a", "new-a", ("link:new-a",)),) * 2
+
+
+def test_family_admission_receives_originals_and_complete_images_before_coalescence() -> None:
+    documents = (Link("old-a", "a", ("old-b",)), Link("old-b", "a", ("old-a",)))
+    observed = []
+
+    def reject_collapse(originals, images):
+        observed.append((tuple(originals), tuple(images)))
+        raise ValueError("family rejects collapse")
+
+    family = replace(_registry().by_name("link"), validate_transport=reject_collapse)
+    assert family.contract_body()["validate_transport"].endswith(".reject_collapse")
+    instance = _instance(documents)
+    instance.assign("item", "a", "new-a")
+    with pytest.raises(ValueError, match="family rejects collapse"):
+        instance.transport_family(family, documents)
+    assert observed == [(documents, (Link("link:new-a", "new-a", ("link:new-a",)),) * 2)]

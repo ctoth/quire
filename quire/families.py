@@ -88,6 +88,7 @@ class FamilyDeclaration(Generic[TOwner, TKey, TRef, TDoc]):
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
     metadata: Mapping[str, object] | None = None
+    validate_transport: Callable[[Sequence[TDoc], Sequence[TDoc]], None] | None = None
 
     def to_artifact_family(self) -> ArtifactFamily[TOwner, TRef, TDoc]:
         return ArtifactFamily(
@@ -115,6 +116,7 @@ class FamilyDeclaration(Generic[TOwner, TKey, TRef, TDoc]):
             foreign_keys=self.foreign_keys,
             identity_policy=self.identity_policy,
             transport_identity=self.transport_identity,
+            validate_transport=self.validate_transport,
             identity_field=self.identity_field,
             reference_keys=self.reference_keys,
             metadata=self.metadata,
@@ -134,6 +136,7 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
     metadata: Mapping[str, object] | None = None
+    validate_transport: Callable[[Sequence[TDoc], Sequence[TDoc]], None] | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -207,6 +210,10 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
         if self.transport_identity is not None:
             body["transport_identity"] = (
                 f"{self.transport_identity.__module__}.{self.transport_identity.__qualname__}"
+            )
+        if self.validate_transport is not None:
+            body["validate_transport"] = (
+                f"{self.validate_transport.__module__}.{self.validate_transport.__qualname__}"
             )
         if self.identity_field is not None:
             body["identity_field"] = self.identity_field

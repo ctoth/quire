@@ -112,7 +112,10 @@ class FamilyInstanceMap:
         """
         self_specs = tuple(s for s in family.foreign_keys if s.target_family == family.name)
         if not self_specs:
-            return tuple(self.transport(family, document) for document in documents)
+            results = tuple(self.transport(family, document) for document in documents)
+            if family.validate_transport is not None:
+                family.validate_transport(documents, results)
+            return results
         if family.identity_field is None:
             raise ValueError(f"family {family.name!r} has no identity field")
         identity = ReferenceKey.field(family.identity_field)
@@ -150,6 +153,8 @@ class FamilyInstanceMap:
         results = tuple(self.transport(family, document) for document in documents)
         for index in planned:
             self.assign(family.name, identity(documents[index])[0], identity(results[index])[0])
+        if family.validate_transport is not None:
+            family.validate_transport(documents, results)
         return results
 
     def iter_images(self) -> Iterator[FamilyReferenceImage]:
