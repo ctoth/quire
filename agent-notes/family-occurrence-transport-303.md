@@ -19,6 +19,7 @@ Provide the generic typed FK transport required by Propstore #303 in a separatel
 - Active cleanup-refactor control surface. Reference path parsing is an IO/metadata capability already owned by references.py; consolidate its parser rather than adding a second grammar. Families/charters are canonical declarations (keep/extend typed metadata). Existing validators remain authoritative; transport must validate source references and must not bypass final validation.
 - Support real typed containers through their own replacement operation. Apply all changed sibling fields in one replacement so membership/principal invariants never see a half-written document.
 - The new enumeration edge is a valid generic owner capability with the wrong representation: the filename is not an invertible encoding of a raw URI. Use the document's already-declared identity at the IO boundary and reject mismatched path/identity, rather than creating another identity model or changing existing storage addresses.
+- Keep that derived scan field out of the placement wire contract: the one identity field already lives in the family contract, and raw storage addresses/codecs have not changed. Emitting it again would duplicate the same fact and churn every charter's unchanged wire contract.
 
 ## Surprises
 - Initial worktree command omitted `git -C` from a projectless cwd and failed before mutation. Corrected explicit repository targets created both isolated worktrees successfully.

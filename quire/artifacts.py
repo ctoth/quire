@@ -522,8 +522,6 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
             "codec": self.codec,
             "branch": self.branch.contract_body(),
         }
-        if self.document_identity_field is not None:
-            body["document_identity_field"] = self.document_identity_field
         return body
 
 
