@@ -735,7 +735,18 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
 
     def move(self, old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
         prepared = self.transaction.move(self.family, old_ref, new_ref, doc)
-        self.bound_transaction._deletes.append((self.definition, old_ref))
+        if old_ref != new_ref:
+            self.bound_transaction._saves[:] = [
+                item
+                for item in self.bound_transaction._saves
+                if item[0] != self.definition or item[1] != old_ref
+            ]
+            self.bound_transaction._deletes.append((self.definition, old_ref))
+        self.bound_transaction._deletes[:] = [
+            item
+            for item in self.bound_transaction._deletes
+            if item != (self.definition, new_ref)
+        ]
         self.bound_transaction._saves.append((self.definition, new_ref, prepared.document))
 
 
