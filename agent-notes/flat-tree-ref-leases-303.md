@@ -4,6 +4,8 @@
 Use the existing mutation/CAS owner to reject stale source heads and an unexpectedly created target during a consumer's planned flat-tree commit. Publish a tested draft only; no ready/merge/comments.
 
 ## State
+COMPLETE: draft https://github.com/propstore/quire/pull/21 is OPEN/DRAFT at exact published source `0e961ccb77d772af61254b34dc87f3a32d953611`, base `f3668cc07719793d2430343ffd996e7b78355f2e`. PR CI https://github.com/propstore/quire/actions/runs/39380651728 and push CI https://github.com/propstore/quire/actions/runs/39380627834 both completed SUCCESS. All eight CheckRuns passed lint, typecheck, tests and build across Ubuntu/Windows Python 3.11/3.13; each job reports **623 passed, 12 benchmarks deselected**. Final PR-run test durations: Ubuntu 3.11 99.27s, Ubuntu 3.13 66.92s, Windows 3.11 184.06s, Windows 3.13 172.69s. Consumer draft https://github.com/propstore/propstore/pull/325 pins this exact commit and passed its full suite (1992 passed, 4 skipped, 4 warnings in 109.67s). Both remain unmerged/draft; no ready, merge, public comments/reviews, external edits, user-branch changes or local dependency installs. #303 remains OPEN. No blocker. This final note-only checkpoint is local; the remote source head remains the tested commit above.
+
 Fresh branch `fix/flat-tree-ref-leases-303` at default `f3668cc07719793d2430343ffd996e7b78355f2e`. Global/project instructions, existing transaction/ref helpers and architecture read. Original checkout/worktrees preserved.
 
 Owner focused run passed **16 tests in 1.62s**, `logs/test-runs/flat-tree-ref-leases-20261020-002329.log`, using the existing shared interpreter read-only and the consumer logged wrapper. Memory/disk cases cover absence, moved/deleted sources, normalization interleaving, target CAS interleaving, conflicting leases, exact successful tree/parents and pinned merge bases. Added explicit precedence for immutable full commit IDs over a same-named branch before final focused rerun.
@@ -21,4 +23,4 @@ Cleanup-refactor is active. The broken edge is a valid generic ref-precondition 
 None yet.
 
 ## Next step
-Publish tested draft, verify full CI and report exact URL/head to parent. Preserve original failing consumer artifacts. No ready/merge/comments permitted.
+Hand off both tested drafts for independent review. Preserve original failing consumer artifacts, temporary repositories, logs and branches. No ready/merge/comments permitted. Named-source checks serialize Quire writers using the existing mutation guard; this patch introduces no atomic multi-ref transaction with arbitrary external Git writers.
