@@ -10,6 +10,7 @@ from quire.artifacts import (
     ArtifactFamily,
     ArtifactHandle,
     ArtifactPlacementPolicy,
+    FlatYamlPlacement,
     PreparedArtifact,
     RefBlobLocator,
 )
@@ -83,9 +84,11 @@ class FamilyDeclaration(Generic[TOwner, TKey, TRef, TDoc]):
     scan_type: type[Any] | None = None
     foreign_keys: tuple[ForeignKeySpec, ...] = ()
     identity_policy: FamilyIdentityPolicy | None = None
+    transport_identity: Callable[[TDoc], TDoc] | None = None
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
     metadata: Mapping[str, object] | None = None
+    validate_transport: Callable[[Sequence[TDoc], Sequence[TDoc]], None] | None = None
 
     def to_artifact_family(self) -> ArtifactFamily[TOwner, TRef, TDoc]:
         return ArtifactFamily(
@@ -112,6 +115,8 @@ class FamilyDeclaration(Generic[TOwner, TKey, TRef, TDoc]):
             accessor=self.accessor,
             foreign_keys=self.foreign_keys,
             identity_policy=self.identity_policy,
+            transport_identity=self.transport_identity,
+            validate_transport=self.validate_transport,
             identity_field=self.identity_field,
             reference_keys=self.reference_keys,
             metadata=self.metadata,
@@ -127,9 +132,11 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
     accessor: str | None = None
     foreign_keys: tuple[ForeignKeySpec, ...] = ()
     identity_policy: FamilyIdentityPolicy | None = None
+    transport_identity: Callable[[TDoc], TDoc] | None = None
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
     metadata: Mapping[str, object] | None = None
+    validate_transport: Callable[[Sequence[TDoc], Sequence[TDoc]], None] | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -175,6 +182,18 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
             keys=self.reference_keys,
         )
 
+    def ref_from_document(self, document: TDoc) -> TRef:
+        """Construct a flat document's typed ref with its declared factory."""
+        placement = self.artifact_family.placement
+        if not isinstance(placement, FlatYamlPlacement):
+            raise TypeError(f"family {self.name!r} does not have a flat identity placement")
+        if self.identity_field is None:
+            raise ValueError(f"family {self.name!r} has no identity field")
+        identities = ReferenceKey.field(self.identity_field)(document)
+        if len(identities) != 1:
+            raise ValueError("a document ref requires a single identity")
+        return placement.ref_factory(identities[0])
+
     def contract_body(self) -> dict[str, object]:
         body: dict[str, object] = {
             "accessor": self.accessor_name,
@@ -188,6 +207,14 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
             body["metadata"] = dict(self.metadata)
         if self.identity_policy is not None:
             body["identity_policy"] = self.identity_policy.contract_body()
+        if self.transport_identity is not None:
+            body["transport_identity"] = (
+                f"{self.transport_identity.__module__}.{self.transport_identity.__qualname__}"
+            )
+        if self.validate_transport is not None:
+            body["validate_transport"] = (
+                f"{self.validate_transport.__module__}.{self.validate_transport.__qualname__}"
+            )
         if self.identity_field is not None:
             body["identity_field"] = self.identity_field
         if self.reference_keys:
@@ -201,6 +228,24 @@ class FamilyRegistry(Generic[TOwner, TKey]):
     contract_version: VersionId
     families: tuple[FamilyDefinition[TOwner, TKey, Any, Any], ...]
     validate_foreign_keys: bool = field(default=True, repr=False, compare=False)
+
+    def validate_records(self, records: Mapping[str, Sequence[object]]) -> None:
+        """Validate a typed instance over the supplied family subgraph.
+
+        A complete proposed tree supplies every registered family, including
+        empty ones. Transaction admission can supply its affected subgraph.
+        """
+        indexes = {
+            definition.name: definition.reference_index_from_records(records[definition.name])
+            for definition in self.families
+            if definition.name in records and definition.identity_field is not None
+        }
+        for definition in self.families:
+            for spec in definition.foreign_keys:
+                if spec.target_family not in indexes:
+                    continue
+                for record in records.get(definition.name, ()):
+                    validate_foreign_key(spec, record, indexes[spec.target_family])
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -592,6 +637,12 @@ class BoundFamily(Generic[TOwner, TRef, TDoc]):
         branch: str | None = None,
         expected_head: str | None = None,
     ) -> str:
+        if self.registry is not None and self.definition is not None:
+            with self.registry.bind(self.store.owner, self.store).transact(
+                message=message, branch=branch, expected_head=expected_head
+            ) as bound_transaction:
+                bound_transaction.by_artifact_family(self.family).move(old_ref, new_ref, doc)
+            return cast(str, bound_transaction.commit_sha)
         with self.store.transact(message=message, branch=branch, expected_head=expected_head) as transaction:
             transaction.move(self.family, old_ref, new_ref, doc)
         return cast(str, transaction.commit_sha)
@@ -716,8 +767,8 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
         return self.transaction.store.payload(document, family=cast(Any, self.family))
 
     def save(self, ref: TRef, doc: TDoc) -> None:
-        self.transaction.save(self.family, ref, doc)
-        self.bound_transaction._saves.append((self.definition, ref, doc))
+        prepared = self.transaction.save(self.family, ref, doc)
+        self.bound_transaction._saves.append((self.definition, ref, prepared.document))
         self.bound_transaction._deletes[:] = [
             item
             for item in self.bound_transaction._deletes
@@ -734,9 +785,20 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
         ]
 
     def move(self, old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
-        self.transaction.move(self.family, old_ref, new_ref, doc)
-        self.bound_transaction._deletes.append((self.definition, old_ref))
-        self.bound_transaction._saves.append((self.definition, new_ref, doc))
+        prepared = self.transaction.move(self.family, old_ref, new_ref, doc)
+        if old_ref != new_ref:
+            self.bound_transaction._saves[:] = [
+                item
+                for item in self.bound_transaction._saves
+                if item[0] != self.definition or item[1] != old_ref
+            ]
+            self.bound_transaction._deletes.append((self.definition, old_ref))
+        self.bound_transaction._deletes[:] = [
+            item
+            for item in self.bound_transaction._deletes
+            if item != (self.definition, new_ref)
+        ]
+        self.bound_transaction._saves.append((self.definition, new_ref, prepared.document))
 
 
 def _duplicates(values: Sequence[object]) -> list[object]:
@@ -795,17 +857,4 @@ def _validate_registry_post_state(
             continue
         records_by_family[definition.name][ref] = document
 
-    indexes = {
-        definition.name: definition.reference_index_from_records(tuple(records_by_family[definition.name].values()))
-        for definition in registry.families
-        if definition.name in records_by_family and definition.identity_field is not None
-    }
-    for definition in registry.families:
-        if definition.name not in records_by_family:
-            continue
-        for spec in definition.foreign_keys:
-            if spec.target_family not in indexes:
-                continue
-            target_index = indexes[spec.target_family]
-            for record in records_by_family[definition.name].values():
-                validate_foreign_key(spec, record, target_index)  # type: ignore[arg-type]
+    registry.validate_records({name: tuple(records.values()) for name, records in records_by_family.items()})

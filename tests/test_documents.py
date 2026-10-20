@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import msgspec
 import pytest
 
 from quire.documents import (
@@ -134,6 +135,66 @@ def test_default_document_codec_round_trips_struct_documents():
     assert DEFAULT_DOCUMENT_CODEC.convert({"name": "demo", "value": 3}, ExampleDocument, source="input") == document
     assert DEFAULT_DOCUMENT_CODEC.payload(document) == {"name": "demo", "value": 3}
     assert "name: demo" in DEFAULT_DOCUMENT_CODEC.render(document)
+
+
+class NullableDocument(DocumentStruct):
+    required: str | None
+    values: dict[str, str | None]
+    optional: str | None = None
+    overridden: str | None = "default"
+
+
+class NestedNullableDocument(DocumentStruct):
+    child: NullableDocument
+    items: tuple[NullableDocument, ...]
+
+
+def test_default_codec_preserves_null_data_and_omits_only_null_defaults():
+    document = NullableDocument(
+        required=None, values={"present": None, "other": "ok"}, overridden=None
+    )
+    expected = {
+        "required": None, "values": {"present": None, "other": "ok"}, "overridden": None
+    }
+    assert DEFAULT_DOCUMENT_CODEC.payload(document) == expected
+    assert DEFAULT_DOCUMENT_CODEC.decode(
+        DEFAULT_DOCUMENT_CODEC.encode(document), NullableDocument, source="nullable.yaml"
+    ) == document
+
+    nested = NestedNullableDocument(child=document, items=(document,))
+    assert DEFAULT_DOCUMENT_CODEC.payload(nested) == {"child": expected, "items": [expected]}
+    assert DEFAULT_DOCUMENT_CODEC.decode(
+        DEFAULT_DOCUMENT_CODEC.encode(nested), NestedNullableDocument, source="nested.yaml"
+    ) == nested
+
+
+def test_default_codec_preserves_explicit_null_in_custom_payload():
+    class CustomDocument:
+        def to_payload(self):
+            return {"value": None, "items": [{"nested": None}]}
+
+    payload = DEFAULT_DOCUMENT_CODEC.payload(CustomDocument())
+    assert payload == {"value": None, "items": [{"nested": None}]}
+    assert msgspec.yaml.decode(DEFAULT_DOCUMENT_CODEC.encode(CustomDocument())) == payload
+
+
+def test_family_store_round_trips_required_and_mapping_nulls():
+    from quire.artifacts import ArtifactFamily, FlatYamlPlacement
+    from quire.contracts import contract_version
+    from quire.family_store import DocumentFamilyStore
+    from quire.git_store import GitStore
+
+    class Owner:
+        branch = "master"
+
+    family = ArtifactFamily(
+        name="nullable", contract_version=contract_version("2026.10.19"),
+        doc_type=NullableDocument, placement=FlatYamlPlacement("nullable", str),
+    )
+    store = DocumentFamilyStore(owner=Owner(), backend=GitStore.init_memory())
+    document = NullableDocument(required=None, values={"present": None}, overridden=None)
+    store.save(family, "example", document, message="save null data")
+    assert store.require(family, "example") == document
 
 
 def test_source_label_returns_str_for_pathlib_path(tmp_path):

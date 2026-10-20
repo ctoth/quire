@@ -15,7 +15,7 @@ from urllib.parse import quote
 from dulwich.client import get_transport_and_path
 from dulwich.index import build_index_from_tree
 from dulwich.graph import find_merge_base
-from dulwich.objects import Blob, Commit, ObjectID, Tree
+from dulwich.objects import Blob, Commit, ObjectID, Tree, valid_hexsha
 from dulwich.refs import Ref
 from dulwich.repo import BaseRepo, MemoryRepo, Repo
 
@@ -77,6 +77,19 @@ class HeadMismatchError(ValueError):
         self.branch = branch
         self.expected_head = expected_head
         self.actual_head = actual_head
+
+
+class AmbiguousMergeBaseError(ValueError):
+    """A content merge cannot choose among multiple best common ancestors."""
+
+    def __init__(self, left_sha: str, right_sha: str, base_shas: Sequence[str]) -> None:
+        self.left_sha = left_sha
+        self.right_sha = right_sha
+        self.base_shas = tuple(base_shas)
+        super().__init__(
+            f"Multiple best merge bases between {left_sha!r} and {right_sha!r}: "
+            f"{', '.join(self.base_shas)}"
+        )
 
 
 class MaterializeConflictError(ValueError):
@@ -656,19 +669,39 @@ class GitStore:
         parents: Sequence[str | bytes],
         branch: str | None = None,
         expected_head: str | None = None,
+        expected_heads: Mapping[str, str | None] | None = None,
     ) -> str:
+        """Publish a planned tree with branch leases checked under the mutation guard.
+
+        An entry in ``expected_heads`` requires that branch to retain its captured
+        head; ``None`` requires absence. Omitted entries impose no caller lease.
+        The existing guard serializes Quire writers across checking and publishing;
+        this is not a multi-ref transaction with external Git writers.
+        """
         with self._mutation_guard():
             branch_name = self._resolve_write_branch_name(branch)
             branch_ref = f"refs/heads/{branch_name}".encode()
             current_head = _ref_get(self._repo.refs, branch_ref)
+            heads = dict(expected_heads or {})
             if expected_head is not None:
-                _assert_ref_equals(self._repo.refs, branch_name, branch_ref, expected_head.encode("ascii"))
+                if branch_name in heads and heads[branch_name] != expected_head:
+                    raise ValueError(f"conflicting expected heads for branch {branch_name!r}")
+                heads[branch_name] = expected_head
+            heads.setdefault(branch_name, _format_ref_value(current_head))
+            self._assert_branch_heads(heads)
 
-            normalized_entries = {
-                _normalize_path(path): sha if isinstance(sha, bytes) else sha.encode("ascii")
-                for path, sha in entries.items()
-            }
-            _assert_ref_equals(self._repo.refs, branch_name, branch_ref, current_head)
+            normalized_entries: dict[str, bytes] = {}
+            for path, sha in entries.items():
+                normalized = PurePosixPath(_normalize_path(path)).as_posix()
+                object_id = sha if isinstance(sha, bytes) else sha.encode("ascii")
+                previous = normalized_entries.get(normalized)
+                if previous is not None and previous != object_id:
+                    raise ValueError(f"different blobs for normalized path {normalized!r}")
+                normalized_entries[normalized] = object_id
+            self._check_add_path_conflicts({
+                PurePosixPath(path).parts: sha for path, sha in normalized_entries.items()
+            })
+            self._assert_branch_heads(heads)
             root_tree = self._build_tree_from_flat(normalized_entries)
 
             commit = Commit()
@@ -700,6 +733,13 @@ class GitStore:
             if _symref_get(self._repo.refs, b"HEAD") is None and self.head_sha() is None:
                 _set_symbolic_ref(self._repo.refs, b"HEAD", branch_ref)
             return commit.id.decode("ascii")
+
+    def _assert_branch_heads(self, heads: Mapping[str, str | None]) -> None:
+        for name, head in heads.items():
+            _assert_ref_equals(
+                self._repo.refs, name, f"refs/heads/{name}".encode(),
+                None if head is None else head.encode("ascii"),
+            )
 
     def head_sha(self) -> str | None:
         try:
@@ -856,23 +896,49 @@ class GitStore:
                     queue.append(parent_sha)
         return distances
 
-    def merge_base(self, branch_a: str, branch_b: str) -> str:
-        sha_a = self.branch_sha(branch_a)
-        sha_b = self.branch_sha(branch_b)
-        if sha_a is None:
-            raise ValueError(f"Branch {branch_a!r} does not exist")
-        if sha_b is None:
-            raise ValueError(f"Branch {branch_b!r} does not exist")
+    def iter_merge_bases(self, branch_a: str, branch_b: str) -> Iterator[str]:
+        """Enumerate every best common ancestor in object-ID order.
+
+        Full commit IDs take precedence over literal branch names. Unrelated
+        histories yield no bases; unknown inputs raise when enumerated.
+        """
+        shas: list[str] = []
+        for revision in (branch_a, branch_b):
+            sha = None
+            encoded = revision.encode("utf-8")
+            if valid_hexsha(encoded):
+                try:
+                    sha = self._commit_object(encoded).id.decode("ascii")
+                except (KeyError, ValueError, TypeError):
+                    pass
+            if sha is None:
+                sha = self.branch_sha(revision)
+            if sha is None:
+                raise ValueError(f"Branch or commit {revision!r} does not exist")
+            shas.append(sha)
+        sha_a, sha_b = shas
         if sha_a == sha_b:
-            return sha_a
+            yield sha_a
+            return
 
         merge_bases = find_merge_base(
             self._repo,
             cast(Any, [sha_a.encode("ascii"), sha_b.encode("ascii")]),
         )
+        candidates = {merge_base.decode("ascii") for merge_base in merge_bases}
+        inferior: set[str] = set()
+        # The timestamp-ordered backend can leave ancestors of other candidates.
+        if len(candidates) > 1:
+            for candidate in candidates:
+                inferior.update(candidates.intersection(self.ancestor_distances(candidate)) - {candidate})
+        yield from sorted(candidates - inferior)
+
+    def merge_base(self, branch_a: str, branch_b: str) -> str:
+        """Return the smallest best-base ID; content mergers must inspect all bases."""
+        merge_bases = tuple(self.iter_merge_bases(branch_a, branch_b))
         if not merge_bases:
             raise ValueError(f"No common ancestor between {branch_a!r} and {branch_b!r}")
-        return min(merge_base.decode("ascii") for merge_base in merge_bases)
+        return min(merge_bases)
 
     def read_ref(self, ref: RefName) -> str | None:
         sha = _ref_get(self._repo.refs, ref.as_bytes())
