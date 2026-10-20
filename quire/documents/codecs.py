@@ -13,13 +13,24 @@ TDocument = TypeVar("TDocument")
 
 
 def _prune_none(value: object) -> object:
+    """Omit null struct fields only when null is their declared default."""
+    if isinstance(value, msgspec.Struct):
+        payload = msgspec.to_builtins(value)
+        if isinstance(payload, dict):
+            for field in msgspec.structs.fields(value):
+                item = getattr(value, field.name)
+                if item is None and field.default is None:
+                    payload.pop(field.encode_name, None)
+                elif field.encode_name in payload:
+                    payload[field.encode_name] = _prune_none(item)
+        return payload
     if isinstance(value, Mapping):
-        return {key: _prune_none(item) for key, item in value.items() if item is not None}
+        return {msgspec.to_builtins(key): _prune_none(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_prune_none(item) for item in value]
     if isinstance(value, tuple):
         return [_prune_none(item) for item in value]
-    return value
+    return msgspec.to_builtins(value)
 
 
 def document_to_payload(document: object) -> object:
@@ -27,7 +38,7 @@ def document_to_payload(document: object) -> object:
     if callable(to_payload):
         return _prune_none(to_payload())
     if isinstance(document, msgspec.Struct):
-        return _prune_none(msgspec.to_builtins(document))
+        return _prune_none(document)
     raise TypeError(f"Document {type(document).__name__} is not serializable")
 
 
