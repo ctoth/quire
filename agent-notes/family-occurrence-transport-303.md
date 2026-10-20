@@ -4,6 +4,8 @@
 Provide the generic typed FK transport required by Propstore #303 in a separately scoped Quire draft. No Propstore semantics, default push, merge or shared environment mutation. Existing #320 is merged and remains unchanged.
 
 ## State
+- FINAL published source: https://github.com/propstore/quire/pull/19 at `7b42bcc4a6a0484d29b1f00e047d636b1200fd1c`, OPEN/DRAFT. Full PR CI https://github.com/propstore/quire/actions/runs/39363501157 is GREEN on all four Ubuntu/Windows × Python 3.11/3.13 jobs; each has 562 passed, 12 benchmark tests deselected, plus lint/typecheck/build. All eight push/PR checks are successful.
+- Exact consumer pin is used by https://github.com/propstore/propstore/pull/322 at `cbd50c23872af00197200c0115f6d437dcb74340`, OPEN/DRAFT. Its CI https://github.com/propstore/propstore/actions/runs/39363555116 is GREEN: 1919 passed, 4 skipped, 4 warnings. No remaining execution blocker; parent independently reviews and handles all merges. Final note-only handoff commit remains local to keep both published review heads fixed.
 - Read global and Quire AGENTS.md/CLAUDE.md, existing family/reference/charter/validation APIs and the earlier source-backed literature report. Isolated branch `feat/family-occurrence-transport-303`, base `d1daeed8`.
 - Parent authorizes working graph transport, separately reviewed generic owner support, focused and integrated verification before publication.
 - Implemented source-commit-qualified maps, canonical image witnesses, atomic nested FK rewriting, family-owned reidentity registration and the shared final-instance validator. Existing transaction admission delegates to that same validator.
@@ -28,4 +30,4 @@ Provide the generic typed FK transport required by Propstore #303 in a separatel
 - Initial fixture version `test.v1` was invalid under the existing contract parser; corrected to date-shaped contract versions. All 12 tests now pass.
 
 ## Next step
-Verify the actively edited Quire file and the consumer's old-parent/direct-read regressions, publish a corrective generic commit, update the consumer pin and follow both CI runs. Parent independently reviews corrected exact heads and handles all merges. The old consumer head's full CI is still running; do not claim it green.
+Parent independently reviews corrected published heads `7b42bcc` / `cbd50c23` and handles all merges. No remaining execution blocker. Do not merge, mark ready, or publish local note-only handoff commits merely to update statuses.
