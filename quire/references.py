@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, replace
 from types import MappingProxyType
-from typing import Generic, Protocol, TypeAlias, TypeVar
+from typing import Generic, Protocol, TypeAlias, TypeVar, cast
+
+import msgspec
 
 from quire.versions import VersionId
 
@@ -29,6 +31,10 @@ class MissingReferenceError(ValueError):
 
 class ForeignKeyValidationError(ValueError):
     pass
+
+
+class _ReferenceIdResolver(Protocol):
+    def resolve_id(self, reference: object) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -74,7 +80,7 @@ class ForeignKeySpec:
 def validate_foreign_key(
     spec: ForeignKeySpec,
     record: object,
-    target_index: ReferenceIndex[object],
+    target_index: _ReferenceIdResolver,
 ) -> tuple[str, ...]:
     values = _field_values(record, spec.source_field)
     if not values:
@@ -110,9 +116,7 @@ def validate_foreign_key(
 
 def _field_values(record: object, source_field: str) -> tuple[object, ...]:
     values: tuple[object, ...] = (record,)
-    for raw_part in source_field.split("."):
-        many = raw_part.endswith("[]")
-        part = raw_part[:-2] if many else raw_part
+    for part, many in _field_path_parts(source_field):
         next_values: list[object] = []
         for value in values:
             child = _field_child(value, part)
@@ -124,6 +128,62 @@ def _field_values(record: object, source_field: str) -> tuple[object, ...]:
                 next_values.append(child)
         values = tuple(next_values)
     return tuple(value for value in values if value is not None and value != "")
+
+
+def map_foreign_keys(
+    record: TRecord,
+    specs: Iterable[ForeignKeySpec],
+    image: Callable[[ForeignKeySpec, str], str],
+) -> TRecord:
+    """Replace declared FK paths in one typed replacement per container.
+
+    Sibling updates are atomic with respect to constructor invariants, such as
+    a principal that must belong to the simultaneously transported member set.
+    The caller supplies a single-valued image, never endpoint alternatives.
+    """
+    paths = tuple((_field_path_parts(spec.source_field), spec) for spec in specs)
+    return cast(TRecord, _map_reference_fields(record, paths, image))
+
+
+def _map_reference_fields(
+    record: object,
+    paths: tuple[tuple[tuple[tuple[str, bool], ...], ForeignKeySpec], ...],
+    image: Callable[[ForeignKeySpec, str], str],
+) -> object:
+    leaves = tuple(spec for path, spec in paths if not path)
+    if leaves:
+        if len(leaves) != 1 or len(paths) != 1:
+            raise ValueError("overlapping foreign-key paths cannot be transported")
+        if record is None or record == "":
+            return record
+        if not isinstance(record, str):
+            raise ForeignKeyValidationError("foreign-key value must be a string")
+        return image(leaves[0], record)
+
+    grouped: dict[tuple[str, bool], list[tuple[tuple[tuple[str, bool], ...], ForeignKeySpec]]] = {}
+    for path, spec in paths:
+        grouped.setdefault(path[0], []).append((path[1:], spec))
+    updates: dict[str, object] = {}
+    for (field_name, many), children in grouped.items():
+        child = _field_child(record, field_name)
+        if child is None:
+            continue
+        nested = tuple(children)
+        if many and isinstance(child, tuple):
+            mapped: object = tuple(_map_reference_fields(value, nested, image) for value in child)
+        elif many and isinstance(child, list):
+            mapped = [_map_reference_fields(value, nested, image) for value in child]
+        else:
+            mapped = _map_reference_fields(child, nested, image)
+        if mapped != child:
+            updates[field_name] = mapped
+    if not updates:
+        return record
+    if isinstance(record, msgspec.Struct):
+        return msgspec.structs.replace(record, **updates)
+    if is_dataclass(record) and not isinstance(record, type):
+        return replace(record, **updates)
+    raise TypeError("FK transport requires a msgspec struct or dataclass document")
 
 
 def _field_child(value: object, field_name: str) -> object | None:
@@ -189,7 +249,7 @@ class ReferenceKey:
 
     @classmethod
     def field(cls, field_path: str) -> ReferenceKey:
-        _validate_field_path(field_path)
+        _field_path_parts(field_path)
         return cls(field_path=field_path)
 
     def __call__(self, record: object) -> tuple[str, ...]:
@@ -344,15 +404,18 @@ class CrossFamilyReferenceIndex:
         return self.family(target_family).exists(reference)
 
 
-def _validate_field_path(field_path: str) -> None:
+def _field_path_parts(field_path: str) -> tuple[tuple[str, bool], ...]:
     if not field_path:
         raise ValueError("reference key field path cannot be empty")
+    parts: list[tuple[str, bool]] = []
     for raw_part in field_path.split("."):
         if not raw_part:
             raise ValueError(f"invalid reference key field path: {field_path!r}")
         part = raw_part[:-2] if raw_part.endswith("[]") else raw_part
         if not part or "[]" in part:
             raise ValueError(f"invalid reference key field path: {field_path!r}")
+        parts.append((part, raw_part.endswith("[]")))
+    return tuple(parts)
 
 
 def _string_values(values: Iterable[object]) -> tuple[str, ...]:

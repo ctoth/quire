@@ -5,12 +5,13 @@ import base64
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 import msgspec
 
 from quire.documents.batch import DocumentBatchSpec, document_batch_codec
+from quire.documents.codecs import decode_yaml_mapping
 from quire.refs import RefName
 from quire.versions import VersionId
 
@@ -406,6 +407,7 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
     extension: str = ".yaml"
     codec: ReversibleRefCodec = "stem"
     branch: BranchPlacement = BranchPlacement()
+    document_identity_field: str | None = None
 
     def __post_init__(self) -> None:
         _require_reversible_ref_codec(self.codec)
@@ -428,6 +430,10 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
         branch: str | None = None,
         commit: str | None = None,
     ) -> Iterator[TRef]:
+        if self.document_identity_field is not None:
+            for scanned in self.iter_artifacts(owner, backend, branch=branch, commit=commit):
+                yield scanned.ref
+            return
         if backend is None:
             raise ValueError("listing path-backed artifacts requires a backend")
         target_commit = commit
@@ -455,11 +461,27 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
         if backend is None:
             raise ValueError("listing path-backed artifacts requires a backend")
         for relpath, content in backend.iter_subtree_files(self.namespace, commit=target_commit):
-            if "/" in relpath or not relpath.endswith(self.extension):
+            if not relpath.endswith(self.extension):
                 continue
             path = f"{self.namespace}/{relpath}"
+            if "/" in relpath and self.document_identity_field is not None:
+                # Raw URI refs can contain slashes which Git normalizes in its
+                # tree paths. The declared document identity is lossless; the
+                # filename alone cannot reconstruct it.
+                payload = decode_yaml_mapping(content, source=path)
+                identity = payload.get(self.document_identity_field)
+                if not isinstance(identity, str) or not identity:
+                    raise ValueError(f"{path}: missing document identity {self.document_identity_field!r}")
+                ref = self.ref_factory(identity)
+                expected = self.address_for(owner, ref).require_path()
+                if PurePosixPath(expected) != PurePosixPath(path):
+                    raise ValueError(f"{path}: document identity does not match its storage path")
+            else:
+                if "/" in relpath:
+                    continue
+                ref = self.ref_from_locator(PathArtifactLocator(path))
             yield ScannedArtifact(
-                ref=self.ref_from_locator(PathArtifactLocator(path)),
+                ref=ref,
                 address=ArtifactAddress(
                     branch=branch_name,
                     locator=PathArtifactLocator(path),
@@ -492,7 +514,7 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
         return self.ref_from_locator(PathArtifactLocator(normalized))
 
     def contract_body(self) -> dict[str, object]:
-        return {
+        body: dict[str, object] = {
             "kind": "flat-yaml",
             "namespace": self.namespace,
             "extension": self.extension,
@@ -500,6 +522,7 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
             "codec": self.codec,
             "branch": self.branch.contract_body(),
         }
+        return body
 
 
 @dataclass(frozen=True)

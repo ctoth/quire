@@ -83,6 +83,7 @@ class FamilyDeclaration(Generic[TOwner, TKey, TRef, TDoc]):
     scan_type: type[Any] | None = None
     foreign_keys: tuple[ForeignKeySpec, ...] = ()
     identity_policy: FamilyIdentityPolicy | None = None
+    transport_identity: Callable[[TDoc], TDoc] | None = None
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
     metadata: Mapping[str, object] | None = None
@@ -112,6 +113,7 @@ class FamilyDeclaration(Generic[TOwner, TKey, TRef, TDoc]):
             accessor=self.accessor,
             foreign_keys=self.foreign_keys,
             identity_policy=self.identity_policy,
+            transport_identity=self.transport_identity,
             identity_field=self.identity_field,
             reference_keys=self.reference_keys,
             metadata=self.metadata,
@@ -127,6 +129,7 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
     accessor: str | None = None
     foreign_keys: tuple[ForeignKeySpec, ...] = ()
     identity_policy: FamilyIdentityPolicy | None = None
+    transport_identity: Callable[[TDoc], TDoc] | None = None
     identity_field: str | None = None
     reference_keys: tuple[ReferenceKey, ...] = ()
     metadata: Mapping[str, object] | None = None
@@ -188,6 +191,10 @@ class FamilyDefinition(Generic[TOwner, TKey, TRef, TDoc]):
             body["metadata"] = dict(self.metadata)
         if self.identity_policy is not None:
             body["identity_policy"] = self.identity_policy.contract_body()
+        if self.transport_identity is not None:
+            body["transport_identity"] = (
+                f"{self.transport_identity.__module__}.{self.transport_identity.__qualname__}"
+            )
         if self.identity_field is not None:
             body["identity_field"] = self.identity_field
         if self.reference_keys:
@@ -201,6 +208,24 @@ class FamilyRegistry(Generic[TOwner, TKey]):
     contract_version: VersionId
     families: tuple[FamilyDefinition[TOwner, TKey, Any, Any], ...]
     validate_foreign_keys: bool = field(default=True, repr=False, compare=False)
+
+    def validate_records(self, records: Mapping[str, Sequence[object]]) -> None:
+        """Validate a typed instance over the supplied family subgraph.
+
+        A complete proposed tree supplies every registered family, including
+        empty ones. Transaction admission can supply its affected subgraph.
+        """
+        indexes = {
+            definition.name: definition.reference_index_from_records(records[definition.name])
+            for definition in self.families
+            if definition.name in records and definition.identity_field is not None
+        }
+        for definition in self.families:
+            for spec in definition.foreign_keys:
+                if spec.target_family not in indexes:
+                    continue
+                for record in records.get(definition.name, ()):
+                    validate_foreign_key(spec, record, indexes[spec.target_family])
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -812,17 +837,4 @@ def _validate_registry_post_state(
             continue
         records_by_family[definition.name][ref] = document
 
-    indexes = {
-        definition.name: definition.reference_index_from_records(tuple(records_by_family[definition.name].values()))
-        for definition in registry.families
-        if definition.name in records_by_family and definition.identity_field is not None
-    }
-    for definition in registry.families:
-        if definition.name not in records_by_family:
-            continue
-        for spec in definition.foreign_keys:
-            if spec.target_family not in indexes:
-                continue
-            target_index = indexes[spec.target_family]
-            for record in records_by_family[definition.name].values():
-                validate_foreign_key(spec, record, target_index)  # type: ignore[arg-type]
+    registry.validate_records({name: tuple(records.values()) for name, records in records_by_family.items()})
