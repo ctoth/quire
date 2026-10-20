@@ -192,6 +192,19 @@ def test_document_identity_cannot_silently_relabel_a_different_storage_path() ->
     backend = GitStore.init_memory()
     store = DocumentFamilyStore(owner=owner, backend=backend)
     family = _registry().bind(owner, store).by_name("node")
-    commit = family.save("different", Node("actual"), message="mismatched path")
+    commit = family.save("different/path", Node("actual"), message="mismatched nested path")
     with pytest.raises(ValueError, match="does not match its storage path"):
         tuple(family.iter_handles(commit=commit))
+
+
+def test_flat_storage_aliases_remain_available_to_duplicate_diagnostics() -> None:
+    owner = Owner()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=owner, backend=backend)
+    family = _registry().bind(owner, store).by_name("node")
+    document = Node("same-content-id")
+    family.save("first", document, message="first occurrence")
+    commit = family.save("second", document, message="second occurrence")
+    handles = tuple(family.iter_handles(commit=commit))
+    assert {h.ref for h in handles} == {"first", "second"}
+    assert all(h.document == document for h in handles)

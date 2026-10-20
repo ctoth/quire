@@ -464,7 +464,7 @@ class FlatYamlPlacement(Generic[TOwner, TRef]):
             if not relpath.endswith(self.extension):
                 continue
             path = f"{self.namespace}/{relpath}"
-            if self.document_identity_field is not None:
+            if "/" in relpath and self.document_identity_field is not None:
                 # Raw URI refs can contain slashes which Git normalizes in its
                 # tree paths. The declared document identity is lossless; the
                 # filename alone cannot reconstruct it.
