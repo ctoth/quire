@@ -8,7 +8,7 @@ reference into alternatives.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, TypeVar
@@ -96,6 +96,66 @@ class FamilyInstanceMap:
             raise ValueError("family transport requires a single source and result identity")
         self.assign(family.name, old_ids[0], new_ids[0])
         return result
+
+    def transport_family(
+        self,
+        family: FamilyDefinition[Any, Any, Any, TDoc],
+        documents: Sequence[TDoc],
+    ) -> tuple[TDoc, ...]:
+        """Transport a finite batch after planning its affected self-reference IDs.
+
+        The family owns identity. Planning uses its callback with external FKs
+        mapped and self FKs unchanged, then follows incoming references when an
+        ID moves. Final transport must produce the same planned IDs; callbacks
+        that require a different recursive identity construction fail the
+        existing single-image check. No recursive hashes are guessed here.
+        """
+        self_specs = tuple(s for s in family.foreign_keys if s.target_family == family.name)
+        if not self_specs:
+            results = tuple(self.transport(family, document) for document in documents)
+            if family.validate_transport is not None:
+                family.validate_transport(documents, results)
+            return results
+        if family.identity_field is None:
+            raise ValueError(f"family {family.name!r} has no identity field")
+        identity = ReferenceKey.field(family.identity_field)
+        external_specs = tuple(s for s in family.foreign_keys if s.target_family != family.name)
+        dependents: dict[str, list[int]] = {}
+        pending: list[int] = []
+        for index, document in enumerate(documents):
+            for spec in family.foreign_keys:
+                validate_foreign_key(spec, document, self.source_indexes[spec.target_family])
+            if map_foreign_keys(document, family.foreign_keys, self._reference_image) is not document:
+                pending.append(index)
+            for spec in self_specs:
+                for reference in ReferenceKey.field(spec.source_field)(document):
+                    source_id = self.source_indexes[family.name].require_id(reference)
+                    dependents.setdefault(source_id, []).append(index)
+        planned: set[int] = set()
+        while pending:
+            index = pending.pop()
+            if index in planned:
+                continue
+            planned.add(index)
+            if family.transport_identity is None:
+                raise UnsupportedFamilyTransportError(
+                    f"family {family.name!r} has no identity operation for reference transport"
+                )
+            document = documents[index]
+            external = map_foreign_keys(document, external_specs, self._reference_image)
+            old_ids = identity(document)
+            new_ids = identity(family.transport_identity(external))
+            if len(old_ids) != 1 or len(new_ids) != 1:
+                raise ValueError("family transport requires a single source and result identity")
+            self.assign(family.name, old_ids[0], new_ids[0])
+            if old_ids[0] != new_ids[0]:
+                pending.extend(dependents.get(old_ids[0], ()))
+        results = tuple(self.transport(family, document) for document in documents)
+        for index in planned:
+            self.assign(family.name, identity(documents[index])[0], identity(results[index])[0])
+        if family.validate_transport is not None:
+            family.validate_transport(documents, results)
+        return results
 
     def iter_images(self) -> Iterator[FamilyReferenceImage]:
         """Yield assigned occurrence images, including unchanged explicit images."""
