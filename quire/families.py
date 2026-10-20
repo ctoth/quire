@@ -722,8 +722,8 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
         return self.transaction.store.payload(document, family=cast(Any, self.family))
 
     def save(self, ref: TRef, doc: TDoc) -> None:
-        self.transaction.save(self.family, ref, doc)
-        self.bound_transaction._saves.append((self.definition, ref, doc))
+        prepared = self.transaction.save(self.family, ref, doc)
+        self.bound_transaction._saves.append((self.definition, ref, prepared.document))
         self.bound_transaction._deletes[:] = [
             item
             for item in self.bound_transaction._deletes
@@ -740,9 +740,20 @@ class TransactionalBoundFamily(Generic[TOwner, TRef, TDoc]):
         ]
 
     def move(self, old_ref: TRef, new_ref: TRef, doc: TDoc) -> None:
-        self.transaction.move(self.family, old_ref, new_ref, doc)
-        self.bound_transaction._deletes.append((self.definition, old_ref))
-        self.bound_transaction._saves.append((self.definition, new_ref, doc))
+        prepared = self.transaction.move(self.family, old_ref, new_ref, doc)
+        if old_ref != new_ref:
+            self.bound_transaction._saves[:] = [
+                item
+                for item in self.bound_transaction._saves
+                if item[0] != self.definition or item[1] != old_ref
+            ]
+            self.bound_transaction._deletes.append((self.definition, old_ref))
+        self.bound_transaction._deletes[:] = [
+            item
+            for item in self.bound_transaction._deletes
+            if item != (self.definition, new_ref)
+        ]
+        self.bound_transaction._saves.append((self.definition, new_ref, prepared.document))
 
 
 def _duplicates(values: Sequence[object]) -> list[object]:

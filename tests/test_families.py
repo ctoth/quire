@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, cast
 
@@ -931,6 +931,183 @@ def test_bound_family_move_validates_registry_post_state(invalid_kind) -> None:
         assert bound.concepts.require("mass").artifact_id == "mass"
         assert bound.claims.load("new") is None
         assert bound.concepts.load("weight") is None
+
+
+@pytest.mark.parametrize("normalized_target", ["mass", "missing"])
+def test_bound_family_move_validates_normalized_replacement(normalized_target) -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    with bound.transact(message="seed graph") as transaction:
+        transaction.concepts.save("mass", IdentifiedDocument("mass"))
+        transaction.claims.save("old", ClaimWithConceptDocument("old", "mass"))
+    head = backend.head_sha()
+    calls: list[str] = []
+
+    def normalize(context, document, store):
+        calls.append(document.concept)
+        return ClaimWithConceptDocument(document.artifact_id, normalized_target)
+
+    claims, concepts = registry.families
+    registry = replace(registry, families=(
+        replace(claims, artifact_family=replace(claims.artifact_family, normalize_for_write=normalize)),
+        concepts,
+    ))
+    bound = registry.bind(store.owner, store)
+    authored_target = "missing" if normalized_target == "mass" else "mass"
+
+    def move():
+        bound.claims.move(
+            "old", "new", ClaimWithConceptDocument("new", authored_target), message="normalized move"
+        )
+
+    if normalized_target == "mass":
+        move()
+        assert bound.claims.load("old") is None
+        assert bound.claims.require("new").concept == "mass"
+    else:
+        with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+            move()
+        assert backend.head_sha() == head
+        assert bound.claims.require("old").concept == "mass"
+        assert bound.claims.load("new") is None
+    assert calls == [authored_target]
+
+
+@pytest.mark.parametrize("sequence", ["save_move", "chain", "same_ref", "delete_after", "save_after"])
+@pytest.mark.parametrize("valid", [False, True])
+def test_transaction_moves_validate_only_final_staged_targets(sequence, valid) -> None:
+    registry = _reference_registry()
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save("a", IdentifiedDocument("A"), message="seed target")
+    head = backend.head_sha()
+    final_target = "B"
+    stale_target = "A"
+    if sequence in {"chain", "delete_after"}:
+        final_target = "C"
+        stale_target = "B" if sequence == "chain" else "A"
+    if sequence == "save_after":
+        final_target = "A2"
+
+    def stage():
+        with bound.transact(message="move sequence") as transaction:
+            if sequence in {"save_move", "same_ref", "delete_after"}:
+                transaction.concepts.save("a", IdentifiedDocument("A"))
+            destination = "a" if sequence == "same_ref" else "b"
+            transaction.concepts.move("a", destination, IdentifiedDocument("B"))
+            if sequence == "chain":
+                transaction.concepts.move("b", "c", IdentifiedDocument("C"))
+            elif sequence == "delete_after":
+                transaction.concepts.delete("b")
+                transaction.concepts.save("c", IdentifiedDocument("C"))
+            elif sequence == "save_after":
+                transaction.concepts.save("a", IdentifiedDocument("A2"))
+            transaction.claims.save(
+                "claim", ClaimWithConceptDocument("claim", final_target if valid else stale_target)
+            )
+
+    if valid:
+        stage()
+        assert bound.claims.require("claim").concept == final_target
+        assert final_target in {handle.document.artifact_id for handle in bound.concepts.iter_handles()}
+        assert stale_target not in {handle.document.artifact_id for handle in bound.concepts.iter_handles()}
+    else:
+        with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+            stage()
+        assert backend.head_sha() == head
+        assert bound.concepts.require("a").artifact_id == "A"
+        assert bound.claims.load("claim") is None
+
+
+@pytest.mark.parametrize("operation", ["save", "move"])
+@pytest.mark.parametrize("normalized_target", ["mass", "missing"])
+def test_registry_transactions_validate_normalized_documents(operation, normalized_target) -> None:
+    calls: list[str] = []
+
+    def normalize(context, document, store):
+        calls.append(document.concept)
+        return ClaimWithConceptDocument(document.artifact_id, normalized_target)
+
+    registry = _reference_registry()
+    claims, concepts = registry.families
+    registry = replace(registry, families=(
+        replace(claims, artifact_family=replace(claims.artifact_family, normalize_for_write=normalize)),
+        concepts,
+    ))
+    backend = GitStore.init_memory()
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    bound.concepts.save("mass", IdentifiedDocument("mass"), message="seed target")
+    backend.commit_files(
+        {"claims/old.yaml": msgspec.yaml.encode(ClaimWithConceptDocument("old", "mass"))},
+        "seed source",
+    )
+    head = backend.head_sha()
+    authored_target = "missing" if normalized_target == "mass" else "mass"
+
+    def stage():
+        with bound.transact(message="normalized write") as transaction:
+            document = ClaimWithConceptDocument("new", authored_target)
+            if operation == "save":
+                transaction.claims.save("new", document)
+            else:
+                transaction.claims.move("old", "new", document)
+
+    if normalized_target == "mass":
+        stage()
+        assert bound.claims.require("new").concept == "mass"
+        assert bound.claims.exists("old") is (operation == "save")
+    else:
+        with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+            stage()
+        assert backend.head_sha() == head
+        assert bound.claims.load("new") is None
+        assert bound.claims.require("old").concept == "mass"
+    assert calls == [authored_target]
+
+
+@pytest.mark.parametrize("target", ["final", "old"])
+def test_normalized_move_ledger_resolves_only_final_staged_target(target) -> None:
+    calls: list[str] = []
+
+    def normalize(context, document, store):
+        calls.append(document.artifact_id)
+        return IdentifiedDocument(document.artifact_id.lower())
+
+    registry = _reference_registry()
+    claims, concepts = registry.families
+    registry = replace(registry, families=(
+        claims,
+        replace(concepts, artifact_family=replace(concepts.artifact_family, normalize_for_write=normalize)),
+    ))
+    backend = GitStore.init_memory()
+    backend.commit_files({"seed.txt": b"seed"}, "seed repository")
+    store = DocumentFamilyStore(owner=Owner(), backend=backend)
+    bound = registry.bind(store.owner, store)
+    head = backend.head_sha()
+
+    def stage():
+        with bound.transact(message="normalized target move") as transaction:
+            transaction.concepts.save("a", IdentifiedDocument("OLD"))
+            transaction.concepts.move("a", "b", IdentifiedDocument("FINAL"))
+            transaction.claims.save("claim", ClaimWithConceptDocument("claim", target))
+
+    if target == "final":
+        stage()
+        assert bound.concepts.require("b").artifact_id == "final"
+        assert bound.concepts.load("a") is None
+        assert bound.claims.require("claim").concept == "final"
+        assert [handle.document.artifact_id for handle in bound.concepts.iter_handles()] == ["final"]
+    else:
+        with pytest.raises(ForeignKeyValidationError, match="does not resolve"):
+            stage()
+        assert backend.head_sha() == head
+        assert list(bound.concepts.iter_handles()) == []
+        assert bound.claims.load("claim") is None
+    assert calls == ["OLD", "FINAL"]
 
 
 def test_registry_validation_reads_the_publication_head(monkeypatch) -> None:
