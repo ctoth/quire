@@ -672,6 +672,9 @@ class GitStore:
                 if previous is not None and previous != object_id:
                     raise ValueError(f"different blobs for normalized path {normalized!r}")
                 normalized_entries[normalized] = object_id
+            self._check_add_path_conflicts({
+                PurePosixPath(path).parts: sha for path, sha in normalized_entries.items()
+            })
             _assert_ref_equals(self._repo.refs, branch_name, branch_ref, current_head)
             root_tree = self._build_tree_from_flat(normalized_entries)
 
